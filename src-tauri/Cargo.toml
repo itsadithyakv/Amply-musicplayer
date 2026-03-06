@@ -1,0 +1,28 @@
+[package]
+name = "amply"
+version = "0.1.0"
+edition = "2021"
+description = "Amply offline music player"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+base64 = "0.22"
+dirs = "6.0"
+lofty = "0.21"
+rfd = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.0.0", features = ["protocol-asset"] }
+walkdir = "2.5"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+
+[package.metadata.winres]
+ProductName = "Amply"
+FileDescription = "Amply offline music player"
+OriginalFilename = "Amply.exe"
