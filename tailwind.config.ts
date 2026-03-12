@@ -14,8 +14,8 @@ export default {
           textPrimary: '#FFFFFF',
           textSecondary: '#B3B3B3',
           textMuted: '#7A7A7A',
-          accent: '#1DB954',
-          accentHover: '#1ED760',
+          accent: '#FF7A1A',
+          accentHover: '#FF8F3A',
         },
       },
       borderRadius: {

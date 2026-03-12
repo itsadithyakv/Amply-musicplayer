@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
@@ -6,6 +6,8 @@ import { useLibraryStore } from '@/store/libraryStore';
 
 interface SongListProps {
   songs: Song[];
+  persistKey?: string;
+  initialSort?: SongSort;
 }
 
 type SongSort =
@@ -49,13 +51,29 @@ const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
   }
 };
 
-const SongList = ({ songs }: SongListProps) => {
+const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongListProps) => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
   const enqueueSong = usePlayerStore((state) => state.enqueueSong);
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
-  const [sortBy, setSortBy] = useState<SongSort>('recently_added');
+  const storageKey = persistKey ? `amply-songlist-sort:${persistKey}` : null;
+  const [sortBy, setSortBy] = useState<SongSort>(() => {
+    if (!storageKey || typeof window === 'undefined') {
+      return initialSort;
+    }
+
+    const stored = window.localStorage.getItem(storageKey) as SongSort | null;
+    return stored ?? initialSort;
+  });
+
+  useEffect(() => {
+    if (!storageKey || typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(storageKey, sortBy);
+  }, [storageKey, sortBy]);
 
   const sortedSongs = useMemo(() => sortSongs(songs, sortBy), [songs, sortBy]);
   const queueIds = useMemo(() => sortedSongs.map((song) => song.id), [sortedSongs]);

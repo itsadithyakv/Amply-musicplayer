@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { useLibraryStore } from '@/store/libraryStore';
@@ -61,6 +61,7 @@ const HomePage = () => {
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
+  const [showMoreMixes, setShowMoreMixes] = useState(false);
 
   const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
 
@@ -178,6 +179,21 @@ const HomePage = () => {
     return [...smart, ...recentlyPlayedCustom].slice(0, 6);
   }, [playlists, songsById]);
 
+  const smartMixesAll = useMemo<PlaylistCardItem[]>(() => {
+    return playlists
+      .filter((playlist) => playlist.type === 'smart')
+      .map((playlist) => ({
+        id: playlist.id,
+        title: playlist.name,
+        subtitle: playlist.description || `${playlist.songIds.length} songs`,
+        artwork: getPlaylistArtwork(playlist),
+        songIds: playlist.songIds,
+        kind: 'smart' as const,
+      }))
+      .filter((entry) => entry.songIds.length);
+  }, [playlists, songsById]);
+
+
   const pickSong = (song: Song) => {
     const queue = songs.map((item) => item.id);
     setQueue(queue, song.id);
@@ -218,9 +234,12 @@ const HomePage = () => {
         <p className="text-[12px] uppercase tracking-[0.12em] text-amply-textMuted">Offline Music Player</p>
       </header>
 
-      <section className="max-w-[760px] space-y-3">
-        <h2 className="text-[18px] font-bold text-amply-textPrimary">Smart Playlists</h2>
-        <div className="grid grid-cols-1 gap-3 pb-2 md:grid-cols-2">
+      <section className="max-w-none space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[18px] font-bold text-amply-textPrimary">Smart Playlists</h2>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 pb-2 sm:grid-cols-2 xl:grid-cols-3">
           {smartPlaylistCards.map((item, index) => {
             const isFeatured = index === 0;
 
@@ -233,18 +252,12 @@ const HomePage = () => {
                 className={clsx(
                   'relative overflow-hidden rounded-card border border-amply-border p-4 text-left shadow-[0_12px_24px_rgba(0,0,0,0.25)] transition-all duration-200 ease-smooth hover:scale-[1.01] hover:border-[#3a3a3a]',
                   playlistToneClasses[index % playlistToneClasses.length],
-                  isFeatured ? 'h-[170px] md:col-span-2' : 'h-[140px]',
+                  isFeatured ? 'min-h-[200px] sm:col-span-2 xl:col-span-2' : 'min-h-[150px]',
                 )}
                 title="Click to play. Double-click to open queue."
               >
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.10),transparent_50%)]" />
                 <div className="relative flex h-full flex-col justify-between">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="rounded-full border border-amply-border bg-black/25 px-2 py-1 text-[11px] uppercase tracking-wide text-amply-textSecondary">
-                      {item.kind === 'smart' ? 'Smart Mix' : 'Playlist'}
-                    </span>
-                  </div>
-
                   <div className="flex items-end justify-between gap-3">
                     <div className="min-w-0">
                       <p className={clsx('truncate font-bold text-amply-textPrimary', isFeatured ? 'text-[20px]' : 'text-[16px]')}>
@@ -266,7 +279,69 @@ const HomePage = () => {
               </button>
             );
           })}
+
+          <button
+            type="button"
+            onClick={() => setShowMoreMixes((value) => !value)}
+            className={clsx(
+              'relative min-h-[150px] overflow-hidden rounded-card border border-amply-border p-4 text-left transition-all duration-200 ease-smooth hover:scale-[1.01] hover:border-[#3a3a3a]',
+              playlistToneClasses[0],
+            )}
+          >
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.12),transparent_55%)]" />
+            <div className="relative flex h-full flex-col justify-between">
+              <div className="flex items-start justify-between gap-3">
+                <span className="rounded-full border border-amply-border bg-black/25 px-2 py-1 text-[11px] uppercase tracking-wide text-amply-textSecondary">
+                  More Mixes
+                </span>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[16px] font-bold text-amply-textPrimary">Explore Mixes</p>
+                <p className="text-[12px] text-amply-textSecondary">
+                  {showMoreMixes ? 'Hide the full mix list' : 'Show genre and mood mixes'}
+                </p>
+              </div>
+            </div>
+          </button>
         </div>
+
+        {showMoreMixes ? (
+          <div className="space-y-3">
+            <h3 className="text-[14px] font-semibold text-amply-textSecondary">All Mixes</h3>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {smartMixesAll.length ? (
+                smartMixesAll.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => playPlaylist(item.songIds)}
+                    onDoubleClick={() => openPlaylistQueue(item.songIds)}
+                    className={clsx(
+                      'relative overflow-hidden rounded-card border border-amply-border p-4 text-left transition-all duration-200 ease-smooth hover:scale-[1.01] hover:border-[#3a3a3a]',
+                      playlistToneClasses[(index + 1) % playlistToneClasses.length],
+                    )}
+                    title="Click to play. Double-click to open queue."
+                  >
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.08),transparent_55%)]" />
+                    <div className="relative flex items-end justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[16px] font-bold text-amply-textPrimary">{item.title}</p>
+                        <p className="truncate text-[12px] text-amply-textSecondary">{item.subtitle}</p>
+                      </div>
+                      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-amply-border bg-amply-card/70">
+                        {item.artwork ? <img src={item.artwork} alt={item.title} className="h-full w-full object-cover" /> : null}
+                      </div>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-card border border-amply-border bg-amply-card p-4 text-[13px] text-amply-textMuted">
+                  No mixes available yet. Add more music to expand smart mixes.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <SectionRow title="Recently Played" songs={recentlyPlayed} onPick={pickSong} />

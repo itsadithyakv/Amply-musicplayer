@@ -28,8 +28,23 @@ const cacheKeyForSong = (song: Song): string => {
 const isCloseMatch = (candidate: string, target: string): boolean => {
   const left = normalize(candidate);
   const right = normalize(target);
-  return left === right || left.includes(right) || right.includes(left);
+
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length < 3 || right.length < 3) {
+    return false;
+  }
+
+  return left.includes(right) || right.includes(left);
 };
+
+const isExactMatch = (candidate: string, target: string): boolean => normalize(candidate) === normalize(target);
 
 interface ItunesSongHit {
   trackName?: string;
@@ -39,13 +54,19 @@ interface ItunesSongHit {
 
 const scoreHit = (song: Song, hit: ItunesSongHit): number => {
   let score = 0;
+  const trackMatch = hit.trackName ? isCloseMatch(hit.trackName, song.title) : false;
+  const artistMatch = hit.artistName ? isCloseMatch(hit.artistName, song.artist) : false;
 
-  if (hit.trackName && isCloseMatch(hit.trackName, song.title)) {
-    score += 5;
+  if (!trackMatch || !artistMatch) {
+    return 0;
   }
 
-  if (hit.artistName && isCloseMatch(hit.artistName, song.artist)) {
-    score += 5;
+  if (hit.trackName) {
+    score += isExactMatch(hit.trackName, song.title) ? 6 : 4;
+  }
+
+  if (hit.artistName) {
+    score += isExactMatch(hit.artistName, song.artist) ? 6 : 4;
   }
 
   if (hit.primaryGenreName) {
@@ -69,8 +90,15 @@ const fetchGenre = async (song: Song): Promise<string | null> => {
     return null;
   }
 
-  const ranked = [...hits].sort((a, b) => scoreHit(song, b) - scoreHit(song, a));
-  const genre = ranked[0]?.primaryGenreName?.trim();
+  const MIN_SCORE = 9;
+  const ranked = [...hits]
+    .map((hit) => ({ hit, score: scoreHit(song, hit) }))
+    .filter((entry) => entry.score >= MIN_SCORE)
+    .sort((a, b) => b.score - a.score);
+  if (!ranked.length) {
+    return null;
+  }
+  const genre = ranked[0]?.hit.primaryGenreName?.trim();
 
   if (!genre || isUnknownGenre(genre)) {
     return null;
