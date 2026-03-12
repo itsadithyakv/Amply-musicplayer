@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import clsx from 'clsx';
-import logoIcon from '@/assets/icons/logo.svg';
+import logoIcon from '@/assets/icons/logo.png';
 import homeIcon from '@/assets/icons/home.svg';
 import searchIcon from '@/assets/icons/search.svg';
 import libraryIcon from '@/assets/icons/library.svg';
@@ -30,7 +30,7 @@ const Sidebar = () => {
   return (
     <aside className="flex h-full min-h-0 w-[240px] flex-col border-r border-amply-border bg-amply-bgPrimary p-4">
       <div className="mb-8 flex items-center gap-3 px-2">
-        <img src={logoIcon} alt="Amply" className="h-7 w-7" />
+        <img src={logoIcon} alt="Amply" className="h-10 w-10 rounded-md" />
         <div>
           <p className="text-sm uppercase tracking-[0.16em] text-amply-textMuted">Amply</p>
           <p className="text-xs text-amply-textSecondary">Offline Music Player</p>

@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
-import { pickMusicFolders } from '@/services/storageService';
+import { clearStorageCache, pickMusicFolders } from '@/services/storageService';
+import { loadLyrics } from '@/services/lyricsFetcher';
+import { loadSongGenre } from '@/services/songMetadataService';
+import { loadArtistProfile } from '@/services/artistProfileService';
 
 const SettingsPage = () => {
   const libraryPaths = useLibraryStore((state) => state.libraryPaths);
@@ -20,8 +23,15 @@ const SettingsPage = () => {
   const setGaplessEnabled = usePlayerStore((state) => state.setGaplessEnabled);
   const setVolumeNormalizationEnabled = usePlayerStore((state) => state.setVolumeNormalizationEnabled);
   const setSleepTimer = usePlayerStore((state) => state.setSleepTimer);
+  const setLaunchOnStartup = usePlayerStore((state) => state.setLaunchOnStartup);
+  const setLyricsVisualsEnabled = usePlayerStore((state) => state.setLyricsVisualsEnabled);
+  const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
 
   const [localPath, setLocalPath] = useState('');
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ artists: 0, lyrics: 0, genres: 0, total: 0, done: 0 });
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
 
   return (
     <div className="max-w-3xl space-y-6 pb-8">
@@ -100,6 +110,130 @@ const SettingsPage = () => {
       </section>
 
       <section className="rounded-card border border-amply-border bg-amply-card p-4">
+        <h2 className="text-[18px] font-bold text-amply-textPrimary">Library Data</h2>
+        <p className="mt-1 text-[13px] text-amply-textSecondary">
+          Fetch artist info, lyrics, and genres for all songs, or clear cached data.
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={bulkLoading}
+            onClick={async () => {
+              if (bulkLoading) {
+                return;
+              }
+
+              const totalSongs = useLibraryStore.getState().songs.length;
+              if (!totalSongs) {
+                setBulkMessage('No songs available to scan.');
+                return;
+              }
+
+              setBulkLoading(true);
+              setBulkMessage(null);
+              setBulkProgress({ artists: 0, lyrics: 0, genres: 0, total: totalSongs, done: 0 });
+
+              const songs = useLibraryStore.getState().songs;
+              const seenArtists = new Set<string>();
+              let artistCount = 0;
+              let lyricCount = 0;
+              let genreCount = 0;
+              let done = 0;
+
+              for (const song of songs) {
+                try {
+                  const artistKey = song.artist?.trim().toLowerCase();
+                  if (artistKey && !seenArtists.has(artistKey)) {
+                    seenArtists.add(artistKey);
+                    const artistResult = await loadArtistProfile(song.artist);
+                    if (artistResult.status === 'ready') {
+                      artistCount += 1;
+                    }
+                  }
+
+                  const lyricResult = await loadLyrics(song);
+                  if (lyricResult.status === 'ready') {
+                    lyricCount += 1;
+                  }
+
+                  const genreResult = await loadSongGenre(song);
+                  if (genreResult.status === 'ready') {
+                    genreCount += 1;
+                  }
+                } catch {
+                  // Ignore per-track failures and continue.
+                } finally {
+                  done += 1;
+                  setBulkProgress({
+                    artists: artistCount,
+                    lyrics: lyricCount,
+                    genres: genreCount,
+                    total: totalSongs,
+                    done,
+                  });
+                }
+              }
+
+              setBulkLoading(false);
+              setBulkMessage('Bulk fetch completed.');
+            }}
+            className="rounded-md bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {bulkLoading ? 'Fetching...' : 'Fetch All Metadata'}
+          </button>
+
+          <button
+            type="button"
+            disabled={clearingCache}
+            onClick={async () => {
+              if (clearingCache) {
+                return;
+              }
+              setClearingCache(true);
+              setBulkMessage(null);
+              try {
+                await clearStorageCache();
+                setBulkMessage('Cache cleared. Restart the app to rescan library data.');
+              } finally {
+                setClearingCache(false);
+              }
+            }}
+            className="rounded-md border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {clearingCache ? 'Clearing...' : 'Clear Cache & Stored Data'}
+          </button>
+        </div>
+
+        {bulkLoading ? (
+          <p className="mt-3 text-[12px] text-amply-textMuted">
+            Processed {bulkProgress.done}/{bulkProgress.total} songs · Artists {bulkProgress.artists} · Lyrics {bulkProgress.lyrics} · Genres {bulkProgress.genres}
+          </p>
+        ) : null}
+
+        {bulkMessage ? <p className="mt-3 text-[12px] text-amply-textMuted">{bulkMessage}</p> : null}
+      </section>
+
+      <section className="rounded-card border border-amply-border bg-amply-card p-4">
+        <h2 className="text-[18px] font-bold text-amply-textPrimary">App Behavior</h2>
+        <p className="mt-1 text-[13px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
+
+        <div className="mt-4 grid gap-4">
+          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
+            <span>Launch on System Startup</span>
+            <input
+              type="checkbox"
+              checked={settings.launchOnStartup}
+              onChange={(event) => {
+                void setLaunchOnStartup(event.target.checked);
+              }}
+              className="h-4 w-4 accent-amply-accent"
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="rounded-card border border-amply-border bg-amply-card p-4">
         <h2 className="text-[18px] font-bold text-amply-textPrimary">Advanced Playback</h2>
 
         <div className="mt-4 grid gap-4">
@@ -173,6 +307,40 @@ const SettingsPage = () => {
               }}
               className="h-1 w-full cursor-pointer accent-amply-accent"
             />
+          </label>
+        </div>
+      </section>
+
+      <section className="rounded-card border border-amply-border bg-amply-card p-4">
+        <h2 className="text-[18px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>
+        <p className="mt-1 text-[13px] text-amply-textSecondary">Ambient backgrounds for the lyrics view.</p>
+
+        <div className="mt-4 grid gap-4">
+          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
+            <span>Enable Visuals</span>
+            <input
+              type="checkbox"
+              checked={settings.lyricsVisualsEnabled}
+              onChange={(event) => {
+                void setLyricsVisualsEnabled(event.target.checked);
+              }}
+              className="h-4 w-4 accent-amply-accent"
+            />
+          </label>
+
+          <label className="space-y-1 text-[13px] text-amply-textSecondary">
+            <span>Theme</span>
+            <select
+              value={settings.lyricsVisualTheme}
+              onChange={(event) => {
+                void setLyricsVisualTheme(event.target.value as typeof settings.lyricsVisualTheme);
+              }}
+              className="w-full rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+            >
+              <option value="ember">Ember</option>
+              <option value="aurora">Aurora</option>
+              <option value="mono">Mono</option>
+            </select>
           </label>
         </div>
       </section>

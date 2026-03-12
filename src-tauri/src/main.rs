@@ -16,6 +16,7 @@ use lofty::{
 };
 use serde::Serialize;
 use tauri::Manager;
+use tauri::image::Image;
 use walkdir::WalkDir;
 
 #[derive(Clone, Debug, Serialize)]
@@ -289,8 +290,18 @@ fn resolve_storage_path(app: &tauri::AppHandle, relative_path: &str) -> Result<P
 
 #[tauri::command]
 fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
+  let root = storage_root(&app)?;
+  Ok(root.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn clear_storage_cache(app: tauri::AppHandle) -> Result<(), String> {
     let root = storage_root(&app)?;
-    Ok(root.to_string_lossy().to_string())
+    if root.exists() {
+        fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+    }
+    let _ = storage_root(&app)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -347,10 +358,26 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let _ = storage_root(&app.handle());
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_autostart::MacosLauncher;
+                if let Err(error) =
+                    app.handle().plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+                {
+                    eprintln!("Failed to initialize autostart plugin: {error}");
+                }
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
+                    let _ = window.set_icon(icon);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ensure_storage_dirs,
+            clear_storage_cache,
             pick_music_folder,
             pick_music_folders,
             read_storage_file,

@@ -43,6 +43,9 @@ export interface AppSettings {
   gaplessEnabled: boolean;
   volumeNormalizationEnabled: boolean;
   playbackSpeed: number;
+  launchOnStartup: boolean;
+  lyricsVisualsEnabled: boolean;
+  lyricsVisualTheme: 'ember' | 'aurora' | 'mono';
 }
 
 export interface ListeningStats {

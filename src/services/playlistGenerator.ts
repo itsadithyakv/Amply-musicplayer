@@ -19,6 +19,35 @@ const slugify = (value: string): string => {
     .replace(/^-+|-+$/g, '');
 };
 
+const normalizeGenreBucket = (genreRaw: string): string | null => {
+  const genre = genreRaw.trim().toLowerCase();
+  if (!genre || genre === 'unknown genre') {
+    return null;
+  }
+
+  const rules: Array<{ label: string; keywords: string[] }> = [
+    { label: 'Pop', keywords: ['pop', 'k-pop', 'kpop'] },
+    { label: 'Rock', keywords: ['rock', 'alt', 'alternative', 'punk', 'grunge'] },
+    { label: 'Hip-Hop', keywords: ['hip hop', 'hip-hop', 'rap', 'trap'] },
+    { label: 'Electronic', keywords: ['electronic', 'edm', 'dance', 'house', 'techno', 'trance', 'dubstep'] },
+    { label: 'R&B', keywords: ['r&b', 'soul', 'neo soul'] },
+    { label: 'Indie', keywords: ['indie', 'lofi', 'lo-fi'] },
+    { label: 'Jazz', keywords: ['jazz', 'swing', 'bebop'] },
+    { label: 'Classical', keywords: ['classical', 'orchestral', 'symphony'] },
+    { label: 'Country', keywords: ['country', 'americana'] },
+    { label: 'Latin', keywords: ['latin', 'reggaeton', 'salsa', 'bachata'] },
+    { label: 'World', keywords: ['world', 'bollywood', 'hindi', 'indian', 'afro', 'afrobeat'] },
+  ];
+
+  for (const rule of rules) {
+    if (rule.keywords.some((keyword) => genre.includes(keyword))) {
+      return rule.label;
+    }
+  }
+
+  return null;
+};
+
 const interleaveByGenre = (songs: Song[]): Song[] => {
   const buckets = new Map<string, Song[]>();
   songs.forEach((song) => {
@@ -86,14 +115,14 @@ const buildGenreMixes = (songs: Song[]): Playlist[] => {
   const byGenre = new Map<string, Song[]>();
 
   for (const song of songs) {
-    const genre = song.genre?.trim() || 'Unknown Genre';
-    if (genre.toLowerCase() === 'unknown genre') {
+    const bucket = normalizeGenreBucket(song.genre);
+    if (!bucket) {
       continue;
     }
 
-    const list = byGenre.get(genre) ?? [];
+    const list = byGenre.get(bucket) ?? [];
     list.push(song);
-    byGenre.set(genre, list);
+    byGenre.set(bucket, list);
   }
 
   const rankedGenres = [...byGenre.entries()]
@@ -104,7 +133,7 @@ const buildGenreMixes = (songs: Song[]): Playlist[] => {
     }))
     .filter((entry) => entry.genreSongs.length >= 1)
     .sort((a, b) => b.totalPlays - a.totalPlays || b.genreSongs.length - a.genreSongs.length)
-    .slice(0, 8);
+    .slice(0, 6);
 
   return rankedGenres.map((entry) =>
     mapPlaylist(
@@ -115,6 +144,73 @@ const buildGenreMixes = (songs: Song[]): Playlist[] => {
       'smart',
     ),
   );
+};
+
+const buildMoodMixes = (songs: Song[]): Playlist[] => {
+  const moods = [
+    {
+      id: 'happy',
+      name: 'Happy Mix',
+      description: 'Upbeat songs to lift the mood.',
+      genreHints: ['pop', 'dance', 'disco', 'funk', 'edm', 'electronic'],
+      titleHints: ['happy', 'joy', 'smile', 'sun', 'bright', 'good'],
+    },
+    {
+      id: 'sad',
+      name: 'Sad Mix',
+      description: 'Slower, mellow tracks for quieter moments.',
+      genreHints: ['acoustic', 'ballad', 'ambient', 'lofi', 'lo-fi', 'piano'],
+      titleHints: ['sad', 'cry', 'alone', 'lonely', 'tears', 'heart'],
+    },
+    {
+      id: 'party',
+      name: 'Party Mix',
+      description: 'High-energy tracks for late-night sessions.',
+      genreHints: ['dance', 'edm', 'club', 'house', 'hip hop', 'hip-hop', 'rap', 'reggaeton'],
+      titleHints: ['party', 'club', 'dance', 'night', 'mix'],
+    },
+  ];
+
+  const scoredMixes = moods.map((mood) => {
+    const scored = songs
+      .map((song) => {
+        const genre = song.genre?.toLowerCase() ?? '';
+        const title = song.title?.toLowerCase() ?? '';
+        let score = 0;
+
+        if (mood.genreHints.some((hint) => genre.includes(hint))) {
+          score += 3;
+        }
+
+        if (mood.titleHints.some((hint) => title.includes(hint))) {
+          score += 2;
+        }
+
+        if (song.favorite) {
+          score += 1;
+        }
+
+        return { song, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || b.song.playCount - a.song.playCount)
+      .map((entry) => entry.song)
+      .slice(0, 80);
+
+    return { mood, songs: scored };
+  });
+
+  return scoredMixes
+    .filter((entry) => entry.songs.length > 0)
+    .map((entry) =>
+      mapPlaylist(
+        `smart_${entry.mood.id}_mix`,
+        entry.mood.name,
+        entry.mood.description,
+        entry.songs,
+        'smart',
+      ),
+    );
 };
 
 const mapPlaylist = (
@@ -146,10 +242,12 @@ export const generateSmartPlaylists = (songs: Song[]): Playlist[] => {
   const dailyMix = pickDailyMix(songs);
   const onRepeat = pickOnRepeat(songs);
   const genreMixes = buildGenreMixes(songs);
+  const moodMixes = buildMoodMixes(songs);
 
   return [
     mapPlaylist('smart_daily_mix', 'Daily Mix', 'Fresh daily mix with genre balance.', dailyMix),
     mapPlaylist('smart_on_repeat', 'On Repeat', 'Songs you have been playing most this week.', onRepeat),
+    ...moodMixes,
     ...genreMixes,
     mapPlaylist('smart_recently_played', 'Recently Played', 'Tracks you listened to most recently.', recentlyPlayed),
     mapPlaylist('smart_recently_added', 'Recently Added', 'Latest tracks added to your library.', recentlyAdded),

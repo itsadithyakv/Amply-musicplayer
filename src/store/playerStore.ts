@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, PlaybackMode, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
 import { useLibraryStore } from '@/store/libraryStore';
-import { readStorageJson, writeStorageJson } from '@/services/storageService';
+import { isTauri, readStorageJson, writeStorageJson } from '@/services/storageService';
 
 interface PlayerState {
   initialized: boolean;
@@ -37,6 +37,9 @@ interface PlayerState {
   setCrossfadeDuration: (durationSec: number) => Promise<void>;
   setGaplessEnabled: (enabled: boolean) => Promise<void>;
   setVolumeNormalizationEnabled: (enabled: boolean) => Promise<void>;
+  setLaunchOnStartup: (enabled: boolean) => Promise<void>;
+  setLyricsVisualsEnabled: (enabled: boolean) => Promise<void>;
+  setLyricsVisualTheme: (theme: AppSettings['lyricsVisualTheme']) => Promise<void>;
   setSleepTimer: (minutes: number | null) => void;
   enqueueSong: (songId: string) => void;
   removeQueuedSong: (songId: string) => void;
@@ -50,6 +53,9 @@ const defaultSettings: AppSettings = {
   gaplessEnabled: true,
   volumeNormalizationEnabled: true,
   playbackSpeed: 1,
+  launchOnStartup: false,
+  lyricsVisualsEnabled: true,
+  lyricsVisualTheme: 'ember',
 };
 
 let sleepTimerHandle: number | null = null;
@@ -144,10 +150,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     const persisted = await readStorageJson<Partial<AppSettings>>('settings.json', {});
-    const settings: AppSettings = {
+    let settings: AppSettings = {
       ...defaultSettings,
       ...persisted,
     };
+
+    if (isTauri()) {
+      try {
+        const autostart = await import('@tauri-apps/plugin-autostart');
+        const enabled = await autostart.isEnabled();
+        settings = { ...settings, launchOnStartup: enabled };
+      } catch {
+        // Ignore autostart failures; keep persisted setting.
+      }
+    }
 
     audioEngine.setCallbacks({
       onProgress: (position, duration) => {
@@ -359,6 +375,49 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       volumeNormalizationEnabled: enabled,
     };
     audioEngine.applySettings(settings);
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setLaunchOnStartup: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      launchOnStartup: enabled,
+    };
+
+    if (isTauri()) {
+      try {
+        const autostart = await import('@tauri-apps/plugin-autostart');
+        if (enabled) {
+          await autostart.enable();
+        } else {
+          await autostart.disable();
+        }
+      } catch {
+        // Ignore autostart failures; still persist local preference.
+      }
+    }
+
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setLyricsVisualsEnabled: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      lyricsVisualsEnabled: enabled,
+    };
+
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setLyricsVisualTheme: async (theme) => {
+    const settings = {
+      ...get().settings,
+      lyricsVisualTheme: theme,
+    };
+
     set({ settings });
     await persistSettings(settings);
   },

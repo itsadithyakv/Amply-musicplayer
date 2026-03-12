@@ -6,7 +6,19 @@ import { splitArtistNames } from '@/utils/artists';
 const SearchPage = () => {
   const query = useLibraryStore((state) => state.searchQuery);
   const setSearchQuery = useLibraryStore((state) => state.setSearchQuery);
-  const songs = useLibraryStore((state) => state.getFilteredSongs());
+  const songs = useLibraryStore((state) => state.songs);
+
+  const filteredSongs = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      return songs;
+    }
+
+    return songs.filter((song) => {
+      const haystack = `${song.title} ${song.artist} ${song.album} ${song.genre}`.toLowerCase();
+      return haystack.includes(normalized);
+    });
+  }, [query, songs]);
 
   const suggestions = useMemo(() => {
     if (!query.trim()) {
@@ -15,7 +27,7 @@ const SearchPage = () => {
 
     const pool = new Set<string>();
 
-    for (const song of songs) {
+    for (const song of filteredSongs) {
       pool.add(song.title);
       for (const artistName of splitArtistNames(song.artist)) {
         pool.add(artistName);
@@ -27,7 +39,7 @@ const SearchPage = () => {
     }
 
     return [...pool];
-  }, [query, songs]);
+  }, [query, filteredSongs]);
 
   return (
     <div className="space-y-6 pb-8">
@@ -60,7 +72,13 @@ const SearchPage = () => {
         ) : null}
       </div>
 
-      <SongList songs={songs} />
+      {filteredSongs.length ? (
+        <SongList songs={filteredSongs} persistKey="search" />
+      ) : (
+        <div className="rounded-card border border-amply-border bg-amply-card p-6 text-[13px] text-amply-textMuted">
+          No results found. Try a different search term.
+        </div>
+      )}
     </div>
   );
 };

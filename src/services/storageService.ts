@@ -1,6 +1,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 const LOCAL_PREFIX = 'amply-storage:';
+const SORT_PREFIX = 'amply-songlist-sort:';
 
 export const isTauri = (): boolean => {
   if (typeof window === 'undefined') {
@@ -74,4 +75,28 @@ export const readStorageJson = async <T>(relativePath: string, fallback: T): Pro
 
 export const writeStorageJson = async <T>(relativePath: string, value: T): Promise<void> => {
   await writeStorageText(relativePath, JSON.stringify(value, null, 2));
+};
+
+export const clearStorageCache = async (): Promise<void> => {
+  if (isTauri()) {
+    await invoke('clear_storage_cache');
+    return;
+  }
+
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const keys: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i);
+    if (!key) {
+      continue;
+    }
+    if (key.startsWith(LOCAL_PREFIX) || key.startsWith(SORT_PREFIX)) {
+      keys.push(key);
+    }
+  }
+
+  keys.forEach((key) => window.localStorage.removeItem(key));
 };
