@@ -5,11 +5,58 @@ Amply is a smart offline music player for local libraries, built to feel like a 
 ## Highlights
 
 - Spotify-style desktop layout with a persistent player bar
-- Smart playlists and mixes (Daily Mix, On Repeat, Genre Mixes, etc.)
+- Smart playlists and mixes (Daily Mix, On Repeat, Genre Mixes, Happy/Sad/Party mixes)
 - Lyrics fetch and offline caching with synced karaoke highlighting
 - Advanced playback controls: crossfade, gapless, replay-gain normalization, speed control, sleep timer
 - Fast search with instant filtering and suggestions
 - Local listening stats and insights
+
+## Features
+
+- **Library scanning**
+  - Multi-folder scan with local caching
+  - Offline-first metadata and artwork handling
+- **Playback**
+  - Crossfade, gapless, shuffle/repeat, playback speed
+  - ReplayGain-based normalization (when available)
+  - Sleep timer, manual queue, drag reordering
+- **Lyrics**
+  - Online fetch with offline cache
+  - Synced highlighting and clickable seek
+  - Smooth scroll with optional ambient visuals
+- **Discovery**
+  - Smart playlists + mood mixes
+  - Recently Played, Rediscover, Top Artists
+- **Search**
+  - Instant filtering with suggestions
+  - Sort persistence
+- **Artist & genre enrichment**
+  - Cached artist profiles (music-only filtering)
+  - Genre enrichment with safe matching
+- **Media caching**
+  - Remote artist/album images are downloaded and compressed before caching to reduce storage
+- **Desktop**
+  - Tauri desktop app with local storage
+  - Startup behavior controls
+
+## Pipeline Overview
+
+1. **Scan**: Tauri command scans the local music folders and normalizes metadata.
+2. **Enrich**:
+   - Album art lookup (when missing)
+   - Genre enrichment (cached)
+   - Artist profiles (cached, music-only)
+3. **Persist**:
+   - Library cache in `storage/`
+   - Lyrics cache in `storage/lyrics_cache/`
+   - Metadata cache in `storage/metadata_cache/`
+   - Compressed artwork cache in `storage/metadata_cache/album_art_cache.json`
+4. **Playback**:
+   - Howler-based audio engine
+   - Progress + UI synchronization
+5. **UI & UX**:
+   - Home, Search, Library, Now Playing, Playlists, Stats, Settings
+   - Responsive layout with consistent theme tokens
 
 ## Tech Stack
 
@@ -55,6 +102,7 @@ amply/
   storage/
     lyrics_cache/
     playlists/
+    metadata_cache/
   music/
 ```
 

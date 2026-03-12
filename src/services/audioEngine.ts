@@ -76,6 +76,9 @@ class AudioEngine {
     gaplessEnabled: true,
     volumeNormalizationEnabled: true,
     playbackSpeed: 1,
+    launchOnStartup: false,
+    lyricsVisualsEnabled: true,
+    lyricsVisualTheme: 'ember',
   };
 
   setCallbacks(callbacks: {

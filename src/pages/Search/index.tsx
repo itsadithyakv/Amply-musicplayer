@@ -3,7 +3,7 @@ import SongList from '@/components/SongList/SongList';
 import { useLibraryStore } from '@/store/libraryStore';
 import { splitArtistNames } from '@/utils/artists';
 
-const SearchPage = () => {
+const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const query = useLibraryStore((state) => state.searchQuery);
   const setSearchQuery = useLibraryStore((state) => state.setSearchQuery);
   const songs = useLibraryStore((state) => state.songs);
@@ -42,11 +42,13 @@ const SearchPage = () => {
   }, [query, filteredSongs]);
 
   return (
-    <div className="space-y-6 pb-8">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-amply-textPrimary">Search</h1>
-        <p className="text-[13px] text-amply-textSecondary">Instant search across songs, artists, albums, genres, and playlists.</p>
-      </header>
+    <div className={embedded ? 'space-y-4' : 'space-y-6 pb-8'}>
+      {!embedded ? (
+        <header className="space-y-1">
+          <h1 className="text-2xl font-bold text-amply-textPrimary">Search</h1>
+          <p className="text-[13px] text-amply-textSecondary">Instant search across songs, artists, albums, genres, and playlists.</p>
+        </header>
+      ) : null}
 
       <div className="rounded-card border border-amply-border bg-amply-card p-4">
         <input

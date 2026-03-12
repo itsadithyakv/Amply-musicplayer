@@ -203,3 +203,19 @@ button:disabled {
     transform: translate3d(0, 0, 0) scale(1);
   }
 }
+
+.favorite-pulse {
+  animation: favoritePulse 420ms ease-out;
+}
+
+@keyframes favoritePulse {
+  0% {
+    transform: scale(1);
+  }
+  60% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

@@ -6,6 +6,37 @@ import { loadLyrics } from '@/services/lyricsFetcher';
 import { loadSongGenre } from '@/services/songMetadataService';
 import { loadArtistProfile } from '@/services/artistProfileService';
 
+const ToggleRow = ({
+  title,
+  description,
+  checked,
+  onChange,
+}: {
+  title: string;
+  description?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) => {
+  return (
+    <label className="flex items-center justify-between gap-6 rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+      <div>
+        <p className="text-[13px] font-medium text-amply-textPrimary">{title}</p>
+        {description ? <p className="mt-1 text-[11px] text-amply-textMuted">{description}</p> : null}
+      </div>
+      <span className="relative inline-flex items-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          className="peer sr-only"
+        />
+        <span className="h-5 w-9 rounded-full bg-amply-border transition-colors peer-checked:bg-amply-accent" />
+        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-amply-textPrimary transition-transform peer-checked:translate-x-4" />
+      </span>
+    </label>
+  );
+};
+
 const SettingsPage = () => {
   const libraryPaths = useLibraryStore((state) => state.libraryPaths);
   const isScanning = useLibraryStore((state) => state.isScanning);
@@ -207,7 +238,7 @@ const SettingsPage = () => {
 
         {bulkLoading ? (
           <p className="mt-3 text-[12px] text-amply-textMuted">
-            Processed {bulkProgress.done}/{bulkProgress.total} songs · Artists {bulkProgress.artists} · Lyrics {bulkProgress.lyrics} · Genres {bulkProgress.genres}
+            Processed {bulkProgress.done}/{bulkProgress.total} songs - Artists {bulkProgress.artists} - Lyrics {bulkProgress.lyrics} - Genres {bulkProgress.genres}
           </p>
         ) : null}
 
@@ -218,39 +249,33 @@ const SettingsPage = () => {
         <h2 className="text-[18px] font-bold text-amply-textPrimary">App Behavior</h2>
         <p className="mt-1 text-[13px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
 
-        <div className="mt-4 grid gap-4">
-          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
-            <span>Launch on System Startup</span>
-            <input
-              type="checkbox"
-              checked={settings.launchOnStartup}
-              onChange={(event) => {
-                void setLaunchOnStartup(event.target.checked);
-              }}
-              className="h-4 w-4 accent-amply-accent"
-            />
-          </label>
+        <div className="mt-4 grid gap-3">
+          <ToggleRow
+            title="Launch on System Startup"
+            description="Start Amply automatically when your system boots."
+            checked={settings.launchOnStartup}
+            onChange={(next) => {
+              void setLaunchOnStartup(next);
+            }}
+          />
         </div>
       </section>
 
       <section className="rounded-card border border-amply-border bg-amply-card p-4">
         <h2 className="text-[18px] font-bold text-amply-textPrimary">Advanced Playback</h2>
 
-        <div className="mt-4 grid gap-4">
-          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
-            <span>Crossfade</span>
-            <input
-              type="checkbox"
-              checked={settings.crossfadeEnabled}
-              onChange={(event) => {
-                void setCrossfadeEnabled(event.target.checked);
-              }}
-              className="h-4 w-4 accent-amply-accent"
-            />
-          </label>
+        <div className="mt-4 grid gap-3">
+          <ToggleRow
+            title="Crossfade"
+            description="Smoothly blend the end of a track into the next."
+            checked={settings.crossfadeEnabled}
+            onChange={(next) => {
+              void setCrossfadeEnabled(next);
+            }}
+          />
 
-          <label className="space-y-1 text-[13px] text-amply-textSecondary">
-            <div className="flex items-center justify-between">
+          <div className="rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+            <div className="flex items-center justify-between text-[13px] text-amply-textSecondary">
               <span>Crossfade Duration</span>
               <span>{settings.crossfadeDurationSec}s</span>
             </div>
@@ -263,36 +288,30 @@ const SettingsPage = () => {
               onChange={(event) => {
                 void setCrossfadeDuration(Number(event.target.value));
               }}
-              className="h-1 w-full cursor-pointer accent-amply-accent"
+              className="mt-2 h-1 w-full cursor-pointer accent-amply-accent"
             />
-          </label>
+          </div>
 
-          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
-            <span>Gapless Playback</span>
-            <input
-              type="checkbox"
-              checked={settings.gaplessEnabled}
-              onChange={(event) => {
-                void setGaplessEnabled(event.target.checked);
-              }}
-              className="h-4 w-4 accent-amply-accent"
-            />
-          </label>
+          <ToggleRow
+            title="Gapless Playback"
+            description="Preload the next track to avoid silence."
+            checked={settings.gaplessEnabled}
+            onChange={(next) => {
+              void setGaplessEnabled(next);
+            }}
+          />
 
-          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
-            <span>Volume Normalization</span>
-            <input
-              type="checkbox"
-              checked={settings.volumeNormalizationEnabled}
-              onChange={(event) => {
-                void setVolumeNormalizationEnabled(event.target.checked);
-              }}
-              className="h-4 w-4 accent-amply-accent"
-            />
-          </label>
+          <ToggleRow
+            title="Volume Normalization"
+            description="Balance volume using ReplayGain when available."
+            checked={settings.volumeNormalizationEnabled}
+            onChange={(next) => {
+              void setVolumeNormalizationEnabled(next);
+            }}
+          />
 
-          <label className="space-y-1 text-[13px] text-amply-textSecondary">
-            <div className="flex items-center justify-between">
+          <div className="rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+            <div className="flex items-center justify-between text-[13px] text-amply-textSecondary">
               <span>Playback Speed</span>
               <span>{settings.playbackSpeed.toFixed(2)}x</span>
             </div>
@@ -305,9 +324,9 @@ const SettingsPage = () => {
               onChange={(event) => {
                 void setPlaybackSpeed(Number(event.target.value));
               }}
-              className="h-1 w-full cursor-pointer accent-amply-accent"
+              className="mt-2 h-1 w-full cursor-pointer accent-amply-accent"
             />
-          </label>
+          </div>
         </div>
       </section>
 
@@ -315,33 +334,30 @@ const SettingsPage = () => {
         <h2 className="text-[18px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>
         <p className="mt-1 text-[13px] text-amply-textSecondary">Ambient backgrounds for the lyrics view.</p>
 
-        <div className="mt-4 grid gap-4">
-          <label className="flex items-center justify-between text-[13px] text-amply-textSecondary">
-            <span>Enable Visuals</span>
-            <input
-              type="checkbox"
-              checked={settings.lyricsVisualsEnabled}
-              onChange={(event) => {
-                void setLyricsVisualsEnabled(event.target.checked);
-              }}
-              className="h-4 w-4 accent-amply-accent"
-            />
-          </label>
+        <div className="mt-4 grid gap-3">
+          <ToggleRow
+            title="Enable Visuals"
+            description="Enable ambient visuals behind lyrics."
+            checked={settings.lyricsVisualsEnabled}
+            onChange={(next) => {
+              void setLyricsVisualsEnabled(next);
+            }}
+          />
 
-          <label className="space-y-1 text-[13px] text-amply-textSecondary">
-            <span>Theme</span>
+          <div className="rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+            <p className="text-[13px] text-amply-textSecondary">Theme</p>
             <select
               value={settings.lyricsVisualTheme}
               onChange={(event) => {
                 void setLyricsVisualTheme(event.target.value as typeof settings.lyricsVisualTheme);
               }}
-              className="w-full rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+              className="mt-2 w-full rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
             >
               <option value="ember">Ember</option>
               <option value="aurora">Aurora</option>
               <option value="mono">Mono</option>
             </select>
-          </label>
+          </div>
         </div>
       </section>
 

@@ -57,6 +57,8 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
   const setQueue = usePlayerStore((state) => state.setQueue);
   const enqueueSong = usePlayerStore((state) => state.enqueueSong);
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
+  const customPlaylists = useLibraryStore((state) => state.customPlaylists);
+  const addSongToCustomPlaylist = useLibraryStore((state) => state.addSongToCustomPlaylist);
   const storageKey = persistKey ? `amply-songlist-sort:${persistKey}` : null;
   const [sortBy, setSortBy] = useState<SongSort>(() => {
     if (!storageKey || typeof window === 'undefined') {
@@ -98,12 +100,13 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
         </label>
       </div>
 
-      <div className="grid h-12 grid-cols-[48px_1.8fr_1fr_90px_64px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
+      <div className="grid h-12 grid-cols-[48px_1.6fr_1fr_90px_64px_110px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
         <span>#</span>
         <span>Title</span>
         <span>Album</span>
         <span>Time</span>
         <span>Fav</span>
+        <span>Playlist</span>
         <span>Queue</span>
       </div>
 
@@ -126,7 +129,7 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
                   void playSongById(song.id, false);
                 }
               }}
-              className="grid h-14 grid-cols-[48px_1.8fr_1fr_90px_64px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
+              className="grid h-14 grid-cols-[48px_1.6fr_1fr_90px_64px_110px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
             >
               <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
 
@@ -157,6 +160,29 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
               >
                 {song.favorite ? 'Fav' : 'Mark'}
               </button>
+
+              <select
+                defaultValue=""
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => {
+                  event.stopPropagation();
+                  const playlistId = event.target.value;
+                  if (!playlistId) {
+                    return;
+                  }
+                  void addSongToCustomPlaylist(playlistId, song.id);
+                  event.currentTarget.value = '';
+                }}
+                disabled={!customPlaylists.length}
+                className="rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="">{customPlaylists.length ? 'Add to...' : 'No playlists'}</option>
+                {customPlaylists.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>
+                    {playlist.name}
+                  </option>
+                ))}
+              </select>
 
               <button
                 type="button"

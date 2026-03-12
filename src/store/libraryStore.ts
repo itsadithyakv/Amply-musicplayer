@@ -28,6 +28,7 @@ interface LibraryState {
   getSongById: (songId: string) => Song | undefined;
   updateSongGenre: (songId: string, genre: string) => Promise<void>;
   toggleFavorite: (songId: string) => Promise<void>;
+  addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
   recordSongPlay: (songId: string) => Promise<void>;
   upsertCustomPlaylist: (playlist: Playlist) => Promise<void>;
 }
@@ -222,6 +223,31 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(songs, customPlaylists) });
     await persistLibrary(songs, customPlaylists);
+  },
+
+  addSongToCustomPlaylist: async (playlistId, songId) => {
+    const songs = get().songs;
+    const existing = get().customPlaylists;
+    const index = existing.findIndex((entry) => entry.id === playlistId);
+    if (index < 0) {
+      return;
+    }
+
+    const playlist = existing[index];
+    if (playlist.songIds.includes(songId)) {
+      return;
+    }
+
+    const updatedPlaylist: Playlist = {
+      ...playlist,
+      songIds: [...playlist.songIds, songId],
+      updatedAt: Math.floor(Date.now() / 1000),
+    };
+
+    const updated = [...existing];
+    updated[index] = updatedPlaylist;
+    set({ customPlaylists: updated, playlists: buildPlaylists(songs, updated) });
+    await persistLibrary(songs, updated);
   },
 
   recordSongPlay: async (songId) => {

@@ -5,6 +5,7 @@ import PlayerBar from '@/components/Player/PlayerBar';
 import NowPlayingPanel from '@/components/NowPlayingPanel/NowPlayingPanel';
 import HomePage from '@/pages/Home';
 import LibraryPage from '@/pages/Library';
+import PlaylistsPage from '@/pages/Playlists';
 import NowPlayingPage from '@/pages/NowPlaying';
 import SearchPage from '@/pages/Search';
 import StatsPage from '@/pages/Stats';
@@ -85,6 +86,7 @@ const App = () => {
             <Route path="/home" element={<HomePage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/library" element={<LibraryPage />} />
+            <Route path="/playlists" element={<PlaylistsPage />} />
             <Route path="/now-playing" element={<NowPlayingPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/settings" element={<SettingsPage />} />

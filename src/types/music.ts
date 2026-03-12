@@ -55,5 +55,5 @@ export interface ListeningStats {
   topAlbumNames: string[];
 }
 
-export type LibraryTab = 'songs' | 'albums' | 'artists' | 'genres' | 'playlists';
+export type LibraryTab = 'songs' | 'albums' | 'artists' | 'genres';
 export type NowPlayingTab = 'now-playing' | 'lyrics' | 'queue';

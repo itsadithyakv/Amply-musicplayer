@@ -4,6 +4,7 @@ import logoIcon from '@/assets/icons/logo.png';
 import homeIcon from '@/assets/icons/home.svg';
 import searchIcon from '@/assets/icons/search.svg';
 import libraryIcon from '@/assets/icons/library.svg';
+import playlistsIcon from '@/assets/icons/playlists.svg';
 import settingsIcon from '@/assets/icons/settings.svg';
 import statsIcon from '@/assets/icons/stats.svg';
 
@@ -17,6 +18,7 @@ const primaryNav: NavItem[] = [
   { label: 'Home', path: '/home', icon: homeIcon },
   { label: 'Search', path: '/search', icon: searchIcon },
   { label: 'Library', path: '/library', icon: libraryIcon },
+  { label: 'Playlists', path: '/playlists', icon: playlistsIcon },
 ];
 
 const secondaryNav: NavItem[] = [
