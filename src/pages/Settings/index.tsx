@@ -165,12 +165,42 @@ const SettingsPage = () => {
               setBulkMessage(null);
               setBulkProgress({ artists: 0, lyrics: 0, genres: 0, total: totalSongs, done: 0 });
 
+              const yieldToMain = () =>
+                new Promise<void>((resolve) => {
+                  const idle = (globalThis as typeof globalThis & {
+                    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+                  }).requestIdleCallback;
+
+                  if (typeof idle === 'function') {
+                    idle(() => resolve(), { timeout: 300 });
+                    return;
+                  }
+
+                  setTimeout(() => resolve(), 0);
+                });
+
               const songs = useLibraryStore.getState().songs;
               const seenArtists = new Set<string>();
               let artistCount = 0;
               let lyricCount = 0;
               let genreCount = 0;
               let done = 0;
+              let lastUpdate = performance.now();
+
+              const updateProgress = (force = false) => {
+                const now = performance.now();
+                if (!force && now - lastUpdate < 300) {
+                  return;
+                }
+                lastUpdate = now;
+                setBulkProgress({
+                  artists: artistCount,
+                  lyrics: lyricCount,
+                  genres: genreCount,
+                  total: totalSongs,
+                  done,
+                });
+              };
 
               for (const song of songs) {
                 try {
@@ -196,16 +226,15 @@ const SettingsPage = () => {
                   // Ignore per-track failures and continue.
                 } finally {
                   done += 1;
-                  setBulkProgress({
-                    artists: artistCount,
-                    lyrics: lyricCount,
-                    genres: genreCount,
-                    total: totalSongs,
-                    done,
-                  });
+                  updateProgress();
+                }
+
+                if (done % 5 === 0) {
+                  await yieldToMain();
                 }
               }
 
+              updateProgress(true);
               setBulkLoading(false);
               setBulkMessage('Bulk fetch completed.');
             }}
@@ -390,6 +419,23 @@ const SettingsPage = () => {
         ) : (
           <p className="mt-3 text-[12px] text-amply-textMuted">No active sleep timer.</p>
         )}
+      </section>
+
+      <section className="rounded-card border border-amply-border bg-amply-card p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[13px] font-medium text-amply-textPrimary">Support Button</p>
+            <p className="mt-1 text-[12px] text-amply-textMuted">Broke college kid</p>
+          </div>
+          <a
+            href="https://paypal.me/itsadithyakv"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md bg-amply-accent px-3 py-2 text-[12px] font-medium text-black transition-colors hover:bg-amply-accentHover"
+          >
+            Support on PayPal
+          </a>
+        </div>
       </section>
     </div>
   );

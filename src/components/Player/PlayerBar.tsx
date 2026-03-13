@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import prevIcon from '@/assets/icons/prev.svg';
 import nextIcon from '@/assets/icons/next.svg';
 import playIcon from '@/assets/icons/play.svg';
@@ -19,21 +20,39 @@ const darkSurfaceIconClass = 'h-5 w-5 brightness-0 invert';
 const panelIconClass = 'h-4 w-4 brightness-0 invert';
 
 const PlayerBar = () => {
-  const currentSongId = usePlayerStore((state) => state.currentSongId);
-  const isPlaying = usePlayerStore((state) => state.isPlaying);
-  const positionSec = usePlayerStore((state) => state.positionSec);
-  const durationSec = usePlayerStore((state) => state.durationSec);
-  const shuffleEnabled = usePlayerStore((state) => state.shuffleEnabled);
-  const repeatMode = usePlayerStore((state) => state.repeatMode);
-  const volume = usePlayerStore((state) => state.volume);
-  const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
-
-  const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
-  const playNext = usePlayerStore((state) => state.playNext);
-  const playPrevious = usePlayerStore((state) => state.playPrevious);
-  const seekTo = usePlayerStore((state) => state.seekTo);
-  const setVolume = usePlayerStore((state) => state.setVolume);
-  const cyclePlaybackMode = usePlayerStore((state) => state.cyclePlaybackMode);
+  const {
+    currentSongId,
+    isPlaying,
+    positionSec,
+    durationSec,
+    shuffleEnabled,
+    repeatMode,
+    volume,
+    setNowPlayingTab,
+    togglePlayPause,
+    playNext,
+    playPrevious,
+    seekTo,
+    setVolume,
+    cyclePlaybackMode,
+  } = usePlayerStore(
+    useShallow((state) => ({
+      currentSongId: state.currentSongId,
+      isPlaying: state.isPlaying,
+      positionSec: state.positionSec,
+      durationSec: state.durationSec,
+      shuffleEnabled: state.shuffleEnabled,
+      repeatMode: state.repeatMode,
+      volume: state.volume,
+      setNowPlayingTab: state.setNowPlayingTab,
+      togglePlayPause: state.togglePlayPause,
+      playNext: state.playNext,
+      playPrevious: state.playPrevious,
+      seekTo: state.seekTo,
+      setVolume: state.setVolume,
+      cyclePlaybackMode: state.cyclePlaybackMode,
+    })),
+  );
 
   const song = useLibraryStore((state) => (currentSongId ? state.getSongById(currentSongId) : undefined));
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);

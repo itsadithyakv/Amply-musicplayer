@@ -1,8 +1,10 @@
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { Song } from '@/types/music';
 import {
   loadLyrics,
+  findLyricsCandidates,
   saveLyricsSelection,
   type LyricsCandidate,
   type LyricsResult,
@@ -45,17 +47,23 @@ const buildChoicePreview = (candidate: LyricsCandidate): string => {
 };
 
 const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) => {
-  const positionSec = usePlayerStore((state) => state.positionSec);
-  const durationSec = usePlayerStore((state) => state.durationSec);
-  const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
-  const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
+  const { positionSec, durationSec, lyricsVisualsEnabled, lyricsVisualTheme } = usePlayerStore(
+    useShallow((state) => ({
+      positionSec: state.positionSec,
+      durationSec: state.durationSec,
+      lyricsVisualsEnabled: state.settings.lyricsVisualsEnabled,
+      lyricsVisualTheme: state.settings.lyricsVisualTheme,
+    })),
+  );
   const [artworkTint, setArtworkTint] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricsResult | null>(null);
   const [choices, setChoices] = useState<LyricsCandidate[]>([]);
+  const [choiceLoading, setChoiceLoading] = useState(false);
   const [cachePath, setCachePath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingChoiceId, setSavingChoiceId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
@@ -69,7 +77,9 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     let alive = true;
     setLoading(true);
     setSavingChoiceId(null);
-    setError(null);
+    setChoiceLoading(false);
+    setLoadError(null);
+    setChoiceError(null);
     setLyrics(null);
     setChoices([]);
     setCachePath(null);
@@ -94,11 +104,11 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
           return;
         }
 
-        setError('No lyrics found for this track yet.');
+        setLoadError('No lyrics found for this track yet.');
       })
       .catch(() => {
         if (alive) {
-          setError('Lyrics fetch failed.');
+          setLoadError('Lyrics fetch failed.');
         }
       })
       .finally(() => {
@@ -304,7 +314,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
                     return;
                   }
 
-                  setError(null);
+                  setChoiceError(null);
                   setSavingChoiceId(candidate.id);
 
                   try {
@@ -312,7 +322,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
                     setLyrics(selected);
                     setChoices([]);
                   } catch {
-                    setError('Failed to save selected lyrics.');
+                    setChoiceError('Failed to save selected lyrics.');
                   } finally {
                     setSavingChoiceId(null);
                   }
@@ -332,15 +342,30 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
           })}
         </div>
 
-        {error ? <p className="text-[12px] text-red-400">{error}</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {lyrics ? (
+            <button
+              type="button"
+              onClick={() => {
+                setChoices([]);
+                setChoiceError(null);
+              }}
+              className="rounded-md border border-amply-border px-3 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            >
+              Back to lyrics
+            </button>
+          ) : null}
+        </div>
+
+        {choiceError ? <p className="text-[12px] text-red-400">{choiceError}</p> : null}
       </div>
     );
   }
 
-  if (!lyrics || error) {
+  if (!lyrics || loadError) {
     return (
       <div className={clsx('rounded-card border border-amply-border bg-amply-card p-4', fullHeight && 'h-full')}>
-        <p className="text-[13px] text-amply-textMuted">{error ?? 'No lyrics available.'}</p>
+        <p className="text-[13px] text-amply-textMuted">{loadError ?? 'No lyrics available.'}</p>
       </div>
     );
   }
@@ -435,7 +460,36 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
         </div>
       </div>
       {!lyrics.isSynced ? <p className="text-center text-[12px] text-amply-textMuted">Unsynced</p> : null}
-      <p className="text-center text-[11px] text-amply-textMuted">{lyrics.fromCache ? `Cached: ${lyrics.cachePath}` : `Saved to: ${cachePath ?? lyrics.cachePath}`}</p>
+      <div className="flex flex-wrap items-center justify-center gap-2 text-center text-[11px] text-amply-textMuted">
+        <span>{lyrics.fromCache ? `Cached: ${lyrics.cachePath}` : `Saved to: ${cachePath ?? lyrics.cachePath}`}</span>
+        <button
+          type="button"
+          disabled={choiceLoading}
+          onClick={async () => {
+            if (!song) {
+              return;
+            }
+            setChoiceError(null);
+            setChoiceLoading(true);
+            try {
+              const candidates = await findLyricsCandidates(song);
+              if (!candidates.length) {
+                setChoiceError('No alternative lyrics found.');
+                return;
+              }
+              setChoices(candidates);
+            } catch {
+              setChoiceError('Failed to fetch alternate lyrics.');
+            } finally {
+              setChoiceLoading(false);
+            }
+          }}
+          className="rounded-md border border-amply-border px-2 py-1 text-[11px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {choiceLoading ? 'Searching...' : 'Choose different lyrics'}
+        </button>
+        {choiceError ? <span className="text-[11px] text-red-400">{choiceError}</span> : null}
+      </div>
     </div>
   );
 };

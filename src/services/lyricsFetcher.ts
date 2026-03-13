@@ -201,10 +201,18 @@ const buildLyricsResult = (raw: string, fromCache: boolean, cacheKey: string): L
   };
 };
 
-const rankCandidates = (song: Song, candidates: LyricsCandidate[]): LyricsCandidate[] => {
+const rankCandidatesWithScore = (
+  song: Song,
+  candidates: LyricsCandidate[],
+): Array<{ candidate: LyricsCandidate; score: number }> => {
   return [...candidates]
-    .sort((a, b) => scoreCandidate(song, b) - scoreCandidate(song, a))
+    .map((candidate) => ({ candidate, score: scoreCandidate(song, candidate) }))
+    .sort((a, b) => b.score - a.score)
     .slice(0, 8);
+};
+
+const rankCandidates = (song: Song, candidates: LyricsCandidate[]): LyricsCandidate[] => {
+  return rankCandidatesWithScore(song, candidates).map((entry) => entry.candidate);
 };
 
 export interface LyricsResult {
@@ -237,6 +245,20 @@ export const saveLyricsSelection = async (song: Song, candidate: LyricsCandidate
   return buildLyricsResult(candidate.raw, false, key);
 };
 
+export const findLyricsCandidates = async (song: Song): Promise<LyricsCandidate[]> => {
+  let candidates = await fetchSearchCandidates(song);
+
+  if (!candidates.length) {
+    candidates = await fetchSingleCandidate(song);
+  }
+
+  if (!candidates.length) {
+    return [];
+  }
+
+  return rankCandidates(song, candidates);
+};
+
 export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   const key = cacheKeyForSong(song);
   const cached = await readStorageText(key);
@@ -250,11 +272,7 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
     };
   }
 
-  let candidates = await fetchSearchCandidates(song);
-
-  if (!candidates.length) {
-    candidates = await fetchSingleCandidate(song);
-  }
+  const candidates = await findLyricsCandidates(song);
 
   if (!candidates.length) {
     return {
@@ -263,16 +281,26 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
     };
   }
 
-  const ranked = rankCandidates(song, candidates);
+  const ranked = rankCandidatesWithScore(song, candidates);
 
   if (ranked.length === 1) {
-    const lyrics = await saveLyricsSelection(song, ranked[0]);
+    const lyrics = await saveLyricsSelection(song, ranked[0].candidate);
+    return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
+  }
+
+  const top = ranked[0];
+  const runnerUp = ranked[1];
+  const confident =
+    top.score >= 10 && (!runnerUp || top.score - runnerUp.score >= 4);
+
+  if (confident) {
+    const lyrics = await saveLyricsSelection(song, top.candidate);
     return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
   }
 
   return {
     status: 'choose',
-    candidates: ranked,
+    candidates: ranked.map((entry) => entry.candidate),
     cachePath: `storage/${key}`,
   };
 };

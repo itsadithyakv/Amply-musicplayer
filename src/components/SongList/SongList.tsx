@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
+import AutoSizer from 'react-virtualized-auto-sizer';
+import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
@@ -51,6 +53,112 @@ const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
   }
 };
 
+type SongRowData = {
+  songs: Song[];
+  queueIds: string[];
+  currentSongId: string | null;
+  playSongById: (songId: string, transition?: boolean) => Promise<void>;
+  setQueue: (songIds: string[], startSongId?: string) => void;
+  enqueueSong: (songId: string) => void;
+  toggleFavorite: (songId: string) => Promise<void>;
+  customPlaylists: Array<{ id: string; name: string; songIds: string[] }>;
+  addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
+};
+
+const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowData>) => {
+  const song = data.songs[index];
+  if (!song) {
+    return null;
+  }
+
+  const isCurrent = song.id === data.currentSongId;
+
+  return (
+    <div
+      style={style}
+      role="button"
+      tabIndex={0}
+      onClick={() => {
+        data.setQueue(data.queueIds, song.id);
+        void data.playSongById(song.id, false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          data.setQueue(data.queueIds, song.id);
+          void data.playSongById(song.id, false);
+        }
+      }}
+      className="grid h-14 grid-cols-[48px_1.6fr_1fr_90px_64px_110px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
+    >
+      <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
+
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="h-10 w-10 overflow-hidden rounded-md bg-zinc-800">
+          {song.albumArt ? (
+            <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" />
+          ) : null}
+        </div>
+        <div className="min-w-0">
+          <p className={`truncate text-[18px] font-bold ${isCurrent ? 'text-amply-accent' : 'text-amply-textPrimary'}`}>
+            {song.title}
+          </p>
+          <p className="truncate text-[14px] font-medium text-amply-textSecondary">{song.artist}</p>
+        </div>
+      </div>
+
+      <p className="truncate text-[13px] text-amply-textSecondary">{song.album}</p>
+      <p className="text-[12px] text-amply-textMuted">{formatDuration(song.duration)}</p>
+
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          void data.toggleFavorite(song.id);
+        }}
+        className={`rounded-md border border-amply-border px-2 py-1 text-[11px] transition-colors ${song.favorite ? 'border-amply-accent text-amply-accent' : 'text-amply-textMuted hover:bg-amply-hover hover:text-amply-textSecondary'}`}
+      >
+        {song.favorite ? 'Fav' : 'Mark'}
+      </button>
+
+      <select
+        defaultValue=""
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => {
+          event.stopPropagation();
+          const playlistId = event.target.value;
+          if (!playlistId) {
+            return;
+          }
+          void data.addSongToCustomPlaylist(playlistId, song.id);
+          event.currentTarget.value = '';
+        }}
+        disabled={!data.customPlaylists.length}
+        className="rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <option value="">{data.customPlaylists.length ? 'Add to...' : 'No playlists'}</option>
+        {data.customPlaylists.map((playlist) => (
+          <option key={playlist.id} value={playlist.id}>
+            {playlist.name}
+          </option>
+        ))}
+      </select>
+
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          data.enqueueSong(song.id);
+        }}
+        className="rounded-md border border-amply-border px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+      >
+        +
+      </button>
+    </div>
+  );
+});
+
+SongRow.displayName = 'SongRow';
+
 const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongListProps) => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const playSongById = usePlayerStore((state) => state.playSongById);
@@ -79,6 +187,30 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
 
   const sortedSongs = useMemo(() => sortSongs(songs, sortBy), [songs, sortBy]);
   const queueIds = useMemo(() => sortedSongs.map((song) => song.id), [sortedSongs]);
+  const rowData = useMemo<SongRowData>(
+    () => ({
+      songs: sortedSongs,
+      queueIds,
+      currentSongId,
+      playSongById,
+      setQueue,
+      enqueueSong,
+      toggleFavorite,
+      customPlaylists,
+      addSongToCustomPlaylist,
+    }),
+    [
+      sortedSongs,
+      queueIds,
+      currentSongId,
+      playSongById,
+      setQueue,
+      enqueueSong,
+      toggleFavorite,
+      customPlaylists,
+      addSongToCustomPlaylist,
+    ],
+  );
 
   return (
     <div className="overflow-hidden rounded-card border border-amply-border bg-amply-card">
@@ -110,93 +242,20 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
         <span>Queue</span>
       </div>
 
-      <div className="max-h-[62vh] overflow-y-auto">
-        {sortedSongs.map((song, index) => {
-          const isCurrent = song.id === currentSongId;
-
-          return (
-            <div
-              key={song.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                setQueue(queueIds, song.id);
-                void playSongById(song.id, false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  setQueue(queueIds, song.id);
-                  void playSongById(song.id, false);
-                }
-              }}
-              className="grid h-14 grid-cols-[48px_1.6fr_1fr_90px_64px_110px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
+      <div className="h-[62vh]">
+        <AutoSizer>
+          {({ height, width }) => (
+            <List
+              height={height}
+              width={width}
+              itemCount={sortedSongs.length}
+              itemSize={56}
+              itemData={rowData}
             >
-              <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
-
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="h-10 w-10 overflow-hidden rounded-md bg-zinc-800">
-                  {song.albumArt ? (
-                    <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                </div>
-                <div className="min-w-0">
-                  <p className={`truncate text-[18px] font-bold ${isCurrent ? 'text-amply-accent' : 'text-amply-textPrimary'}`}>
-                    {song.title}
-                  </p>
-                  <p className="truncate text-[14px] font-medium text-amply-textSecondary">{song.artist}</p>
-                </div>
-              </div>
-
-              <p className="truncate text-[13px] text-amply-textSecondary">{song.album}</p>
-              <p className="text-[12px] text-amply-textMuted">{formatDuration(song.duration)}</p>
-
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void toggleFavorite(song.id);
-                }}
-                className={`rounded-md border border-amply-border px-2 py-1 text-[11px] transition-colors ${song.favorite ? 'border-amply-accent text-amply-accent' : 'text-amply-textMuted hover:bg-amply-hover hover:text-amply-textSecondary'}`}
-              >
-                {song.favorite ? 'Fav' : 'Mark'}
-              </button>
-
-              <select
-                defaultValue=""
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => {
-                  event.stopPropagation();
-                  const playlistId = event.target.value;
-                  if (!playlistId) {
-                    return;
-                  }
-                  void addSongToCustomPlaylist(playlistId, song.id);
-                  event.currentTarget.value = '';
-                }}
-                disabled={!customPlaylists.length}
-                className="rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <option value="">{customPlaylists.length ? 'Add to...' : 'No playlists'}</option>
-                {customPlaylists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  enqueueSong(song.id);
-                }}
-                className="rounded-md border border-amply-border px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-              >
-                +
-              </button>
-            </div>
-          );
-        })}
+              {SongRow}
+            </List>
+          )}
+        </AutoSizer>
       </div>
     </div>
   );

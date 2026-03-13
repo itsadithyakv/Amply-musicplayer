@@ -65,6 +65,12 @@ class AudioEngine {
 
   private progressTimer: number | null = null;
 
+  private lastProgressPosition = 0;
+
+  private lastProgressDuration = 0;
+
+  private lastProgressEmitAt = 0;
+
   private onProgress: ((position: number, duration: number) => void) | null = null;
 
   private onEnded: (() => void) | null = null;
@@ -271,7 +277,22 @@ class AudioEngine {
       return;
     }
 
-    this.onProgress(Number(this.currentHowl.seek() || 0), this.currentHowl.duration() || 0);
+    const position = Number(this.currentHowl.seek() || 0);
+    const duration = this.currentHowl.duration() || 0;
+    const now = performance.now();
+
+    const positionDelta = Math.abs(position - this.lastProgressPosition);
+    const durationDelta = Math.abs(duration - this.lastProgressDuration);
+    const timeDelta = now - this.lastProgressEmitAt;
+
+    if (positionDelta < 0.1 && durationDelta < 0.1 && timeDelta < 750) {
+      return;
+    }
+
+    this.lastProgressPosition = position;
+    this.lastProgressDuration = duration;
+    this.lastProgressEmitAt = now;
+    this.onProgress(position, duration);
   }
 
   private stopProgressLoop(): void {
