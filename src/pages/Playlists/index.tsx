@@ -63,15 +63,40 @@ const PlaylistsPage = () => {
         </div>
 
         {showComposer ? (
-          <PlaylistComposer
-            songs={songs}
-            onSave={(playlist) => {
-              void upsertCustomPlaylist(playlist).then(() => {
-                setShowComposer(false);
-              });
-            }}
-            onCancel={() => setShowComposer(false)}
-          />
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setShowComposer(false)}
+          >
+            <div
+              className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-card border border-amply-border bg-amply-card shadow-card"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-amply-border px-5 py-4">
+                <div>
+                  <p className="text-[16px] font-semibold text-amply-textPrimary">Create Playlist</p>
+                  <p className="text-[12px] text-amply-textMuted">Add details and pick songs to include.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowComposer(false)}
+                  className="rounded-md border border-amply-border px-3 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="max-h-[calc(90vh-64px)] overflow-y-auto px-5 py-4">
+                <PlaylistComposer
+                  songs={songs}
+                  onSave={(playlist) => {
+                    void upsertCustomPlaylist(playlist).then(() => {
+                      setShowComposer(false);
+                    });
+                  }}
+                  onCancel={() => setShowComposer(false)}
+                />
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
 

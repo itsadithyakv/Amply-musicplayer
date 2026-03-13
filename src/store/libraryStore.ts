@@ -3,7 +3,9 @@ import type { Playlist, Song } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists } from '@/services/playlistGenerator';
-import { hydrateSongsWithCachedGenres } from '@/services/songMetadataService';
+import { hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
+import { loadLyrics } from '@/services/lyricsFetcher';
+import { loadArtistProfile } from '@/services/artistProfileService';
 
 interface LibraryPersisted {
   songs: Song[];
@@ -18,6 +20,16 @@ interface LibraryState {
   playlists: Playlist[];
   customPlaylists: Playlist[];
   searchQuery: string;
+  metadataFetch: {
+    running: boolean;
+    total: number;
+    done: number;
+    artists: number;
+    lyrics: number;
+    genres: number;
+    message: string | null;
+  };
+  startMetadataFetch: () => void;
   initialize: () => Promise<void>;
   scanLibrary: (pathsOverride?: string[]) => Promise<void>;
   setLibraryPaths: (paths: string[]) => Promise<void>;
@@ -61,6 +73,136 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   playlists: [],
   customPlaylists: [],
   searchQuery: '',
+  metadataFetch: {
+    running: false,
+    total: 0,
+    done: 0,
+    artists: 0,
+    lyrics: 0,
+    genres: 0,
+    message: null,
+  },
+
+  startMetadataFetch: () => {
+    const state = get();
+    if (state.metadataFetch.running) {
+      return;
+    }
+
+    const songs = state.songs;
+    if (!songs.length) {
+      set({
+        metadataFetch: {
+          running: false,
+          total: 0,
+          done: 0,
+          artists: 0,
+          lyrics: 0,
+          genres: 0,
+          message: 'No songs available to scan.',
+        },
+      });
+      return;
+    }
+
+    set({
+      metadataFetch: {
+        running: true,
+        total: songs.length,
+        done: 0,
+        artists: 0,
+        lyrics: 0,
+        genres: 0,
+        message: null,
+      },
+    });
+
+    const yieldToMain = () =>
+      new Promise<void>((resolve) => {
+        const idle = (globalThis as typeof globalThis & {
+          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        }).requestIdleCallback;
+
+        if (typeof idle === 'function') {
+          idle(() => resolve(), { timeout: 300 });
+          return;
+        }
+
+        setTimeout(() => resolve(), 0);
+      });
+
+    void (async () => {
+      const seenArtists = new Set<string>();
+      let artistCount = 0;
+      let lyricCount = 0;
+      let genreCount = 0;
+      let done = 0;
+      let lastUpdate = performance.now();
+
+      const updateProgress = (force = false) => {
+        const now = performance.now();
+        if (!force && now - lastUpdate < 300) {
+          return;
+        }
+        lastUpdate = now;
+        set({
+          metadataFetch: {
+            running: true,
+            total: songs.length,
+            done,
+            artists: artistCount,
+            lyrics: lyricCount,
+            genres: genreCount,
+            message: null,
+          },
+        });
+      };
+
+      for (const song of songs) {
+        try {
+          const artistKey = song.artist?.trim().toLowerCase();
+          if (artistKey && !seenArtists.has(artistKey)) {
+            seenArtists.add(artistKey);
+            const artistResult = await loadArtistProfile(song.artist);
+            if (artistResult.status === 'ready') {
+              artistCount += 1;
+            }
+          }
+
+          const lyricResult = await loadLyrics(song);
+          if (lyricResult.status === 'ready') {
+            lyricCount += 1;
+          }
+
+          const genreResult = await loadSongGenre(song);
+          if (genreResult.status === 'ready') {
+            genreCount += 1;
+          }
+        } catch {
+          // Ignore per-track failures and continue.
+        } finally {
+          done += 1;
+          updateProgress();
+        }
+
+        if (done % 5 === 0) {
+          await yieldToMain();
+        }
+      }
+
+      set({
+        metadataFetch: {
+          running: false,
+          total: songs.length,
+          done,
+          artists: artistCount,
+          lyrics: lyricCount,
+          genres: genreCount,
+          message: 'Bulk fetch completed.',
+        },
+      });
+    })();
+  },
 
   initialize: async () => {
     if (get().initialized) {

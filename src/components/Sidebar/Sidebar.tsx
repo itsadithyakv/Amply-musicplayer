@@ -7,6 +7,7 @@ import libraryIcon from '@/assets/icons/library.svg';
 import playlistsIcon from '@/assets/icons/playlists.svg';
 import settingsIcon from '@/assets/icons/settings.svg';
 import statsIcon from '@/assets/icons/stats.svg';
+import { useLibraryStore } from '@/store/libraryStore';
 
 interface NavItem {
   label: string;
@@ -29,6 +30,8 @@ const secondaryNav: NavItem[] = [
 const navIconClass = 'h-6 w-6 brightness-0 invert opacity-85 transition-opacity group-hover:opacity-100';
 
 const Sidebar = () => {
+  const metadataFetch = useLibraryStore((state) => state.metadataFetch);
+
   return (
     <aside className="flex h-full min-h-0 w-[240px] flex-col border-r border-amply-border bg-amply-bgPrimary p-4">
       <div className="mb-8 flex items-center gap-3 px-2">
@@ -38,6 +41,11 @@ const Sidebar = () => {
           <p className="text-xs text-amply-textSecondary">Offline Music Player</p>
         </div>
       </div>
+      {metadataFetch.running ? (
+        <div className="mb-6 rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[11px] text-amply-textSecondary">
+          Fetching metadata... {metadataFetch.done}/{metadataFetch.total}
+        </div>
+      ) : null}
 
       <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-4">
         <div className="space-y-2">

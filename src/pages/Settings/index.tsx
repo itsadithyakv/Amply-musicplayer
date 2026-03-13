@@ -2,9 +2,6 @@ import { useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { clearStorageCache, pickMusicFolders } from '@/services/storageService';
-import { loadLyrics } from '@/services/lyricsFetcher';
-import { loadSongGenre } from '@/services/songMetadataService';
-import { loadArtistProfile } from '@/services/artistProfileService';
 
 const ToggleRow = ({
   title,
@@ -59,8 +56,8 @@ const SettingsPage = () => {
   const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
 
   const [localPath, setLocalPath] = useState('');
-  const [bulkLoading, setBulkLoading] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState({ artists: 0, lyrics: 0, genres: 0, total: 0, done: 0 });
+  const metadataFetch = useLibraryStore((state) => state.metadataFetch);
+  const startMetadataFetch = useLibraryStore((state) => state.startMetadataFetch);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
 
@@ -149,69 +146,14 @@ const SettingsPage = () => {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={bulkLoading}
-            onClick={async () => {
-              if (bulkLoading) {
-                return;
-              }
-
-              const totalSongs = useLibraryStore.getState().songs.length;
-              if (!totalSongs) {
-                setBulkMessage('No songs available to scan.');
-                return;
-              }
-
-              setBulkLoading(true);
+            disabled={metadataFetch.running}
+            onClick={() => {
               setBulkMessage(null);
-              setBulkProgress({ artists: 0, lyrics: 0, genres: 0, total: totalSongs, done: 0 });
-
-              const songs = useLibraryStore.getState().songs;
-              const seenArtists = new Set<string>();
-              let artistCount = 0;
-              let lyricCount = 0;
-              let genreCount = 0;
-              let done = 0;
-
-              for (const song of songs) {
-                try {
-                  const artistKey = song.artist?.trim().toLowerCase();
-                  if (artistKey && !seenArtists.has(artistKey)) {
-                    seenArtists.add(artistKey);
-                    const artistResult = await loadArtistProfile(song.artist);
-                    if (artistResult.status === 'ready') {
-                      artistCount += 1;
-                    }
-                  }
-
-                  const lyricResult = await loadLyrics(song);
-                  if (lyricResult.status === 'ready') {
-                    lyricCount += 1;
-                  }
-
-                  const genreResult = await loadSongGenre(song);
-                  if (genreResult.status === 'ready') {
-                    genreCount += 1;
-                  }
-                } catch {
-                  // Ignore per-track failures and continue.
-                } finally {
-                  done += 1;
-                  setBulkProgress({
-                    artists: artistCount,
-                    lyrics: lyricCount,
-                    genres: genreCount,
-                    total: totalSongs,
-                    done,
-                  });
-                }
-              }
-
-              setBulkLoading(false);
-              setBulkMessage('Bulk fetch completed.');
+              startMetadataFetch();
             }}
             className="rounded-md bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {bulkLoading ? 'Fetching...' : 'Fetch All Metadata'}
+            {metadataFetch.running ? 'Fetching...' : 'Fetch All Metadata'}
           </button>
 
           <button
@@ -236,13 +178,15 @@ const SettingsPage = () => {
           </button>
         </div>
 
-        {bulkLoading ? (
+        {metadataFetch.running ? (
           <p className="mt-3 text-[12px] text-amply-textMuted">
-            Processed {bulkProgress.done}/{bulkProgress.total} songs - Artists {bulkProgress.artists} - Lyrics {bulkProgress.lyrics} - Genres {bulkProgress.genres}
+            Processed {metadataFetch.done}/{metadataFetch.total} songs - Artists {metadataFetch.artists} - Lyrics {metadataFetch.lyrics} - Genres {metadataFetch.genres}
           </p>
         ) : null}
 
-        {bulkMessage ? <p className="mt-3 text-[12px] text-amply-textMuted">{bulkMessage}</p> : null}
+        {metadataFetch.message || bulkMessage ? (
+          <p className="mt-3 text-[12px] text-amply-textMuted">{metadataFetch.message ?? bulkMessage}</p>
+        ) : null}
       </section>
 
       <section className="rounded-card border border-amply-border bg-amply-card p-4">
