@@ -169,6 +169,34 @@ const buildMoodMixes = (songs: Song[]): Playlist[] => {
       genreHints: ['dance', 'edm', 'club', 'house', 'hip hop', 'hip-hop', 'rap', 'reggaeton'],
       titleHints: ['party', 'club', 'dance', 'night', 'mix'],
     },
+    {
+      id: 'main_character',
+      name: 'Main Character Vibes',
+      description: 'Big energy and cinematic feel-good tracks.',
+      genreHints: ['pop', 'indie', 'electronic', 'rock'],
+      titleHints: ['vibes', 'glow', 'shine', 'star', 'dream', 'hero'],
+    },
+    {
+      id: 'chill',
+      name: 'Chill Mix',
+      description: 'Laid-back tracks for winding down.',
+      genreHints: ['chill', 'ambient', 'lofi', 'lo-fi', 'acoustic', 'indie'],
+      titleHints: ['chill', 'slow', 'late', 'night', 'blue'],
+    },
+    {
+      id: 'focus',
+      name: 'Focus Mix',
+      description: 'Steady, low-distraction tracks for deep work.',
+      genreHints: ['instrumental', 'ambient', 'piano', 'classical', 'lofi', 'lo-fi'],
+      titleHints: ['focus', 'study', 'work', 'concentration', 'calm'],
+    },
+    {
+      id: 'workout',
+      name: 'Workout Mix',
+      description: 'High-intensity tracks to keep you moving.',
+      genreHints: ['edm', 'electronic', 'rock', 'hip hop', 'hip-hop', 'metal'],
+      titleHints: ['run', 'burn', 'power', 'move', 'energy'],
+    },
   ];
 
   const scoredMixes = moods.map((mood) => {
