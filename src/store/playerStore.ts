@@ -225,6 +225,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     });
 
     await useLibraryStore.getState().recordSongPlay(songId);
+    void useLibraryStore.getState().refreshSongGenreIfUnknown(songId);
   },
 
   togglePlayPause: () => {

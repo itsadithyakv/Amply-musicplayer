@@ -6,6 +6,7 @@ import { generateSmartPlaylists } from '@/services/playlistGenerator';
 import { hasCachedGenre, hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
 import { hasCachedLyrics, loadLyrics } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
+import { filterAndRankSongs } from '@/utils/search';
 
 interface LibraryPersisted {
   songs: Song[];
@@ -39,6 +40,7 @@ interface LibraryState {
   getFilteredSongs: () => Song[];
   getSongById: (songId: string) => Song | undefined;
   updateSongGenre: (songId: string, genre: string) => Promise<void>;
+  refreshSongGenreIfUnknown: (songId: string) => Promise<void>;
   toggleFavorite: (songId: string) => Promise<void>;
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
   recordSongPlay: (songId: string) => Promise<void>;
@@ -63,6 +65,8 @@ const persistLibrary = async (songs: Song[], customPlaylists: Playlist[]): Promi
   await writeStorageJson(libraryCachePath, payload);
   await writeStorageJson(customPlaylistsPath, customPlaylists);
 };
+
+const genreRefreshInFlight = new Set<string>();
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   initialized: false,
@@ -340,16 +344,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   getFilteredSongs: () => {
     const { songs, searchQuery } = get();
-    const query = searchQuery.trim().toLowerCase();
-
-    if (!query) {
-      return songs;
-    }
-
-    return songs.filter((song) => {
-      const haystack = `${song.title} ${song.artist} ${song.album} ${song.genre}`.toLowerCase();
-      return haystack.includes(query);
-    });
+    return filterAndRankSongs(songs, searchQuery);
   },
 
   getSongById: (songId) => {
@@ -386,6 +381,32 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(songs, customPlaylists) });
     await persistLibrary(songs, customPlaylists);
+  },
+
+  refreshSongGenreIfUnknown: async (songId) => {
+    if (genreRefreshInFlight.has(songId)) {
+      return;
+    }
+
+    const song = get().getSongById(songId);
+    if (!song) {
+      return;
+    }
+
+    const normalized = song.genre?.trim().toLowerCase();
+    if (normalized && normalized !== 'unknown genre') {
+      return;
+    }
+
+    genreRefreshInFlight.add(songId);
+    try {
+      const genreResult = await loadSongGenre(song);
+      if (genreResult.status === 'ready' && genreResult.genre) {
+        await get().updateSongGenre(songId, genreResult.genre);
+      }
+    } finally {
+      genreRefreshInFlight.delete(songId);
+    }
   },
 
   toggleFavorite: async (songId) => {

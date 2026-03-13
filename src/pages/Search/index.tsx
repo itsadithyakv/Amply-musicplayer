@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import SongList from '@/components/SongList/SongList';
 import { useLibraryStore } from '@/store/libraryStore';
 import { splitArtistNames } from '@/utils/artists';
+import { filterAndRankSongs } from '@/utils/search';
 
 const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const query = useLibraryStore((state) => state.searchQuery);
@@ -9,15 +10,7 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const songs = useLibraryStore((state) => state.songs);
 
   const filteredSongs = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return songs;
-    }
-
-    return songs.filter((song) => {
-      const haystack = `${song.title} ${song.artist} ${song.album} ${song.genre}`.toLowerCase();
-      return haystack.includes(normalized);
-    });
+    return filterAndRankSongs(songs, query);
   }, [query, songs]);
 
   const suggestions = useMemo(() => {
