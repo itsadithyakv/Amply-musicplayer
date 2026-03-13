@@ -139,6 +139,25 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       let done = 0;
       let lastUpdate = performance.now();
 
+      const pendingSongs = songs.filter(
+        (song) => song.genre.trim().toLowerCase() === 'unknown genre' || !song.genre.trim(),
+      );
+
+      if (!pendingSongs.length) {
+        set({
+          metadataFetch: {
+            running: false,
+            total: songs.length,
+            done: songs.length,
+            artists: 0,
+            lyrics: 0,
+            genres: 0,
+            message: 'All metadata already cached.',
+          },
+        });
+        return;
+      }
+
       const updateProgress = (force = false) => {
         const now = performance.now();
         if (!force && now - lastUpdate < 300) {
@@ -158,7 +177,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         });
       };
 
-      for (const song of songs) {
+      for (const song of pendingSongs) {
         try {
           const artistKey = song.artist?.trim().toLowerCase();
           if (artistKey && !seenArtists.has(artistKey)) {
@@ -177,6 +196,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           const genreResult = await loadSongGenre(song);
           if (genreResult.status === 'ready') {
             genreCount += 1;
+            if (genreResult.genre && genreResult.genre.toLowerCase() !== 'unknown genre') {
+              await get().updateSongGenre(song.id, genreResult.genre);
+            }
           }
         } catch {
           // Ignore per-track failures and continue.

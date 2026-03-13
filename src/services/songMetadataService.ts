@@ -13,6 +13,32 @@ const slugify = (value: string): string => {
 
 const normalize = (value: string): string => value.trim().toLowerCase();
 
+const stripParens = (value: string): string =>
+  value.replace(/\s*[\(\[].*?[\)\]]/g, ' ').replace(/\s+/g, ' ').trim();
+
+const normalizeTitle = (value: string): string => {
+  const cleaned = stripParens(value).split(' - ')[0] ?? value;
+  return cleaned.trim().toLowerCase();
+};
+
+const normalizeArtist = (value: string): string => {
+  return stripParens(value)
+    .replace(/\bfeat\.?\b|\bft\.?\b|\bfeaturing\b/gi, ' ')
+    .replace(/&|\+|\/|×| x /gi, ',')
+    .replace(/\s+&\s+/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+};
+
+const splitArtists = (value: string): string[] => {
+  const normalized = normalizeArtist(value);
+  return normalized
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+};
+
 const isUnknownGenre = (value: string | undefined): boolean => {
   if (!value?.trim()) {
     return true;
@@ -26,8 +52,8 @@ const cacheKeyForSong = (song: Song): string => {
 };
 
 const isCloseMatch = (candidate: string, target: string): boolean => {
-  const left = normalize(candidate);
-  const right = normalize(target);
+  const left = normalizeTitle(candidate);
+  const right = normalizeTitle(target);
 
   if (!left || !right) {
     return false;
@@ -44,7 +70,29 @@ const isCloseMatch = (candidate: string, target: string): boolean => {
   return left.includes(right) || right.includes(left);
 };
 
-const isExactMatch = (candidate: string, target: string): boolean => normalize(candidate) === normalize(target);
+const isExactMatch = (candidate: string, target: string): boolean => normalizeTitle(candidate) === normalizeTitle(target);
+
+const isArtistCloseMatch = (candidate: string, target: string): boolean => {
+  const leftParts = splitArtists(candidate);
+  const rightParts = splitArtists(target);
+
+  if (!leftParts.length || !rightParts.length) {
+    return false;
+  }
+
+  for (const left of leftParts) {
+    for (const right of rightParts) {
+      if (left === right) {
+        return true;
+      }
+      if (left.length >= 3 && right.length >= 3 && (left.includes(right) || right.includes(left))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
 
 interface ItunesSongHit {
   trackName?: string;
@@ -55,7 +103,7 @@ interface ItunesSongHit {
 const scoreHit = (song: Song, hit: ItunesSongHit): number => {
   let score = 0;
   const trackMatch = hit.trackName ? isCloseMatch(hit.trackName, song.title) : false;
-  const artistMatch = hit.artistName ? isCloseMatch(hit.artistName, song.artist) : false;
+  const artistMatch = hit.artistName ? isArtistCloseMatch(hit.artistName, song.artist) : false;
 
   if (!trackMatch || !artistMatch) {
     return 0;
@@ -90,7 +138,7 @@ const fetchGenre = async (song: Song): Promise<string | null> => {
     return null;
   }
 
-  const MIN_SCORE = 9;
+  const MIN_SCORE = 7;
   const ranked = [...hits]
     .map((hit) => ({ hit, score: scoreHit(song, hit) }))
     .filter((entry) => entry.score >= MIN_SCORE)
