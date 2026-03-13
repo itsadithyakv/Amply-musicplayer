@@ -43,7 +43,9 @@ const Sidebar = () => {
       </div>
       {metadataFetch.running ? (
         <div className="mb-6 rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[11px] text-amply-textSecondary">
-          Fetching metadata... {metadataFetch.done}/{metadataFetch.total}
+          {metadataFetch.total > 0
+            ? `Fetching metadata... ${metadataFetch.done}/${metadataFetch.total} pending`
+            : 'Checking metadata cache...'}
         </div>
       ) : null}
 

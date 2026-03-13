@@ -250,6 +250,17 @@ const isValidCachedSummary = (summary: string | undefined): boolean => {
   return !isDisambiguationText(summary) && isMusicRelatedText(summary);
 };
 
+export const hasCachedArtistProfile = async (artistNameRaw: string): Promise<boolean> => {
+  const artistName = artistNameRaw.trim();
+  if (!artistName || artistName.toLowerCase() === 'unknown artist') {
+    return true;
+  }
+
+  const cacheKey = cacheKeyForArtist(artistName);
+  const cached = await readStorageJson<ArtistProfile | null>(cacheKey, null);
+  return Boolean(cached?.summary?.trim() && isValidCachedSummary(cached.summary));
+};
+
 export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistProfileLoadResult> => {
   const artistName = artistNameRaw.trim();
   const cacheKey = cacheKeyForArtist(artistName);

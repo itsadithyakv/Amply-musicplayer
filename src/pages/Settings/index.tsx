@@ -15,9 +15,9 @@ const ToggleRow = ({
   onChange: (next: boolean) => void;
 }) => {
   return (
-    <label className="flex items-center justify-between gap-6 rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+    <label className="flex items-center justify-between gap-6 rounded-xl border border-amply-border bg-amply-bgSecondary px-4 py-3 shadow-sm">
       <div>
-        <p className="text-[13px] font-medium text-amply-textPrimary">{title}</p>
+        <p className="text-[13px] font-semibold text-amply-textPrimary">{title}</p>
         {description ? <p className="mt-1 text-[11px] text-amply-textMuted">{description}</p> : null}
       </div>
       <span className="relative inline-flex items-center">
@@ -62,24 +62,26 @@ const SettingsPage = () => {
   const [clearingCache, setClearingCache] = useState(false);
 
   return (
-    <div className="max-w-3xl space-y-6 pb-8">
+    <div className="max-w-3xl space-y-8 pb-10">
       <header className="space-y-1">
         <h1 className="text-2xl font-bold text-amply-textPrimary">Settings</h1>
         <p className="text-[13px] text-amply-textSecondary">Library scan settings and advanced playback controls.</p>
       </header>
 
-      <section className="rounded-card border border-amply-border bg-amply-card p-4">
-        <h2 className="text-[18px] font-bold text-amply-textPrimary">Music Library</h2>
-        <p className="mb-4 mt-1 text-[13px] text-amply-textSecondary">
-          Add one or more folders. Amply scans all folders in this list.
-        </p>
+      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+        <div className="space-y-1">
+          <h2 className="text-[18px] font-bold text-amply-textPrimary">Music Library</h2>
+          <p className="text-[13px] text-amply-textSecondary">
+            Add one or more folders. Amply scans all folders in this list.
+          </p>
+        </div>
 
-        <div className="mb-4 flex gap-3">
+        <div className="mt-4 flex flex-wrap gap-3">
           <input
             value={localPath}
             onChange={(event) => setLocalPath(event.target.value)}
             placeholder="Add folder path manually (optional)"
-            className="flex-1 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none focus:border-amply-accent"
+            className="min-w-[220px] flex-1 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none focus:border-amply-accent"
           />
           <button
             type="button"
@@ -91,7 +93,7 @@ const SettingsPage = () => {
               await addLibraryPath(value);
               setLocalPath('');
             }}
-            className="rounded-lg bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover"
+            className="rounded-full bg-amply-accent px-4 py-2 text-[13px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
           >
             Add Path
           </button>
@@ -104,7 +106,7 @@ const SettingsPage = () => {
                 await setLibraryPaths(merged);
               }
             }}
-            className="rounded-lg border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="rounded-full border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
           >
             Browse Folders
           </button>
@@ -113,7 +115,7 @@ const SettingsPage = () => {
             onClick={() => {
               void scanLibrary();
             }}
-            className="rounded-lg border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="rounded-full border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
           >
             {isScanning ? 'Scanning...' : 'Rescan'}
           </button>
@@ -121,7 +123,7 @@ const SettingsPage = () => {
 
         <div className="space-y-2">
           {libraryPaths.map((path) => (
-            <div key={path} className="flex items-center justify-between rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2">
+            <div key={path} className="flex items-center justify-between rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2">
               <p className="truncate pr-4 text-[13px] text-amply-textSecondary">{path}</p>
               <button
                 type="button"
@@ -137,11 +139,13 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-card border border-amply-border bg-amply-card p-4">
-        <h2 className="text-[18px] font-bold text-amply-textPrimary">Library Data</h2>
-        <p className="mt-1 text-[13px] text-amply-textSecondary">
-          Fetch artist info, lyrics, and genres for all songs, or clear cached data.
-        </p>
+      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+        <div className="space-y-1">
+          <h2 className="text-[18px] font-bold text-amply-textPrimary">Library Data</h2>
+          <p className="text-[13px] text-amply-textSecondary">
+            Fetch artist info, lyrics, and genres that are missing, or clear cached data.
+          </p>
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
@@ -151,9 +155,9 @@ const SettingsPage = () => {
               setBulkMessage(null);
               startMetadataFetch();
             }}
-            className="rounded-md bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-full bg-amply-accent px-4 py-2 text-[13px] font-semibold text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {metadataFetch.running ? 'Fetching...' : 'Fetch All Metadata'}
+            {metadataFetch.running ? 'Fetching...' : 'Fetch Missing Metadata'}
           </button>
 
           <button
@@ -172,26 +176,30 @@ const SettingsPage = () => {
                 setClearingCache(false);
               }
             }}
-            className="rounded-md border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-full border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
             {clearingCache ? 'Clearing...' : 'Clear Cache & Stored Data'}
           </button>
         </div>
 
-        {metadataFetch.running ? (
-          <p className="mt-3 text-[12px] text-amply-textMuted">
-            Processed {metadataFetch.done}/{metadataFetch.total} songs - Artists {metadataFetch.artists} - Lyrics {metadataFetch.lyrics} - Genres {metadataFetch.genres}
-          </p>
+        {metadataFetch.running && metadataFetch.total > 0 ? (
+          <div className="mt-3 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textMuted">
+            Processed {metadataFetch.done}/{metadataFetch.total} pending songs · Artists {metadataFetch.artists} · Lyrics {metadataFetch.lyrics} · Genres {metadataFetch.genres}
+          </div>
         ) : null}
 
         {metadataFetch.message || bulkMessage ? (
-          <p className="mt-3 text-[12px] text-amply-textMuted">{metadataFetch.message ?? bulkMessage}</p>
+          <div className="mt-3 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textMuted">
+            {metadataFetch.message ?? bulkMessage}
+          </div>
         ) : null}
       </section>
 
-      <section className="rounded-card border border-amply-border bg-amply-card p-4">
-        <h2 className="text-[18px] font-bold text-amply-textPrimary">App Behavior</h2>
-        <p className="mt-1 text-[13px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
+      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+        <div className="space-y-1">
+          <h2 className="text-[18px] font-bold text-amply-textPrimary">App Behavior</h2>
+          <p className="text-[13px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
+        </div>
 
         <div className="mt-4 grid gap-3">
           <ToggleRow
@@ -205,7 +213,7 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-card border border-amply-border bg-amply-card p-4">
+      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
         <h2 className="text-[18px] font-bold text-amply-textPrimary">Advanced Playback</h2>
 
         <div className="mt-4 grid gap-3">
@@ -274,9 +282,11 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-card border border-amply-border bg-amply-card p-4">
-        <h2 className="text-[18px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>
-        <p className="mt-1 text-[13px] text-amply-textSecondary">Ambient backgrounds for the lyrics view.</p>
+      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+        <div className="space-y-1">
+          <h2 className="text-[18px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>
+          <p className="text-[13px] text-amply-textSecondary">Ambient backgrounds for the lyrics view.</p>
+        </div>
 
         <div className="mt-4 grid gap-3">
           <ToggleRow
@@ -305,9 +315,11 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-card border border-amply-border bg-amply-card p-4">
-        <h2 className="text-[18px] font-bold text-amply-textPrimary">Sleep Timer</h2>
-        <p className="mt-1 text-[13px] text-amply-textSecondary">Stop playback automatically after a selected duration.</p>
+      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+        <div className="space-y-1">
+          <h2 className="text-[18px] font-bold text-amply-textPrimary">Sleep Timer</h2>
+          <p className="text-[13px] text-amply-textSecondary">Stop playback automatically after a selected duration.</p>
+        </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
           {[15, 30, 45, 60].map((minutes) => (
@@ -315,7 +327,7 @@ const SettingsPage = () => {
               key={minutes}
               type="button"
               onClick={() => setSleepTimer(minutes)}
-              className="rounded-md border border-amply-border px-3 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              className="rounded-full border border-amply-border px-3 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
             >
               {minutes}m
             </button>
@@ -323,7 +335,7 @@ const SettingsPage = () => {
           <button
             type="button"
             onClick={() => setSleepTimer(null)}
-            className="rounded-md bg-amply-accent px-3 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover"
+            className="rounded-full bg-amply-accent px-3 py-2 text-[13px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
           >
             Cancel Timer
           </button>

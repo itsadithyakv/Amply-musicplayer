@@ -144,7 +144,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       {isScanning ? <p className="text-[13px] text-amply-textSecondary">Scanning library...</p> : null}
       {scanError ? <p className="text-[13px] text-red-400">{scanError}</p> : null}
 
-      {activeTab === 'songs' ? <SongList songs={songs} /> : null}
+      {activeTab === 'songs' ? <SongList songs={songs} persistKey="library-songs" /> : null}
 
       {activeTab === 'albums' ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4">

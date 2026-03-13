@@ -3,9 +3,9 @@ import type { Playlist, Song } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists } from '@/services/playlistGenerator';
-import { hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
-import { loadLyrics } from '@/services/lyricsFetcher';
-import { loadArtistProfile } from '@/services/artistProfileService';
+import { hasCachedGenre, hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
+import { hasCachedLyrics, loadLyrics } from '@/services/lyricsFetcher';
+import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
 
 interface LibraryPersisted {
   songs: Song[];
@@ -108,12 +108,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({
       metadataFetch: {
         running: true,
-        total: songs.length,
+        total: 0,
         done: 0,
         artists: 0,
         lyrics: 0,
         genres: 0,
-        message: null,
+        message: 'Checking cache...',
       },
     });
 
@@ -139,16 +139,32 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       let done = 0;
       let lastUpdate = performance.now();
 
-      const pendingSongs = songs.filter(
-        (song) => song.genre.trim().toLowerCase() === 'unknown genre' || !song.genre.trim(),
-      );
+      const pendingSongs: Song[] = [];
+      let checked = 0;
+
+      for (const song of songs) {
+        const [lyricsCached, artistCached, genreCached] = await Promise.all([
+          hasCachedLyrics(song),
+          hasCachedArtistProfile(song.artist),
+          hasCachedGenre(song),
+        ]);
+
+        if (!lyricsCached || !artistCached || !genreCached) {
+          pendingSongs.push(song);
+        }
+
+        checked += 1;
+        if (checked % 25 === 0) {
+          await yieldToMain();
+        }
+      }
 
       if (!pendingSongs.length) {
         set({
           metadataFetch: {
             running: false,
-            total: songs.length,
-            done: songs.length,
+            total: 0,
+            done: 0,
             artists: 0,
             lyrics: 0,
             genres: 0,
@@ -167,7 +183,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         set({
           metadataFetch: {
             running: true,
-            total: songs.length,
+            total: pendingSongs.length,
             done,
             artists: artistCount,
             lyrics: lyricCount,
@@ -215,7 +231,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       set({
         metadataFetch: {
           running: false,
-          total: songs.length,
+          total: pendingSongs.length,
           done,
           artists: artistCount,
           lyrics: lyricCount,

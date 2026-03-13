@@ -3,6 +3,9 @@ import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
+import heartIcon from '@/assets/icons/heart.svg';
+import addIcon from '@/assets/icons/add.svg';
+import queueIcon from '@/assets/icons/queue.svg';
 
 interface SongListProps {
   songs: Song[];
@@ -100,7 +103,7 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
         </label>
       </div>
 
-      <div className="grid h-12 grid-cols-[48px_1.6fr_1fr_90px_64px_110px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
+      <div className="grid h-12 grid-cols-[48px_1.6fr_1fr_90px_64px_130px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
         <span>#</span>
         <span>Title</span>
         <span>Album</span>
@@ -129,8 +132,8 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
                   void playSongById(song.id, false);
                 }
               }}
-              className="grid h-14 grid-cols-[48px_1.6fr_1fr_90px_64px_110px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
-            >
+            className="grid h-14 grid-cols-[48px_1.6fr_1fr_90px_64px_130px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
+          >
               <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
 
               <div className="flex min-w-0 items-center gap-3">
@@ -156,33 +159,41 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
                   event.stopPropagation();
                   void toggleFavorite(song.id);
                 }}
-                className={`rounded-md border border-amply-border px-2 py-1 text-[11px] transition-colors ${song.favorite ? 'border-amply-accent text-amply-accent' : 'text-amply-textMuted hover:bg-amply-hover hover:text-amply-textSecondary'}`}
+                className={`inline-flex items-center justify-center rounded-md border border-amply-border p-2 transition-colors ${
+                  song.favorite
+                    ? 'border-amply-accent text-amply-accent'
+                    : 'text-amply-textMuted hover:bg-amply-hover hover:text-amply-textSecondary'
+                }`}
+                title={song.favorite ? 'Remove from favorites' : 'Add to favorites'}
               >
-                {song.favorite ? 'Fav' : 'Mark'}
+                <img src={heartIcon} alt="" className="h-4 w-4 brightness-0 invert" />
               </button>
 
-              <select
-                defaultValue=""
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => {
-                  event.stopPropagation();
-                  const playlistId = event.target.value;
-                  if (!playlistId) {
-                    return;
-                  }
-                  void addSongToCustomPlaylist(playlistId, song.id);
-                  event.currentTarget.value = '';
-                }}
-                disabled={!customPlaylists.length}
-                className="rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <option value="">{customPlaylists.length ? 'Add to...' : 'No playlists'}</option>
-                {customPlaylists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2">
+                <img src={addIcon} alt="" className="h-4 w-4 brightness-0 invert opacity-80" />
+                <select
+                  defaultValue=""
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => {
+                    event.stopPropagation();
+                    const playlistId = event.target.value;
+                    if (!playlistId) {
+                      return;
+                    }
+                    void addSongToCustomPlaylist(playlistId, song.id);
+                    event.currentTarget.value = '';
+                  }}
+                  disabled={!customPlaylists.length}
+                  className="w-full rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="">{customPlaylists.length ? 'Add to...' : 'No playlists'}</option>
+                  {customPlaylists.map((playlist) => (
+                    <option key={playlist.id} value={playlist.id}>
+                      {playlist.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <button
                 type="button"
@@ -190,9 +201,10 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
                   event.stopPropagation();
                   enqueueSong(song.id);
                 }}
-                className="rounded-md border border-amply-border px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                className="inline-flex items-center justify-center rounded-md border border-amply-border p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                title="Add to queue"
               >
-                +
+                <img src={queueIcon} alt="" className="h-4 w-4 brightness-0 invert" />
               </button>
             </div>
           );

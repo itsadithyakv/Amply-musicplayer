@@ -247,3 +247,13 @@ export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> =>
     };
   }
 };
+
+export const hasCachedGenre = async (song: Song): Promise<boolean> => {
+  if (!isUnknownGenre(song.genre)) {
+    return true;
+  }
+
+  const cache = await readStorageJson<SongGenreCache>(cachePath, {});
+  const cachedGenre = cache[cacheKeyForSong(song)]?.genre?.trim();
+  return Boolean(cachedGenre && !isUnknownGenre(cachedGenre));
+};

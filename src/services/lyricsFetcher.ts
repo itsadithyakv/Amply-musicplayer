@@ -326,3 +326,9 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
     cachePath: `storage/${key}`,
   };
 };
+
+export const hasCachedLyrics = async (song: Song): Promise<boolean> => {
+  const key = cacheKeyForSong(song);
+  const cached = await readStorageText(key);
+  return Boolean(cached?.trim());
+};
