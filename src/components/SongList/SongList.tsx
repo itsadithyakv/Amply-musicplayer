@@ -32,6 +32,31 @@ const sortOptions: Array<{ label: string; value: SongSort }> = [
   { label: 'Most Played', value: 'most_played' },
 ];
 
+const genreOptions = [
+  'Pop',
+  'Rock',
+  'Hip-Hop',
+  'R&B',
+  'Electronic',
+  'Indie',
+  'Country',
+  'Jazz',
+  'Classical',
+  'Metal',
+  'Folk',
+  'Latin',
+  'Reggae',
+  'Blues',
+  'Other',
+];
+
+const isUnknownGenre = (value: string | undefined): boolean => {
+  if (!value?.trim()) {
+    return true;
+  }
+  return value.trim().toLowerCase() === 'unknown genre';
+};
+
 const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
   const sorted = [...items];
 
@@ -62,6 +87,7 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
   const customPlaylists = useLibraryStore((state) => state.customPlaylists);
   const addSongToCustomPlaylist = useLibraryStore((state) => state.addSongToCustomPlaylist);
+  const updateSongGenre = useLibraryStore((state) => state.updateSongGenre);
   const storageKey = persistKey ? `amply-songlist-sort:${persistKey}` : null;
   const [sortBy, setSortBy] = useState<SongSort>(() => {
     if (!storageKey || typeof window === 'undefined') {
@@ -103,10 +129,11 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
         </label>
       </div>
 
-      <div className="grid h-12 grid-cols-[48px_1.6fr_1fr_90px_64px_130px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
+      <div className="grid h-12 grid-cols-[48px_1.6fr_1fr_0.9fr_90px_64px_130px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
         <span>#</span>
         <span>Title</span>
         <span>Album</span>
+        <span>Genre</span>
         <span>Time</span>
         <span>Fav</span>
         <span>Playlist</span>
@@ -132,7 +159,7 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
                   void playSongById(song.id, false);
                 }
               }}
-            className="grid h-14 grid-cols-[48px_1.6fr_1fr_90px_64px_130px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
+            className="grid h-14 grid-cols-[48px_1.6fr_1fr_0.9fr_90px_64px_130px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
           >
               <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
 
@@ -151,6 +178,35 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
               </div>
 
               <p className="truncate text-[13px] text-amply-textSecondary">{song.album}</p>
+
+              <div className="flex items-center">
+                {isUnknownGenre(song.genre) ? (
+                  <select
+                    defaultValue=""
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => {
+                      event.stopPropagation();
+                      const nextGenre = event.target.value;
+                      if (!nextGenre) {
+                        return;
+                      }
+                      void updateSongGenre(song.id, nextGenre);
+                      event.currentTarget.value = '';
+                    }}
+                    className="w-full rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                  >
+                    <option value="">Set genre…</option>
+                    {genreOptions.map((genre) => (
+                      <option key={genre} value={genre}>
+                        {genre}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="truncate text-[12px] text-amply-textMuted">{song.genre}</p>
+                )}
+              </div>
+
               <p className="text-[12px] text-amply-textMuted">{formatDuration(song.duration)}</p>
 
               <button
