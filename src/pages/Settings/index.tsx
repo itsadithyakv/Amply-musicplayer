@@ -15,7 +15,7 @@ const ToggleRow = ({
   onChange: (next: boolean) => void;
 }) => {
   return (
-    <label className="flex items-center justify-between gap-6 rounded-xl border border-amply-border bg-amply-bgSecondary px-4 py-3 shadow-sm">
+    <label className="flex items-center justify-between gap-6 rounded-xl border border-amply-border/60 bg-amply-surface px-4 py-3 shadow-card">
       <div>
         <p className="text-[13px] font-semibold text-amply-textPrimary">{title}</p>
         {description ? <p className="mt-1 text-[11px] text-amply-textMuted">{description}</p> : null}
@@ -64,11 +64,11 @@ const SettingsPage = () => {
   return (
     <div className="max-w-3xl space-y-8 pb-10">
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-amply-textPrimary">Settings</h1>
+        <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Settings</h1>
         <p className="text-[13px] text-amply-textSecondary">Library scan settings and advanced playback controls.</p>
       </header>
 
-      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Music Library</h2>
           <p className="text-[13px] text-amply-textSecondary">
@@ -81,7 +81,7 @@ const SettingsPage = () => {
             value={localPath}
             onChange={(event) => setLocalPath(event.target.value)}
             placeholder="Add folder path manually (optional)"
-            className="min-w-[220px] flex-1 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none focus:border-amply-accent"
+            className="min-w-[220px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
           />
           <button
             type="button"
@@ -106,7 +106,7 @@ const SettingsPage = () => {
                 await setLibraryPaths(merged);
               }
             }}
-            className="rounded-full border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="rounded-full border border-amply-border/60 px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
           >
             Browse Folders
           </button>
@@ -115,7 +115,7 @@ const SettingsPage = () => {
             onClick={() => {
               void scanLibrary();
             }}
-            className="rounded-full border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="rounded-full border border-amply-border/60 px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
           >
             {isScanning ? 'Scanning...' : 'Rescan'}
           </button>
@@ -123,14 +123,14 @@ const SettingsPage = () => {
 
         <div className="space-y-2">
           {libraryPaths.map((path) => (
-            <div key={path} className="flex items-center justify-between rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2">
+            <div key={path} className="flex items-center justify-between rounded-lg border border-amply-border/60 bg-amply-surface px-3 py-2">
               <p className="truncate pr-4 text-[13px] text-amply-textSecondary">{path}</p>
               <button
                 type="button"
                 onClick={() => {
                   void removeLibraryPath(path);
                 }}
-                className="rounded-md border border-amply-border px-2 py-1 text-[12px] text-amply-textMuted transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
+                className="rounded-md border border-amply-border/60 px-2 py-1 text-[12px] text-amply-textMuted transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
               >
                 Remove
               </button>
@@ -139,7 +139,7 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Library Data</h2>
           <p className="text-[13px] text-amply-textSecondary">
@@ -176,26 +176,26 @@ const SettingsPage = () => {
                 setClearingCache(false);
               }
             }}
-            className="rounded-full border border-amply-border px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-full border border-amply-border/60 px-4 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
             {clearingCache ? 'Clearing...' : 'Clear Cache & Stored Data'}
           </button>
         </div>
 
         {metadataFetch.running && metadataFetch.total > 0 ? (
-          <div className="mt-3 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textMuted">
-            Processed {metadataFetch.done}/{metadataFetch.total} pending songs Â· Artists {metadataFetch.artists} Â· Lyrics {metadataFetch.lyrics} Â· Genres {metadataFetch.genres}
+          <div className="mt-3 rounded-lg border border-amply-border/60 bg-amply-surface px-3 py-2 text-[12px] text-amply-textMuted">
+            Processed {metadataFetch.done}/{metadataFetch.total} pending songs · Artists {metadataFetch.artists} · Lyrics {metadataFetch.lyrics} · Genres {metadataFetch.genres}
           </div>
         ) : null}
 
         {metadataFetch.message || bulkMessage ? (
-          <div className="mt-3 rounded-lg border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textMuted">
+          <div className="mt-3 rounded-lg border border-amply-border/60 bg-amply-surface px-3 py-2 text-[12px] text-amply-textMuted">
             {metadataFetch.message ?? bulkMessage}
           </div>
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">App Behavior</h2>
           <p className="text-[13px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
@@ -213,7 +213,7 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <h2 className="text-[18px] font-bold text-amply-textPrimary">Advanced Playback</h2>
 
         <div className="mt-4 grid gap-3">
@@ -226,7 +226,7 @@ const SettingsPage = () => {
             }}
           />
 
-          <div className="rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
             <div className="flex items-center justify-between text-[13px] text-amply-textSecondary">
               <span>Crossfade Duration</span>
               <span>{settings.crossfadeDurationSec}s</span>
@@ -262,7 +262,7 @@ const SettingsPage = () => {
             }}
           />
 
-          <div className="rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
             <div className="flex items-center justify-between text-[13px] text-amply-textSecondary">
               <span>Playback Speed</span>
               <span>{settings.playbackSpeed.toFixed(2)}x</span>
@@ -282,7 +282,7 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>
           <p className="text-[13px] text-amply-textSecondary">Ambient backgrounds for the lyrics view.</p>
@@ -298,14 +298,14 @@ const SettingsPage = () => {
             }}
           />
 
-          <div className="rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3">
+          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
             <p className="text-[13px] text-amply-textSecondary">Theme</p>
             <select
               value={settings.lyricsVisualTheme}
               onChange={(event) => {
                 void setLyricsVisualTheme(event.target.value as typeof settings.lyricsVisualTheme);
               }}
-              className="mt-2 w-full rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+              className="mt-2 w-full rounded-md border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
             >
               <option value="ember">Ember</option>
               <option value="aurora">Aurora</option>
@@ -315,7 +315,7 @@ const SettingsPage = () => {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-amply-border bg-amply-card p-5 shadow-[0_12px_30px_rgba(0,0,0,0.25)]">
+      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Sleep Timer</h2>
           <p className="text-[13px] text-amply-textSecondary">Stop playback automatically after a selected duration.</p>
@@ -327,7 +327,7 @@ const SettingsPage = () => {
               key={minutes}
               type="button"
               onClick={() => setSleepTimer(minutes)}
-              className="rounded-full border border-amply-border px-3 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              className="rounded-full border border-amply-border/60 px-3 py-2 text-[13px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
             >
               {minutes}m
             </button>

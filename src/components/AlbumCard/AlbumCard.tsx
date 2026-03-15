@@ -18,9 +18,12 @@ const AlbumCard = ({ title, subtitle, artwork, onClick }: AlbumCardProps) => {
         'transition-transform duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
       )}
     >
-      <div className="h-[150px] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2233] via-[#171b24] to-[#12151c]">
+      <div className="group relative h-[150px] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2233] via-[#171b24] to-[#12151c]">
         {artwork ? (
-          <img src={artwork} alt={title} className="h-full w-full object-cover" loading="lazy" />
+          <>
+            <img src={artwork} alt={title} className="h-full w-full object-cover" loading="lazy" />
+            <div className="pointer-events-none absolute inset-0 bg-black/30 transition-opacity duration-200 ease-smooth group-hover:bg-black/20" />
+          </>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs uppercase tracking-[0.14em] text-amply-textMuted">
             Amply

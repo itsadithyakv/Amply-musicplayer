@@ -183,6 +183,10 @@ button:disabled {
   pointer-events: none;
 }
 
+.playlist-text-shadow {
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+}
+
 .artwork-collage {
   position: relative;
   display: grid;
@@ -205,6 +209,7 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.08);
   transition: transform 240ms ease;
 }
+
 
 .artwork-tile:nth-child(2) {
   transform: translate3d(6px, -6px, 0);
@@ -262,6 +267,11 @@ button:disabled {
   opacity: 0.35;
   transform: scale(1.1);
   pointer-events: none;
+}
+
+.playlist-backdrop {
+  filter: blur(18px) saturate(1.1);
+  opacity: 0.4;
 }
 
 .lyrics-surface {

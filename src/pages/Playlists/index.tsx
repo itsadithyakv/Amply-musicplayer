@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import clsx from 'clsx';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PlaylistComposer from '@/components/Playlists/PlaylistComposer';
 import { useLibraryStore } from '@/store/libraryStore';
@@ -26,6 +27,53 @@ const PlaylistsPage = () => {
     return firstSong?.albumArt;
   };
 
+  const playlistToneClasses = [
+    'bg-gradient-to-br from-[#1f2a45] via-[#151b26] to-[#0f1218]',
+    'bg-gradient-to-br from-[#3a2614] via-[#22170e] to-[#14110c]',
+    'bg-gradient-to-br from-[#1a352d] via-[#121f1b] to-[#0c1311]',
+    'bg-gradient-to-br from-[#3a1d34] via-[#23131f] to-[#130b11]',
+  ];
+
+  const playlistGlowClasses = [
+    'shadow-[0_0_0_1px_rgba(90,130,255,0.16),0_14px_30px_rgba(17,24,39,0.6)]',
+    'shadow-[0_0_0_1px_rgba(255,170,90,0.16),0_14px_30px_rgba(20,12,8,0.6)]',
+    'shadow-[0_0_0_1px_rgba(96,220,170,0.16),0_14px_30px_rgba(9,16,13,0.6)]',
+    'shadow-[0_0_0_1px_rgba(210,120,230,0.16),0_14px_30px_rgba(17,10,15,0.6)]',
+  ];
+
+  const playlistCards = useMemo(() => {
+    const mapArtworkSet = (playlist: Playlist): string[] => {
+      const artSet = new Set<string>();
+      for (const song of songs) {
+        if (!playlist.songIds.includes(song.id)) {
+          continue;
+        }
+        if (song.albumArt) {
+          artSet.add(song.albumArt);
+        }
+        if (artSet.size >= 4) {
+          break;
+        }
+      }
+      const list = [...artSet];
+      if (list.length) {
+        while (list.length < 4) {
+          list.push(list[list.length - 1]);
+        }
+      }
+      return list;
+    };
+
+    return playlists.map((playlist) => ({
+      playlist,
+      artwork: getPlaylistArtwork(playlist),
+      artworkSet: mapArtworkSet(playlist),
+      totalDuration: playlist.songIds
+        .map((id) => songs.find((song) => song.id === id)?.duration ?? 0)
+        .reduce((sum, duration) => sum + duration, 0),
+    }));
+  }, [playlists, songs]);
+
   const openPlaylistQueue = (playlistSongIds: string[], startSongId?: string) => {
     const queue = playlistSongIds.filter((songId) => songs.some((song) => song.id === songId));
     const fallbackSongId = queue[0];
@@ -43,7 +91,7 @@ const PlaylistsPage = () => {
   return (
     <div className="space-y-6 pb-8">
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-amply-textPrimary">Playlists</h1>
+        <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Playlists</h1>
         <p className="text-[13px] text-amply-textSecondary">Custom playlists and smart mixes.</p>
       </header>
 
@@ -100,10 +148,17 @@ const PlaylistsPage = () => {
         ) : null}
       </div>
 
-      <div className="space-y-3">
-        {playlists.map((playlist) => {
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {playlistCards.map(({ playlist, artwork, artworkSet, totalDuration }, index) => {
           const firstSong = songs.find((song) => playlist.songIds.includes(song.id));
-          const artwork = getPlaylistArtwork(playlist);
+          const backgroundStyle = artworkSet[0]
+            ? {
+                backgroundImage: `linear-gradient(140deg, rgba(10, 10, 12, 0.8), rgba(10, 10, 12, 0.5)), url(${artworkSet[0]})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundBlendMode: 'overlay',
+              }
+            : undefined;
 
           return (
             <div
@@ -115,34 +170,64 @@ const PlaylistsPage = () => {
 
                 openPlaylistQueue(playlist.songIds, firstSong?.id);
               }}
-              className="rounded-card border border-amply-border bg-amply-card p-4 transition-colors hover:bg-[#1d1d1d]"
+              className={clsx(
+                'playlist-card group relative overflow-hidden rounded-card border border-amply-border/60 p-5 transition-all duration-300 ease-smooth hover:scale-[1.01] hover:shadow-lift',
+                playlistToneClasses[index % playlistToneClasses.length],
+                playlistGlowClasses[index % playlistGlowClasses.length],
+              )}
+              style={backgroundStyle}
               title="Double-click to open queue"
             >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-zinc-800">
-                    {artwork ? <img src={artwork} alt={playlist.name} className="h-full w-full object-cover" /> : null}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-[18px] font-bold text-amply-textPrimary">{playlist.name}</p>
-                    <p className="truncate text-[13px] text-amply-textSecondary">{playlist.description}</p>
-                    <p className="text-[12px] text-amply-textMuted">{playlist.songIds.length} songs - double-click for queue</p>
-                  </div>
+              {artworkSet[0] ? (
+                <div className="blur-backdrop playlist-backdrop">
+                  <img src={artworkSet[0]} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
                 </div>
-                <button
-                  data-play-button="true"
-                  type="button"
-                  onClick={() => {
-                    if (!playlist.songIds.length || !firstSong) {
-                      return;
-                    }
-                    setQueue(playlist.songIds, firstSong.id);
-                    void playSongById(firstSong.id, false);
-                  }}
-                  className="rounded-full bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover"
-                >
-                  Play
-                </button>
+              ) : null}
+
+              <div className="glass-overlay" />
+
+              <div className="relative flex h-full flex-col justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="playlist-text-shadow text-[18px] font-semibold text-amply-textPrimary">{playlist.name}</p>
+                  <p className="playlist-text-shadow text-[12px] text-amply-textSecondary">
+                    {playlist.description || 'Curated playlist'}
+                  </p>
+                  <p className="playlist-text-shadow text-[12px] font-semibold text-amply-textPrimary/90">
+                    {playlist.songIds.length} songs
+                  </p>
+                  <p className="text-[11px] text-amply-textMuted">Double-click to open queue</p>
+                </div>
+
+                <div className="flex items-end justify-between gap-3">
+                  <div className="artwork-collage max-w-[220px]">
+                    {[0, 1, 2, 3].map((slot) => {
+                      const art = artworkSet[slot] ?? artworkSet[0];
+                      return (
+                        <div
+                          key={`${playlist.id}-art-${slot}`}
+                          className="artwork-tile h-20 w-20 bg-gradient-to-br from-[#1d1f2a] via-[#12151f] to-[#0c0f17]"
+                        >
+                          {art ? <img src={art} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    data-play-button="true"
+                    type="button"
+                    onClick={() => {
+                      if (!playlist.songIds.length || !firstSong) {
+                        return;
+                      }
+                      setQueue(playlist.songIds, firstSong.id);
+                      void playSongById(firstSong.id, false);
+                    }}
+                    className="rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
+                  >
+                    Play
+                  </button>
+                </div>
               </div>
             </div>
           );

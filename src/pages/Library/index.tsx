@@ -106,6 +106,46 @@ const buildArtistGroups = (songs: Song[]): ArtistGroup[] => {
   return [...groups.values()].sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
 };
 
+type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played';
+type ArtistSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
+type GenreSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
+
+const sortAlbums = (albums: Song[], sortBy: AlbumSort): Song[] => {
+  const sorted = [...albums];
+  switch (sortBy) {
+    case 'title_desc':
+      return sorted.sort((a, b) => b.album.localeCompare(a.album) || a.artist.localeCompare(b.artist));
+    case 'artist_asc':
+      return sorted.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
+    case 'most_played':
+      return sorted.sort((a, b) => b.playCount - a.playCount || a.album.localeCompare(b.album));
+    case 'title_asc':
+    default:
+      return sorted.sort((a, b) => a.album.localeCompare(b.album) || a.artist.localeCompare(b.artist));
+  }
+};
+
+const albumSortOptions: Array<{ label: string; value: AlbumSort }> = [
+  { label: 'Album (A-Z)', value: 'title_asc' },
+  { label: 'Album (Z-A)', value: 'title_desc' },
+  { label: 'Artist (A-Z)', value: 'artist_asc' },
+  { label: 'Most Played', value: 'most_played' },
+];
+
+const artistSortOptions: Array<{ label: string; value: ArtistSort }> = [
+  { label: 'Artist (A-Z)', value: 'name_asc' },
+  { label: 'Artist (Z-A)', value: 'name_desc' },
+  { label: 'Most Played', value: 'most_played' },
+  { label: 'Most Songs', value: 'most_songs' },
+];
+
+const genreSortOptions: Array<{ label: string; value: GenreSort }> = [
+  { label: 'Genre (A-Z)', value: 'name_asc' },
+  { label: 'Genre (Z-A)', value: 'name_desc' },
+  { label: 'Most Played', value: 'most_played' },
+  { label: 'Most Songs', value: 'most_songs' },
+];
+
 const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const songs = useLibraryStore((state) => state.songs);
   const isScanning = useLibraryStore((state) => state.isScanning);
@@ -114,10 +154,70 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const setQueue = usePlayerStore((state) => state.setQueue);
 
   const [activeTab, setActiveTab] = useState<LibraryTab>(initialTab);
+  const [albumSort, setAlbumSort] = useState<AlbumSort>('title_asc');
+  const [albumQuery, setAlbumQuery] = useState('');
+  const [artistSort, setArtistSort] = useState<ArtistSort>('name_asc');
+  const [artistQuery, setArtistQuery] = useState('');
+  const [genreSort, setGenreSort] = useState<GenreSort>('name_asc');
+  const [genreQuery, setGenreQuery] = useState('');
 
   const albums = useMemo(() => getRepresentativeSongs(songs, 'album'), [songs]);
+  const filteredAlbums = useMemo(() => {
+    const query = albumQuery.trim().toLowerCase();
+    if (!query) {
+      return sortAlbums(albums, albumSort);
+    }
+
+    const matches = albums.filter((song) => {
+      const album = song.album?.toLowerCase() ?? '';
+      const artist = song.artist?.toLowerCase() ?? '';
+      return album.includes(query) || artist.includes(query);
+    });
+
+    return sortAlbums(matches, albumSort);
+  }, [albums, albumQuery, albumSort]);
   const artists = useMemo(() => buildArtistGroups(songs), [songs]);
   const genres = useMemo(() => buildGenreGroups(songs), [songs]);
+
+  const filteredArtists = useMemo(() => {
+    const query = artistQuery.trim().toLowerCase();
+    const matches = query
+      ? artists.filter((artist) => artist.label.toLowerCase().includes(query))
+      : artists;
+
+    const sorted = [...matches];
+    switch (artistSort) {
+      case 'name_desc':
+        return sorted.sort((a, b) => b.label.localeCompare(a.label));
+      case 'most_played':
+        return sorted.sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length);
+      case 'most_songs':
+        return sorted.sort((a, b) => b.songs.length - a.songs.length || b.totalPlays - a.totalPlays);
+      case 'name_asc':
+      default:
+        return sorted.sort((a, b) => a.label.localeCompare(b.label));
+    }
+  }, [artists, artistQuery, artistSort]);
+
+  const filteredGenres = useMemo(() => {
+    const query = genreQuery.trim().toLowerCase();
+    const matches = query
+      ? genres.filter((genre) => genre.label.toLowerCase().includes(query))
+      : genres;
+
+    const sorted = [...matches];
+    switch (genreSort) {
+      case 'name_desc':
+        return sorted.sort((a, b) => b.label.localeCompare(a.label));
+      case 'most_played':
+        return sorted.sort((a, b) => b.songs.reduce((sum, song) => sum + song.playCount, 0) - a.songs.reduce((sum, song) => sum + song.playCount, 0));
+      case 'most_songs':
+        return sorted.sort((a, b) => b.songs.length - a.songs.length);
+      case 'name_asc':
+      default:
+        return sorted.sort((a, b) => a.label.localeCompare(b.label));
+    }
+  }, [genres, genreQuery, genreSort]);
 
   return (
     <div className="space-y-6 pb-10">
@@ -149,8 +249,32 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       {activeTab === 'songs' ? <SongList songs={songs} persistKey="library-songs" /> : null}
 
       {activeTab === 'albums' ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
-          {albums.map((song) => (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              value={albumQuery}
+              onChange={(event) => setAlbumQuery(event.target.value)}
+              placeholder="Search albums or artists..."
+              className="min-w-[240px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+            />
+            <label className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
+              Sort
+              <select
+                value={albumSort}
+                onChange={(event) => setAlbumSort(event.target.value as AlbumSort)}
+                className="rounded-md border border-amply-border/60 bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+              >
+                {albumSortOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+            {filteredAlbums.map((song) => (
             <AlbumCard
               key={`album-${song.album}`}
               title={song.album}
@@ -167,12 +291,37 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
               }}
             />
           ))}
+          </div>
         </div>
       ) : null}
 
       {activeTab === 'artists' ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
-          {artists.map((artistGroup) => (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              value={artistQuery}
+              onChange={(event) => setArtistQuery(event.target.value)}
+              placeholder="Search artists..."
+              className="min-w-[240px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+            />
+            <label className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
+              Sort
+              <select
+                value={artistSort}
+                onChange={(event) => setArtistSort(event.target.value as ArtistSort)}
+                className="rounded-md border border-amply-border/60 bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+              >
+                {artistSortOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+            {filteredArtists.map((artistGroup) => (
             <AlbumCard
               key={`artist-${artistGroup.label.toLowerCase()}`}
               title={artistGroup.label}
@@ -189,12 +338,37 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
               }}
             />
           ))}
+          </div>
         </div>
       ) : null}
 
       {activeTab === 'genres' ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
-          {genres.map((genreGroup) => (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              value={genreQuery}
+              onChange={(event) => setGenreQuery(event.target.value)}
+              placeholder="Search genres..."
+              className="min-w-[240px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[13px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+            />
+            <label className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
+              Sort
+              <select
+                value={genreSort}
+                onChange={(event) => setGenreSort(event.target.value as GenreSort)}
+                className="rounded-md border border-amply-border/60 bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+              >
+                {genreSortOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+            {filteredGenres.map((genreGroup) => (
             <AlbumCard
               key={`genre-${genreGroup.label.toLowerCase()}`}
               title={genreGroup.label}
@@ -211,6 +385,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
               }}
             />
           ))}
+          </div>
         </div>
       ) : null}
 

@@ -64,7 +64,6 @@ interface PlaylistCardItem {
   artwork?: string;
   artworks?: string[];
   songIds: string[];
-  mood?: string;
   description?: string;
   startSongId?: string;
   kind: 'smart' | 'custom';
@@ -84,7 +83,6 @@ const playlistGlowClasses = [
   'shadow-[0_0_0_1px_rgba(210,120,230,0.16),0_14px_30px_rgba(17,10,15,0.6)]',
 ];
 
-const moodLabels = ['Late Night', 'Focus', 'Glow', 'Indie', 'Chill', 'Momentum'];
 
 const HomePage = () => {
   const songs = useLibraryStore((state) => state.songs);
@@ -233,12 +231,17 @@ const HomePage = () => {
         subtitle: `${playlist.songIds.length} songs`,
         artwork: getPlaylistArtwork(playlist),
         artworks: getPlaylistArtworkSet(playlist),
-        mood: moodLabels[playlist.name.length % moodLabels.length],
         description: playlist.description,
         songIds: playlist.songIds,
         kind: 'smart' as const,
       }))
       .filter((entry) => entry.songIds.length);
+
+    const favoritesIndex = smart.findIndex((entry) => entry.id === 'smart_favorites');
+    const reorderedSmart =
+      favoritesIndex > 0
+        ? [smart[favoritesIndex], ...smart.filter((entry) => entry.id !== 'smart_favorites')]
+        : smart;
 
     const recentlyPlayedCustom = playlists
       .filter((playlist) => playlist.type === 'custom')
@@ -259,14 +262,18 @@ const HomePage = () => {
         subtitle: `Recently played - ${playlist.songIds.length} songs`,
         artwork: getPlaylistArtwork(playlist),
         artworks: getPlaylistArtworkSet(playlist),
-        mood: moodLabels[playlist.name.length % moodLabels.length],
         description: playlist.description,
         songIds: playlist.songIds,
         kind: 'custom' as const,
       }))
       .filter((entry) => entry.songIds.length);
 
-    return [...smart, ...recentlyPlayedCustom].slice(0, 6);
+    const combined = [...reorderedSmart, ...recentlyPlayedCustom];
+    const sliced = combined.slice(0, 7);
+    if (favoritesIndex >= 0 && !sliced.some((entry) => entry.id === 'smart_favorites')) {
+      sliced[sliced.length - 1] = reorderedSmart[0] ?? smart[favoritesIndex];
+    }
+    return sliced;
   }, [playlists, songsById]);
 
   const smartMixesAll = useMemo<PlaylistCardItem[]>(() => {
@@ -278,7 +285,6 @@ const HomePage = () => {
         subtitle: playlist.description || `${playlist.songIds.length} songs`,
         artwork: getPlaylistArtwork(playlist),
         artworks: getPlaylistArtworkSet(playlist),
-        mood: moodLabels[playlist.name.length % moodLabels.length],
         songIds: playlist.songIds,
         kind: 'smart' as const,
       }))
@@ -336,7 +342,7 @@ const HomePage = () => {
             const glowClass = playlistGlowClasses[index % playlistGlowClasses.length];
             const backgroundStyle = artworkSet[0]
               ? {
-                  backgroundImage: `linear-gradient(140deg, rgba(12, 12, 14, 0.65), rgba(12, 12, 14, 0.25)), url(${artworkSet[0]})`,
+                  backgroundImage: `linear-gradient(140deg, rgba(10, 10, 12, 0.78), rgba(10, 10, 12, 0.45)), url(${artworkSet[0]})`,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
                   backgroundBlendMode: 'overlay',
@@ -359,7 +365,7 @@ const HomePage = () => {
                 title="Click to play. Double-click to open queue."
               >
                 {artworkSet[0] ? (
-                  <div className="blur-backdrop">
+                  <div className="blur-backdrop playlist-backdrop">
                     <img src={artworkSet[0]} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
                   </div>
                 ) : null}
@@ -369,22 +375,21 @@ const HomePage = () => {
                 <div className="relative flex h-full flex-col justify-between gap-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-2">
-                      {item.mood ? (
-                        <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-amply-textSecondary">
-                          {item.mood}
-                        </span>
-                      ) : null}
                       <p
                         className={clsx(
-                          'max-w-[320px] font-semibold text-amply-textPrimary',
+                          'playlist-text-shadow max-w-[320px] font-semibold text-amply-textPrimary',
                           isFeatured ? 'text-[24px]' : 'text-[18px]',
                         )}
                       >
                         {item.title}
                       </p>
-                      <p className="text-[12px] text-amply-textSecondary">{item.subtitle}</p>
+                      <p className="playlist-text-shadow text-[13px] font-semibold text-amply-textPrimary/90">
+                        {item.subtitle}
+                      </p>
                       {isFeatured && item.description ? (
-                        <p className="max-w-[360px] text-[12px] text-amply-textMuted">{item.description}</p>
+                        <p className="playlist-text-shadow max-w-[360px] text-[12px] text-amply-textMuted">
+                          {item.description}
+                        </p>
                       ) : null}
                     </div>
                     <div className={clsx('playlist-play', isFeatured ? 'pr-2 pt-2' : '')}>
