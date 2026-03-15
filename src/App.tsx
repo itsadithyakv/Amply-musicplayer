@@ -77,10 +77,10 @@ const App = () => {
   }, [togglePlayPause, playNext, playPrevious]);
 
   return (
-    <div className="grid h-screen w-full grid-rows-[minmax(0,1fr)_90px] bg-amply-bgPrimary text-amply-textPrimary">
+    <div className="app-shell grid h-screen w-full grid-rows-[minmax(0,1fr)_84px] text-amply-textPrimary">
       <div className="grid min-h-0 grid-cols-[240px_minmax(0,1fr)_320px]">
         <Sidebar />
-        <main className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-6 pb-8 pt-6">
+        <main className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-8 pb-10 pt-8">
           <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<HomePage />} />

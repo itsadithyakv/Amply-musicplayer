@@ -28,7 +28,9 @@ Amply is a smart offline music player for local libraries, built to feel like a 
   - Smart playlists + mood mixes
   - Recently Played, Rediscover, Top Artists
 - **Search**
-  - Instant filtering with suggestions
+  - Tokenized matching across title, artist, album, genre
+  - Ranked results (exact and prefix matches score higher)
+  - Suggestions from top matches
   - Sort persistence
 - **Artist & genre enrichment**
   - Cached artist profiles (music-only filtering)
@@ -57,6 +59,13 @@ Amply is a smart offline music player for local libraries, built to feel like a 
 5. **UI & UX**:
    - Home, Search, Library, Now Playing, Playlists, Stats, Settings
    - Responsive layout with consistent theme tokens
+
+## Search Pipeline
+
+1. **Normalize**: input is lowercased, de-accented, and tokenized.
+2. **Score**: each song is scored by field (title, artist, album, genre), with higher weight for title and exact/prefix matches.
+3. **Rank**: results are sorted by score (best matches first).
+4. **Suggest**: quick suggestions are generated from top-ranked titles, artists, and albums.
 
 ## Mood Mixes (Sorting Logic)
 

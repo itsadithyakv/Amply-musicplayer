@@ -13,11 +13,11 @@ const AlbumCard = ({ title, subtitle, artwork, onClick }: AlbumCardProps) => {
       type="button"
       onClick={onClick}
       className={clsx(
-        'group flex h-[200px] w-[160px] flex-col rounded-card bg-amply-card p-4 text-left',
-        'transition-transform duration-200 ease-smooth hover:scale-[1.02] hover:bg-amply-hover',
+        'card-sheen group flex min-h-[220px] w-full flex-col rounded-card bg-amply-surface p-4 text-left shadow-card',
+        'transition-transform duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
       )}
     >
-      <div className="h-[160px] w-[160px] overflow-hidden rounded-lg bg-gradient-to-br from-zinc-700 via-zinc-900 to-zinc-800">
+      <div className="h-[150px] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2233] via-[#171b24] to-[#12151c]">
         {artwork ? (
           <img src={artwork} alt={title} className="h-full w-full object-cover" loading="lazy" />
         ) : (
@@ -26,7 +26,7 @@ const AlbumCard = ({ title, subtitle, artwork, onClick }: AlbumCardProps) => {
           </div>
         )}
       </div>
-      <p className="mt-3 truncate text-[13px] font-bold text-amply-textPrimary">{title}</p>
+      <p className="mt-3 truncate text-[14px] font-semibold text-amply-textPrimary">{title}</p>
       <p className="truncate text-[12px] text-amply-textSecondary">{subtitle}</p>
     </button>
   );
