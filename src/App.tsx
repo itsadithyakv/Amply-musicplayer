@@ -15,7 +15,11 @@ import { usePlayerStore } from '@/store/playerStore';
 
 const App = () => {
   const initializeLibrary = useLibraryStore((state) => state.initialize);
+  const libraryInitialized = useLibraryStore((state) => state.initialized);
+  const libraryScanning = useLibraryStore((state) => state.isScanning);
+  const metadataFetch = useLibraryStore((state) => state.metadataFetch);
   const initializePlayer = usePlayerStore((state) => state.initialize);
+  const playerInitialized = usePlayerStore((state) => state.initialized);
   const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
   const playNext = usePlayerStore((state) => state.playNext);
   const playPrevious = usePlayerStore((state) => state.playPrevious);
@@ -76,11 +80,34 @@ const App = () => {
     return () => window.removeEventListener('keydown', handler);
   }, [togglePlayPause, playNext, playPrevious]);
 
+  const isLoading = !libraryInitialized || !playerInitialized;
+
+  if (isLoading) {
+    return (
+      <div className="app-shell flex h-screen w-full items-center justify-center bg-amply-bgPrimary text-amply-textPrimary">
+        <div className="relative w-full max-w-md rounded-2xl border border-amply-border/60 bg-amply-surface/90 p-6 text-center shadow-card">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amply-surface shadow-glow">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-amply-border border-t-amply-accent" />
+          </div>
+          <h1 className="text-[20px] font-semibold">Amply</h1>
+          <p className="mt-1 text-[12px] text-amply-textSecondary">
+            {libraryScanning ? 'Scanning your library...' : 'Preparing your library...'}
+          </p>
+          {metadataFetch.running ? (
+            <p className="mt-2 text-[11px] text-amply-textMuted">
+              {metadataFetch.done}/{metadataFetch.total} cached
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="grid h-screen w-full grid-rows-[minmax(0,1fr)_90px] bg-amply-bgPrimary text-amply-textPrimary">
+    <div className="app-shell grid h-screen w-full grid-rows-[minmax(0,1fr)_84px] text-amply-textPrimary">
       <div className="grid min-h-0 grid-cols-[240px_minmax(0,1fr)_320px]">
         <Sidebar />
-        <main className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-6 pb-8 pt-6">
+        <main className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-8 pb-10 pt-8">
           <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<HomePage />} />

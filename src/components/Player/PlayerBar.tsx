@@ -62,11 +62,11 @@ const PlayerBar = () => {
   const modeLabel = playbackMode === 'shuffle' ? 'Shuffle' : playbackMode === 'repeat' ? 'Repeat' : 'In Order';
 
   return (
-    <footer className="relative z-50 h-[90px] border-t border-amply-border bg-amply-card px-4 py-2 shadow-[0_-10px_20px_rgba(0,0,0,0.42)]" style={{ backgroundColor: '#181818' }}>
+    <footer className="relative z-50 h-[84px] border-t border-amply-border/60 bg-amply-surface px-5 py-2 shadow-[0_-12px_30px_rgba(0,0,0,0.5)]">
       <div className="grid h-full grid-cols-[1.6fr_2fr_1.2fr] items-center gap-4">
         <div className="relative flex min-w-0 items-center gap-3">
-          <Link to="/now-playing" className="flex min-w-0 items-center gap-3 rounded-lg p-2 transition-colors hover:bg-amply-hover">
-            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md bg-zinc-800">
+          <Link to="/now-playing" className="flex min-w-0 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-amply-hover">
+            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800">
               {song?.albumArt ? <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" /> : null}
             </div>
             <div className="min-w-0">
@@ -110,8 +110,8 @@ const PlayerBar = () => {
                 }
                 setShowPlaylistPicker(true);
               }}
-              className={`rounded-lg border border-amply-border p-2 transition-colors ${
-                song?.favorite ? 'border-amply-accent text-amply-accent' : 'text-amply-textSecondary hover:bg-amply-hover'
+              className={`rounded-lg border border-amply-border/60 p-2 transition-colors ${
+                song?.favorite ? 'border-amply-accent text-amply-accent shadow-glow' : 'text-amply-textSecondary hover:bg-amply-hover'
               }`}
               title="Favorite (double-click to add to playlist)"
             >
@@ -136,7 +136,7 @@ const PlayerBar = () => {
               type="button"
               disabled={!song || !customPlaylists.length}
               onClick={() => setShowPlaylistPicker((value) => !value)}
-              className="rounded-lg border border-amply-border p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg border border-amply-border/60 p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
               title="Add to playlist"
             >
               <img src={addIcon} alt="Add to playlist" className={panelIconClass} />
@@ -148,7 +148,7 @@ const PlayerBar = () => {
           ) : null}
 
           {showPlaylistPicker ? (
-            <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-amply-border bg-amply-card p-2 shadow-card">
+            <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-amply-border/60 bg-amply-surface p-2 shadow-card">
               <p className="px-2 pb-2 text-[11px] uppercase tracking-wide text-amply-textMuted">Add to playlist</p>
               <div className="space-y-1">
                 {customPlaylists.length ? (
@@ -193,7 +193,7 @@ const PlayerBar = () => {
             <button
               type="button"
               onClick={togglePlayPause}
-              className="flex h-11 w-11 items-center justify-center rounded-full bg-amply-accent text-black transition-colors hover:bg-amply-accentHover"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-amply-accent text-black shadow-glow transition-colors hover:bg-amply-accentHover"
             >
               <img src={isPlaying ? pauseIcon : playIcon} alt="Play/Pause" className="h-5 w-5" />
             </button>
@@ -205,7 +205,7 @@ const PlayerBar = () => {
 
           <div className="flex items-center gap-2 text-[11px] text-amply-textMuted">
             <span className="w-9 text-right">{formatDuration(positionSec)}</span>
-            <div className="relative h-1 flex-1 rounded-full bg-[#404040]">
+            <div className="relative h-1 flex-1 rounded-full bg-[#3a3a3a]">
               <div className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent" style={{ width: `${progressPercent}%` }} />
               <input
                 type="range"
@@ -225,7 +225,7 @@ const PlayerBar = () => {
           <Link
             to="/now-playing"
             onClick={() => setNowPlayingTab('queue')}
-            className="rounded-lg border border-amply-border p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="rounded-lg border border-amply-border/60 p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
             title="Queue"
           >
             <img src={queueIcon} alt="Queue" className={panelIconClass} />
@@ -233,7 +233,7 @@ const PlayerBar = () => {
           <Link
             to="/now-playing"
             onClick={() => setNowPlayingTab('lyrics')}
-            className="rounded-lg border border-amply-border p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="rounded-lg border border-amply-border/60 p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
             title="Lyrics"
           >
             <img src={lyricsIcon} alt="Lyrics" className={panelIconClass} />

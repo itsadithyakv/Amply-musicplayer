@@ -133,17 +133,17 @@ const NowPlayingPanel = () => {
   }, [song?.artist]);
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-l border-amply-border bg-amply-bgPrimary p-4">
-      <p className="px-1 text-[13px] font-medium text-amply-textSecondary">Now Playing</p>
+    <aside className="panel-surface flex h-full min-h-0 flex-col border-l border-amply-border/60 p-5">
+      <p className="px-1 text-[13px] font-semibold text-amply-textSecondary">Now Playing</p>
 
       {!song ? (
-        <div className="mt-4 flex-1 rounded-card border border-amply-border bg-amply-card p-4">
+        <div className="mt-4 flex-1 rounded-card border border-amply-border/60 bg-amply-surface p-4">
           <p className="text-[13px] text-amply-textMuted">Select a song to view track and artist details.</p>
         </div>
       ) : (
         <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto pb-24 pr-1">
-          <div className="rounded-card border border-amply-border bg-amply-card p-4">
-            <div className="h-[260px] w-full overflow-hidden rounded-lg bg-zinc-800">
+          <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 shadow-card">
+            <div className="h-[260px] w-full overflow-hidden rounded-2xl bg-zinc-800">
               {song.albumArt ? <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" /> : null}
             </div>
             <div className="mt-3 space-y-1">
@@ -166,8 +166,8 @@ const NowPlayingPanel = () => {
             </div>
           </div>
 
-          <div className="rounded-card border border-amply-border bg-amply-card p-4">
-            <p className="text-[13px] font-medium text-amply-textPrimary">About the Artist</p>
+          <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 shadow-card">
+            <p className="text-[13px] font-semibold text-amply-textPrimary">About the Artist</p>
 
             {artistLoading ? (
               <div className="mt-3 flex items-center gap-2 text-[12px] text-amply-textSecondary">
@@ -179,7 +179,7 @@ const NowPlayingPanel = () => {
             {!artistLoading && artistStatus === 'ready' && artistProfile ? (
               <div className="mt-3 space-y-3">
                 {artistProfile.imageUrl ? (
-                  <div className="h-[160px] w-full overflow-hidden rounded-lg bg-zinc-800">
+                  <div className="h-[160px] w-full overflow-hidden rounded-2xl bg-zinc-800">
                     <img src={artistProfile.imageUrl} alt={artistProfile.artistName} className="h-full w-full object-cover" />
                   </div>
                 ) : null}

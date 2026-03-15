@@ -120,20 +120,22 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const genres = useMemo(() => buildGenreGroups(songs), [songs]);
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-6 pb-10">
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-amply-textPrimary">Library</h1>
+        <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Library</h1>
         <p className="text-[13px] text-amply-textSecondary">{songs.length.toLocaleString()} songs indexed</p>
       </header>
 
-      <div className="flex gap-2 rounded-lg border border-amply-border bg-amply-card p-2">
+      <div className="flex gap-2 rounded-xl border border-amply-border/60 bg-amply-surface p-2">
         {tabs.map((tab) => (
           <button
             key={tab.value}
             type="button"
             onClick={() => setActiveTab(tab.value)}
-            className={`rounded-md px-4 py-2 text-[13px] transition-colors ${
-              activeTab === tab.value ? 'bg-amply-hover text-amply-textPrimary' : 'text-amply-textSecondary hover:bg-amply-hover'
+            className={`rounded-lg px-4 py-2 text-[13px] transition-colors ${
+              activeTab === tab.value
+                ? 'bg-amply-hover text-amply-textPrimary shadow-glow'
+                : 'text-amply-textSecondary hover:bg-amply-hover'
             }`}
           >
             {tab.label}
@@ -147,7 +149,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       {activeTab === 'songs' ? <SongList songs={songs} persistKey="library-songs" /> : null}
 
       {activeTab === 'albums' ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
           {albums.map((song) => (
             <AlbumCard
               key={`album-${song.album}`}
@@ -169,7 +171,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       ) : null}
 
       {activeTab === 'artists' ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
           {artists.map((artistGroup) => (
             <AlbumCard
               key={`artist-${artistGroup.label.toLowerCase()}`}
@@ -191,7 +193,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       ) : null}
 
       {activeTab === 'genres' ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
           {genres.map((genreGroup) => (
             <AlbumCard
               key={`genre-${genreGroup.label.toLowerCase()}`}

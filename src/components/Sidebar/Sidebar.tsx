@@ -27,22 +27,22 @@ const secondaryNav: NavItem[] = [
   { label: 'Settings', path: '/settings', icon: settingsIcon },
 ];
 
-const navIconClass = 'h-6 w-6 brightness-0 invert opacity-85 transition-opacity group-hover:opacity-100';
+const navIconClass = 'h-5 w-5 brightness-0 invert opacity-80 transition-opacity group-hover:opacity-100';
 
 const Sidebar = () => {
   const metadataFetch = useLibraryStore((state) => state.metadataFetch);
 
   return (
-    <aside className="flex h-full min-h-0 w-[240px] flex-col border-r border-amply-border bg-amply-bgPrimary p-4">
-      <div className="mb-8 flex items-center gap-3 px-2">
-        <img src={logoIcon} alt="Amply" className="h-10 w-10 rounded-md" />
+    <aside className="panel-surface flex h-full min-h-0 w-[240px] flex-col border-r border-amply-border/60 p-5">
+      <div className="mb-10 flex items-center gap-3 px-2">
+        <img src={logoIcon} alt="Amply" className="h-10 w-10 rounded-lg shadow-card" />
         <div>
           <p className="text-sm uppercase tracking-[0.16em] text-amply-textMuted">Amply</p>
           <p className="text-xs text-amply-textSecondary">Offline Music Player</p>
         </div>
       </div>
       {metadataFetch.running ? (
-        <div className="mb-6 rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2 text-[11px] text-amply-textSecondary">
+        <div className="mb-6 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[11px] text-amply-textSecondary">
           {metadataFetch.total > 0
             ? `Fetching metadata... ${metadataFetch.done}/${metadataFetch.total} pending`
             : 'Checking metadata cache...'}
@@ -57,8 +57,10 @@ const Sidebar = () => {
               to={item.path}
               className={({ isActive }) =>
                 clsx(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2 transition-all duration-200 ease-smooth',
-                  isActive ? 'bg-amply-hover text-amply-textPrimary' : 'text-amply-textSecondary hover:bg-amply-hover',
+                  'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-200 ease-smooth',
+                  isActive
+                    ? 'bg-amply-surface text-amply-textPrimary shadow-glow'
+                    : 'text-amply-textSecondary hover:bg-amply-hover/80 hover:text-amply-textPrimary',
                 )
               }
             >
@@ -67,23 +69,27 @@ const Sidebar = () => {
             </NavLink>
           ))}
         </div>
-        <div className="my-4 h-px bg-amply-border" />
-        <div className="space-y-1">
-          {secondaryNav.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                clsx(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2 transition-all duration-200 ease-smooth',
-                  isActive ? 'bg-amply-hover text-amply-textPrimary' : 'text-amply-textSecondary hover:bg-amply-hover',
-                )
-              }
-            >
-              <img src={item.icon} alt="" className={navIconClass} />
-              <span className="text-[13px] font-medium">{item.label}</span>
-            </NavLink>
-          ))}
+        <div className="mt-auto pt-6">
+          <div className="my-5 h-px bg-amply-border/60" />
+          <div className="space-y-1">
+            {secondaryNav.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  clsx(
+                    'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-200 ease-smooth',
+                    isActive
+                      ? 'bg-amply-surface text-amply-textPrimary shadow-glow'
+                      : 'text-amply-textSecondary hover:bg-amply-hover/80 hover:text-amply-textPrimary',
+                  )
+                }
+              >
+                <img src={item.icon} alt="" className={navIconClass} />
+                <span className="text-[13px] font-medium">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
         </div>
       </nav>
     </aside>
