@@ -10,6 +10,8 @@ Amply v1.2 is a smart offline music player for local libraries, built to feel li
 - Advanced playback controls: crossfade, gapless, replay-gain normalization, speed control, sleep timer
 - Fast search with instant filtering and suggestions
 - Local listening stats and insights
+- Game Mode: ultra-lean UI for low-resource playback
+- Mini Now Playing overlay (always-on-top, translucent)
 
 ## Features
 
@@ -38,6 +40,8 @@ Amply v1.2 is a smart offline music player for local libraries, built to feel li
 - **Desktop**
   - Tauri desktop app with local storage
   - Startup behavior controls
+  - Optional overlay window for quick controls
+  - Close-to-taskbar background mode
 
 ## Pipeline Overview
 
@@ -55,7 +59,7 @@ Amply v1.2 is a smart offline music player for local libraries, built to feel li
    - Howler-based audio engine
    - Progress + UI synchronization
 5. **UI & UX**:
-   - Home, Search, Library, Now Playing, Playlists, Stats, Settings
+   - Home, Search, Library, Now Playing, Playlists, Stats, Settings, Game Mode
    - Responsive layout with consistent theme tokens
 
 ## Mood Mixes (Sorting Logic)
@@ -91,9 +95,15 @@ amply/
       Home/
       Library/
       NowPlaying/
+      GameMode/
+      Overlay/
       Search/
       Stats/
       Settings/
+    hooks/
+      useOverlayController.ts
+      useMediaSession.ts
+      useGlobalShortcuts.ts
     services/
       musicScanner.ts
       audioEngine.ts
@@ -142,5 +152,6 @@ npm run tauri dev
 - Default scan path is `music` in the project root; configurable in Settings.
 - In non-Tauri browser mode, the app falls back to demo songs.
 - Icons are included in both `assets/icons/` and `icons/`.
+- Overlay and Game Mode are controlled in Settings.
 
 
