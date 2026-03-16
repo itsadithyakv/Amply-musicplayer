@@ -1,6 +1,6 @@
-# Amply v1.2
+# Amply v1.3
 
-Amply v1.2 is a smart offline music player for local libraries, built to feel like a modern streaming app while staying entirely local.
+Amply v1.3 is a smart offline music player for local libraries, built to feel like a modern streaming app while staying entirely local.
 
 ## Highlights
 
