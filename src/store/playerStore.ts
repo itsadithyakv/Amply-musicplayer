@@ -24,11 +24,15 @@ interface PlayerState {
   setQueue: (songIds: string[], startSongId?: string) => void;
   playSongById: (songId: string, transition?: boolean) => Promise<void>;
   togglePlayPause: () => void;
-  playNext: () => Promise<void>;
+  pausePlayback: () => void;
+  resumePlayback: () => void;
+  playNext: (manual?: boolean) => Promise<void>;
   playPrevious: () => Promise<void>;
   seekTo: (positionSec: number) => void;
   setVolume: (volume: number) => void;
+  setShuffleEnabled: (enabled: boolean) => void;
   toggleShuffle: () => void;
+  toggleLoopSong: () => void;
   cycleRepeat: () => void;
   cyclePlaybackMode: () => void;
   setNowPlayingTab: (tab: NowPlayingTab) => void;
@@ -38,6 +42,9 @@ interface PlayerState {
   setGaplessEnabled: (enabled: boolean) => Promise<void>;
   setVolumeNormalizationEnabled: (enabled: boolean) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
+  setCloseToTaskbar: (enabled: boolean) => Promise<void>;
+  setGameMode: (enabled: boolean) => Promise<void>;
+  setMiniNowPlayingOverlay: (enabled: boolean) => Promise<void>;
   setLyricsVisualsEnabled: (enabled: boolean) => Promise<void>;
   setLyricsVisualTheme: (theme: AppSettings['lyricsVisualTheme']) => Promise<void>;
   setSleepTimer: (minutes: number | null) => void;
@@ -54,11 +61,18 @@ const defaultSettings: AppSettings = {
   volumeNormalizationEnabled: true,
   playbackSpeed: 1,
   launchOnStartup: false,
+  closeToTaskbar: false,
+  gameMode: false,
+  miniNowPlayingOverlay: false,
   lyricsVisualsEnabled: true,
   lyricsVisualTheme: 'ember',
 };
 
 let sleepTimerHandle: number | null = null;
+let progressFlushHandle: number | null = null;
+let lastProgressUpdate = 0;
+let pendingProgress: { position: number; duration: number } | null = null;
+const PROGRESS_UPDATE_MS = 500;
 
 const resolvePlaybackMode = (state: Pick<PlayerState, 'shuffleEnabled' | 'repeatMode'>): PlaybackMode => {
   if (state.shuffleEnabled) {
@@ -127,6 +141,60 @@ const resolvePreviousSongId = (state: PlayerState): string | null => {
   return state.queueSongIds[prevIndex] ?? null;
 };
 
+const buildUpcomingSongIds = (state: PlayerState, count = 3): string[] => {
+  const upcoming: string[] = [];
+  const seen = new Set<string>();
+  const currentId = state.currentSongId;
+  const enqueue = (id: string | null | undefined) => {
+    if (!id || id === currentId || seen.has(id)) {
+      return;
+    }
+    seen.add(id);
+    upcoming.push(id);
+  };
+
+  for (const id of state.manualQueueSongIds) {
+    enqueue(id);
+    if (upcoming.length >= count) {
+      return upcoming;
+    }
+  }
+
+  if (state.queueSongIds.length > 0) {
+    for (let i = state.queueCursor + 1; i < state.queueSongIds.length; i += 1) {
+      enqueue(state.queueSongIds[i]);
+      if (upcoming.length >= count) {
+        return upcoming;
+      }
+    }
+
+    if (state.repeatMode === 'all') {
+      for (let i = 0; i <= state.queueCursor && i < state.queueSongIds.length; i += 1) {
+        enqueue(state.queueSongIds[i]);
+        if (upcoming.length >= count) {
+          return upcoming;
+        }
+      }
+    }
+  }
+
+  if (state.shuffleEnabled && state.queueSongIds.length > 0) {
+    const candidates = state.queueSongIds.filter((id) => id !== currentId && !seen.has(id));
+    for (let i = candidates.length - 1; i > 0; i -= 1) {
+      const swap = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[swap]] = [candidates[swap], candidates[i]];
+    }
+    for (const id of candidates) {
+      enqueue(id);
+      if (upcoming.length >= count) {
+        break;
+      }
+    }
+  }
+
+  return upcoming;
+};
+
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   initialized: false,
   currentSongId: null,
@@ -167,7 +235,40 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     audioEngine.setCallbacks({
       onProgress: (position, duration) => {
-        set({ positionSec: position, durationSec: duration });
+        const now = Date.now();
+        pendingProgress = { position, duration };
+
+        const flush = () => {
+          if (!pendingProgress) {
+            return;
+          }
+          const { position: nextPos, duration: nextDur } = pendingProgress;
+          pendingProgress = null;
+          lastProgressUpdate = Date.now();
+          set((state) => {
+            if (state.positionSec === nextPos && state.durationSec === nextDur) {
+              return state;
+            }
+            return { positionSec: nextPos, durationSec: nextDur };
+          });
+        };
+
+        if (now - lastProgressUpdate >= PROGRESS_UPDATE_MS) {
+          if (progressFlushHandle) {
+            window.clearTimeout(progressFlushHandle);
+            progressFlushHandle = null;
+          }
+          flush();
+          return;
+        }
+
+        if (!progressFlushHandle) {
+          const delay = Math.max(0, PROGRESS_UPDATE_MS - (now - lastProgressUpdate));
+          progressFlushHandle = window.setTimeout(() => {
+            progressFlushHandle = null;
+            flush();
+          }, delay);
+        }
       },
       onEnded: async () => {
         await get().playNext();
@@ -186,6 +287,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queueSongIds: songIds,
       queueCursor: startIndex,
     });
+    const nextState = get();
+    const preloadIds = buildUpcomingSongIds(nextState);
+    if (preloadIds.length) {
+      const library = useLibraryStore.getState();
+      const preloadSongs = preloadIds
+        .map((id) => library.getSongById(id))
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      audioEngine.preloadSongs(preloadSongs);
+    }
   },
 
   playSongById: async (songId, transition = true) => {
@@ -195,8 +305,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     const state = get();
+    audioEngine.setLoop(state.repeatMode === 'one');
 
-    await audioEngine.loadSong(song, {
+    void audioEngine.loadSong(song, {
       autoplay: true,
       transition,
       startAtSec: 0,
@@ -204,13 +315,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const queueCursor = state.queueSongIds.indexOf(songId);
     const updatedHistory = [...state.historySongIds, songId].slice(-100);
-    const nextSongId = resolveNextSongId({ ...state, currentSongId: songId, queueCursor });
-
-    if (nextSongId) {
-      const nextSong = useLibraryStore.getState().getSongById(nextSongId);
-      if (nextSong) {
-        audioEngine.preloadSong(nextSong);
-      }
+    const preloadIds = buildUpcomingSongIds({ ...state, currentSongId: songId, queueCursor });
+    if (preloadIds.length) {
+      const library = useLibraryStore.getState();
+      const preloadSongs = preloadIds
+        .map((id) => library.getSongById(id))
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      audioEngine.preloadSongs(preloadSongs);
     }
 
     set({
@@ -224,15 +335,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         state.manualQueueSongIds[0] === songId ? state.manualQueueSongIds.slice(1) : state.manualQueueSongIds,
     });
 
-    await useLibraryStore.getState().recordSongPlay(songId);
-    void useLibraryStore.getState().refreshSongGenreIfUnknown(songId);
+    void useLibraryStore.getState().recordSongPlay(songId);
+    if (!get().settings.gameMode) {
+      void useLibraryStore.getState().refreshSongGenreIfUnknown(songId);
+    }
   },
 
   togglePlayPause: () => {
-    const playing = audioEngine.isPlaying();
+    const playing = get().isPlaying || audioEngine.isPlaying();
     if (playing) {
+      const position = audioEngine.getPosition();
       audioEngine.pause();
-      set({ isPlaying: false });
+      set({ isPlaying: false, positionSec: position });
       return;
     }
 
@@ -245,20 +359,44 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
-    audioEngine.play();
-    set({ isPlaying: true });
+    const resumeAt = get().positionSec || 0;
+    audioEngine.playFrom(resumeAt);
+    set({ isPlaying: true, positionSec: resumeAt });
   },
 
-  playNext: async () => {
+  pausePlayback: () => {
+    const position = audioEngine.getPosition();
+    audioEngine.pause();
+    set({ isPlaying: false, positionSec: position });
+  },
+
+  resumePlayback: () => {
+    const songId = get().currentSongId;
+    if (!songId) {
+      const first = get().queueSongIds[0] ?? useLibraryStore.getState().songs[0]?.id;
+      if (first) {
+        void get().playSongById(first, false);
+      }
+      return;
+    }
+    const resumeAt = get().positionSec || 0;
+    audioEngine.playFrom(resumeAt);
+    set({ isPlaying: true, positionSec: resumeAt });
+  },
+
+  playNext: async (manual = false) => {
     const state = get();
-    const nextSongId = resolveNextSongId(state);
+    const nextSongId =
+      manual && state.repeatMode === 'one'
+        ? resolveNextSongId({ ...state, repeatMode: 'off' })
+        : resolveNextSongId(state);
 
     if (!nextSongId) {
       set({ isPlaying: false, positionSec: 0 });
       return;
     }
 
-    await get().playSongById(nextSongId);
+    await get().playSongById(nextSongId, !manual);
   },
 
   playPrevious: async () => {
@@ -275,7 +413,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
-    await get().playSongById(previousSongId);
+    await get().playSongById(previousSongId, false);
   },
 
   seekTo: (positionSec) => {
@@ -289,22 +427,36 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ volume: clamped });
   },
 
+  setShuffleEnabled: (enabled) => {
+    set((state) => ({
+      shuffleEnabled: enabled,
+      repeatMode: enabled ? 'off' : state.repeatMode,
+    }));
+  },
+
   toggleShuffle: () => {
+    set((state) => ({
+      shuffleEnabled: !state.shuffleEnabled,
+    }));
+  },
+
+  toggleLoopSong: () => {
     set((state) => {
-      const nextShuffle = !state.shuffleEnabled;
+      const nextRepeat = state.repeatMode === 'one' ? 'off' : 'one';
+      audioEngine.setLoop(nextRepeat === 'one');
       return {
-        shuffleEnabled: nextShuffle,
-        repeatMode: nextShuffle ? 'off' : state.repeatMode,
+        repeatMode: nextRepeat,
+        shuffleEnabled: nextRepeat === 'one' ? false : state.shuffleEnabled,
       };
     });
   },
 
   cycleRepeat: () => {
     set((state) => {
-      const repeatMode: RepeatMode = state.repeatMode === 'off' ? 'all' : 'off';
+      const repeatMode: RepeatMode = state.repeatMode === 'one' ? 'off' : 'one';
       return {
         repeatMode,
-        shuffleEnabled: repeatMode !== 'off' ? false : state.shuffleEnabled,
+        shuffleEnabled: state.shuffleEnabled,
       };
     });
   },
@@ -317,7 +469,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
 
       if (mode === 'shuffle') {
-        return { shuffleEnabled: false, repeatMode: 'all' as RepeatMode };
+        return { shuffleEnabled: false, repeatMode: 'one' as RepeatMode };
       }
 
       return { shuffleEnabled: false, repeatMode: 'off' as RepeatMode };
@@ -398,6 +550,36 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         // Ignore autostart failures; still persist local preference.
       }
     }
+
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setCloseToTaskbar: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      closeToTaskbar: enabled,
+    };
+
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setGameMode: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      gameMode: enabled,
+    };
+
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setMiniNowPlayingOverlay: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      miniNowPlayingOverlay: enabled,
+    };
 
     set({ settings });
     await persistSettings(settings);

@@ -1,4 +1,4 @@
-import { readStorageJson, writeStorageJson } from '@/services/storageService';
+import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import type { Song } from '@/types/music';
 
 const cachePath = 'metadata_cache/song_genre_cache.json';
@@ -232,7 +232,7 @@ export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> =>
         fetchedAt: Math.floor(Date.now() / 1000),
       },
     };
-    await writeStorageJson(cachePath, nextCache);
+    await writeStorageJsonDebounced(cachePath, nextCache);
 
     return {
       status: 'ready',

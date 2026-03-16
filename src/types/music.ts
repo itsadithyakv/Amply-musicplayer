@@ -44,6 +44,9 @@ export interface AppSettings {
   volumeNormalizationEnabled: boolean;
   playbackSpeed: number;
   launchOnStartup: boolean;
+  closeToTaskbar: boolean;
+  gameMode: boolean;
+  miniNowPlayingOverlay: boolean;
   lyricsVisualsEnabled: boolean;
   lyricsVisualTheme: 'ember' | 'aurora' | 'mono';
 }

@@ -77,6 +77,44 @@ export const writeStorageJson = async <T>(relativePath: string, value: T): Promi
   await writeStorageText(relativePath, JSON.stringify(value, null, 2));
 };
 
+const debouncedJsonWrites = new Map<
+  string,
+  {
+    timeout: number;
+    value: unknown;
+  }
+>();
+
+export const writeStorageJsonDebounced = async <T>(
+  relativePath: string,
+  value: T,
+  delayMs = 1200,
+): Promise<void> => {
+  const existing = debouncedJsonWrites.get(relativePath);
+  if (existing) {
+    window.clearTimeout(existing.timeout);
+  }
+
+  const timeout = window.setTimeout(() => {
+    debouncedJsonWrites.delete(relativePath);
+    void writeStorageJson(relativePath, value as T);
+  }, delayMs);
+
+  debouncedJsonWrites.set(relativePath, { timeout, value });
+};
+
+export const flushDebouncedWrites = async (): Promise<void> => {
+  const entries = Array.from(debouncedJsonWrites.entries());
+  debouncedJsonWrites.clear();
+
+  await Promise.all(
+    entries.map(async ([path, entry]) => {
+      window.clearTimeout(entry.timeout);
+      await writeStorageJson(path, entry.value);
+    }),
+  );
+};
+
 export const clearStorageCache = async (): Promise<void> => {
   if (isTauri()) {
     await invoke('clear_storage_cache');

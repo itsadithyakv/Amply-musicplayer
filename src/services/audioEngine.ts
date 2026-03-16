@@ -59,7 +59,9 @@ const resolveSongFormats = (song: Song): string[] | undefined => {
 class AudioEngine {
   private currentHowl: Howl | null = null;
 
-  private preloadedHowl: Howl | null = null;
+  private fadingHowl: Howl | null = null;
+
+  private preloadedHowls = new Map<string, Howl>();
 
   private currentSong: Song | null = null;
 
@@ -69,6 +71,12 @@ class AudioEngine {
 
   private onEnded: (() => void) | null = null;
 
+  private loopCurrent = false;
+
+  private pendingSeek: number | null = null;
+
+  private loadToken = 0;
+
   private settings: AppSettings = {
     libraryPath: 'music',
     crossfadeEnabled: true,
@@ -77,6 +85,9 @@ class AudioEngine {
     volumeNormalizationEnabled: true,
     playbackSpeed: 1,
     launchOnStartup: false,
+    closeToTaskbar: false,
+    gameMode: false,
+    miniNowPlayingOverlay: false,
     lyricsVisualsEnabled: true,
     lyricsVisualTheme: 'ember',
   };
@@ -93,6 +104,16 @@ class AudioEngine {
     this.settings = settings;
     if (this.currentHowl) {
       this.currentHowl.rate(settings.playbackSpeed);
+    }
+    this.preloadedHowls.forEach((howl) => {
+      howl.rate(settings.playbackSpeed);
+    });
+  }
+
+  setLoop(enabled: boolean): void {
+    this.loopCurrent = enabled;
+    if (this.currentHowl) {
+      this.currentHowl.loop(enabled);
     }
   }
 
@@ -114,36 +135,51 @@ class AudioEngine {
 
   async loadSong(song: Song, options: LoadOptions = {}): Promise<void> {
     const { autoplay = true, transition = true, startAtSec = 0 } = options;
-    const targetHowl = this.createHowl(song, autoplay, startAtSec);
+    const token = (this.loadToken += 1);
+    const canCrossfade = transition && this.settings.crossfadeEnabled;
 
     if (!this.currentHowl) {
+      const targetHowl = this.createHowl(song, autoplay, startAtSec);
       this.currentHowl = targetHowl;
       this.currentSong = song;
       return;
     }
 
-    if (!transition || !this.settings.crossfadeEnabled) {
-      this.currentHowl.stop();
-      this.currentHowl.unload();
+    if (!canCrossfade) {
+      this.stopAllSounds();
+      const targetHowl = this.createHowl(song, false, startAtSec);
       this.currentHowl = targetHowl;
       this.currentSong = song;
+      if (autoplay) {
+        targetHowl.play();
+      }
       return;
     }
 
+    const targetHowl = this.createHowl(song, true, startAtSec);
     const oldHowl = this.currentHowl;
+    this.fadingHowl = oldHowl;
     const currentVolume = oldHowl.volume();
     const fadeDurationMs = Math.max(1000, this.settings.crossfadeDurationSec * 1000);
 
     targetHowl.volume(0);
-    if (autoplay) {
-      targetHowl.play();
-    }
     targetHowl.fade(0, currentVolume, fadeDurationMs);
 
     oldHowl.fade(currentVolume, 0, fadeDurationMs);
     window.setTimeout(() => {
+      if (this.loadToken !== token) {
+        oldHowl.stop();
+        oldHowl.unload();
+        if (this.fadingHowl === oldHowl) {
+          this.fadingHowl = null;
+        }
+        return;
+      }
       oldHowl.stop();
       oldHowl.unload();
+      if (this.fadingHowl === oldHowl) {
+        this.fadingHowl = null;
+      }
     }, fadeDurationMs + 50);
 
     this.currentHowl = targetHowl;
@@ -151,35 +187,100 @@ class AudioEngine {
   }
 
   preloadSong(song: Song): void {
+    this.preloadSongs([song]);
+  }
+
+  preloadSongs(songs: Song[]): void {
     if (!this.settings.gaplessEnabled) {
+      this.preloadedHowls.forEach((howl) => howl.unload());
+      this.preloadedHowls.clear();
       return;
     }
 
-    if (this.preloadedHowl) {
-      this.preloadedHowl.unload();
-      this.preloadedHowl = null;
+    const unique: Song[] = [];
+    const seen = new Set<string>();
+    for (const song of songs) {
+      if (!song?.id || seen.has(song.id) || song.id === this.currentSong?.id) {
+        continue;
+      }
+      seen.add(song.id);
+      unique.push(song);
+      if (unique.length >= 3) {
+        break;
+      }
     }
 
-    this.preloadedHowl = new Howl({
-      src: resolveSongSources(song),
-      format: resolveSongFormats(song),
-      html5: true,
-      preload: true,
-      volume: 0,
-      rate: this.settings.playbackSpeed,
+    const nextIds = new Set(unique.map((song) => song.id));
+    this.preloadedHowls.forEach((howl, id) => {
+      if (!nextIds.has(id)) {
+        howl.unload();
+        this.preloadedHowls.delete(id);
+      }
+    });
+
+    unique.forEach((song) => {
+      if (this.preloadedHowls.has(song.id)) {
+        return;
+      }
+      const howl = new Howl({
+        src: resolveSongSources(song),
+        format: resolveSongFormats(song),
+        html5: true,
+        preload: true,
+        volume: 0,
+        rate: this.settings.playbackSpeed,
+      });
+      this.preloadedHowls.set(song.id, howl);
     });
   }
 
   play(): void {
-    this.currentHowl?.play();
+    if (!this.currentHowl || this.currentHowl.playing()) {
+      return;
+    }
+    this.currentHowl.play();
+  }
+
+  playFrom(positionSec: number): void {
+    if (!this.currentHowl) {
+      return;
+    }
+
+    if (this.currentHowl.playing()) {
+      this.currentHowl.seek(positionSec);
+      return;
+    }
+
+    this.stopOtherHowls(this.currentHowl);
+    this.pendingSeek = positionSec;
+    this.currentHowl.play();
+    if (this.currentHowl.playing()) {
+      this.currentHowl.seek(positionSec);
+      this.pendingSeek = null;
+    }
   }
 
   pause(): void {
     this.currentHowl?.pause();
+    if (this.fadingHowl) {
+      this.fadingHowl.stop();
+      this.fadingHowl.unload();
+      this.fadingHowl = null;
+    }
+    this.preloadedHowls.forEach((howl) => {
+      if (howl.playing()) {
+        howl.stop();
+      }
+    });
   }
 
   stop(): void {
     this.currentHowl?.stop();
+    if (this.fadingHowl) {
+      this.fadingHowl.stop();
+      this.fadingHowl.unload();
+      this.fadingHowl = null;
+    }
     this.stopProgressLoop();
   }
 
@@ -202,6 +303,18 @@ class AudioEngine {
 
   private createHowl(song: Song, autoplay: boolean, startAtSec: number): Howl {
     const normalizedVolume = this.resolveTrackVolume(song);
+    const preloaded = this.takePreloadedHowl(song.id);
+    if (preloaded) {
+      this.attachHowlHandlers(preloaded, song, startAtSec);
+      preloaded.volume(normalizedVolume);
+      preloaded.rate(this.settings.playbackSpeed);
+      preloaded.loop(this.loopCurrent);
+      if (autoplay) {
+        preloaded.play();
+      }
+      return preloaded;
+    }
+
     const sources = resolveSongSources(song);
     const formats = resolveSongFormats(song);
 
@@ -213,37 +326,89 @@ class AudioEngine {
       autoplay,
       volume: normalizedVolume,
       rate: this.settings.playbackSpeed,
-      onload: () => {
-        this.publishProgress();
-      },
-      onplay: () => {
-        if (startAtSec > 0) {
-          howl.seek(startAtSec);
-        }
-        this.startProgressLoop();
-      },
-      onplayerror: (_soundId, error) => {
-        console.error('[Amply] Play error', song.path, error);
-        howl.once('unlock', () => {
-          howl.play();
-        });
-      },
-      onloaderror: (_soundId, error) => {
-        console.error('[Amply] Load error', song.path, error);
-      },
-      onpause: () => {
-        this.stopProgressLoop();
-      },
-      onstop: () => {
-        this.stopProgressLoop();
-      },
-      onend: () => {
-        this.stopProgressLoop();
-        this.onEnded?.();
-      },
+      loop: this.loopCurrent,
     });
 
+    this.attachHowlHandlers(howl, song, startAtSec);
     return howl;
+  }
+
+  private takePreloadedHowl(songId: string): Howl | null {
+    const howl = this.preloadedHowls.get(songId) ?? null;
+    if (howl) {
+      this.preloadedHowls.delete(songId);
+    }
+    return howl;
+  }
+
+  private attachHowlHandlers(howl: Howl, song: Song, startAtSec: number): void {
+    howl.off();
+    howl.on('load', () => {
+      this.publishProgress();
+    });
+    howl.on('play', () => {
+      if (startAtSec > 0) {
+        howl.seek(startAtSec);
+      } else if (this.pendingSeek !== null) {
+        howl.seek(this.pendingSeek);
+        this.pendingSeek = null;
+      }
+      this.startProgressLoop();
+    });
+    howl.on('playerror', (_soundId, error) => {
+      console.error('[Amply] Play error', song.path, error);
+      howl.once('unlock', () => {
+        howl.play();
+      });
+    });
+    howl.on('loaderror', (_soundId, error) => {
+      console.error('[Amply] Load error', song.path, error);
+    });
+    howl.on('pause', () => {
+      this.stopProgressLoop();
+    });
+    howl.on('stop', () => {
+      this.stopProgressLoop();
+    });
+    howl.on('end', () => {
+      if (this.loopCurrent) {
+        return;
+      }
+      this.stopProgressLoop();
+      this.onEnded?.();
+    });
+  }
+
+  private stopOtherHowls(keep?: Howl): void {
+    if (this.currentHowl && this.currentHowl !== keep) {
+      this.currentHowl.stop();
+      this.currentHowl.unload();
+    }
+
+    if (this.fadingHowl && this.fadingHowl !== keep) {
+      this.fadingHowl.stop();
+      this.fadingHowl.unload();
+      this.fadingHowl = null;
+    }
+
+    this.preloadedHowls.forEach((howl) => {
+      if (howl !== keep && howl.playing()) {
+        howl.stop();
+      }
+    });
+  }
+
+  private stopAllSounds(): void {
+    Howler.stop();
+    if (this.currentHowl) {
+      this.currentHowl.unload();
+    }
+    if (this.fadingHowl) {
+      this.fadingHowl.unload();
+      this.fadingHowl = null;
+    }
+    this.preloadedHowls.forEach((howl) => howl.unload());
+    this.preloadedHowls.clear();
   }
 
   private resolveTrackVolume(song: Song): number {

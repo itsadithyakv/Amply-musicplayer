@@ -401,3 +401,38 @@ button:disabled {
     transform: scale(1);
   }
 }
+
+.energy-carousel {
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+.energy-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.energy-track {
+  will-change: transform;
+}
+
+.energy-card {
+  animation: energyFloat 7s ease-in-out infinite;
+}
+
+.energy-card:nth-child(2) {
+  animation-delay: -2s;
+}
+
+.energy-card:nth-child(3) {
+  animation-delay: -4s;
+}
+
+@keyframes energyFloat {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-6px) scale(1.01);
+  }
+}

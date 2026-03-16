@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Song } from '@/types/music';
+import type { AppSettings, Song } from '@/types/music';
 import { buildSongId } from '@/services/metadataParser';
-import { isTauri, toPlayableSrc } from '@/services/storageService';
+import { isTauri, readStorageJson, toPlayableSrc } from '@/services/storageService';
 
 interface ScannedSong {
   id: string;
@@ -134,6 +134,10 @@ export const scanMusicFolder = async (folder?: string): Promise<Song[]> => {
   try {
     const scanned = await invoke<ScannedSong[]>('scan_music', { folder: folder?.trim() || null });
     const normalized = scanned.map(normalizeSong);
+    const settings = await readStorageJson<Partial<AppSettings>>('settings.json', {});
+    if (settings.gameMode) {
+      return normalized;
+    }
     return enrichMissingArtwork(normalized);
   } catch {
     return [];

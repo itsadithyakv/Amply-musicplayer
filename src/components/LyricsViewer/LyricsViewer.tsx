@@ -10,6 +10,7 @@ import {
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
 import { readStorageJson, writeStorageJson } from '@/services/storageService';
+import { useIdleRender } from '@/hooks/useIdleRender';
 
 interface LyricsViewerProps {
   song: Song | null;
@@ -49,6 +50,8 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const durationSec = usePlayerStore((state) => state.durationSec);
   const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
   const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
+  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const idleReady = useIdleRender(300);
   const [artworkTint, setArtworkTint] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricsResult | null>(null);
   const [choices, setChoices] = useState<LyricsCandidate[]>([]);
@@ -62,6 +65,16 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const autoScrollLockRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (gameMode) {
+      setLoading(false);
+      setSavingChoiceId(null);
+      setError('Lyrics disabled in Game Mode.');
+      setLyrics(null);
+      setChoices([]);
+      setCachePath(null);
+      return;
+    }
+
     if (!song || !active) {
       return;
     }
@@ -110,9 +123,14 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     return () => {
       alive = false;
     };
-  }, [active, song?.id]);
+  }, [active, song?.id, gameMode]);
 
   useEffect(() => {
+    if (gameMode) {
+      setArtworkTint(null);
+      return;
+    }
+
     if (!song?.id) {
       setArtworkTint(null);
       return;
@@ -179,7 +197,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     return () => {
       alive = false;
     };
-  }, [song?.id, song?.albumArt]);
+  }, [song?.id, song?.albumArt, gameMode]);
 
   const timedIndex = useMemo(() => {
     if (!lyrics?.isSynced) {
@@ -267,6 +285,14 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
   if (!song) {
     return <p className="text-[13px] text-amply-textMuted">No song selected.</p>;
+  }
+
+  if (active && !idleReady) {
+    return (
+      <div className={clsx('rounded-card border border-amply-border bg-amply-card p-4', fullHeight && 'h-full')}>
+        <p className="text-[12px] text-amply-textMuted">Preparing lyrics...</p>
+      </div>
+    );
   }
 
   if (loading) {

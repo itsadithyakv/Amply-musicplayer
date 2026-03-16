@@ -5,12 +5,14 @@ import nextIcon from '@/assets/icons/next.svg';
 import playIcon from '@/assets/icons/play.svg';
 import pauseIcon from '@/assets/icons/pause.svg';
 import shuffleIcon from '@/assets/icons/shuffle.svg';
+import queueIcon from '@/assets/icons/queue.svg';
 import repeatIcon from '@/assets/icons/repeat.svg';
+import repeatOnIcon from '@/assets/icons/repeat-on.svg';
 import LyricsViewer from '@/components/LyricsViewer/LyricsViewer';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
-import type { PlaybackMode, Song } from '@/types/music';
+import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 
 const darkSurfaceIconClass = 'h-5 w-5 brightness-0 invert';
@@ -30,7 +32,8 @@ const NowPlayingPage = () => {
   const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
   const playPrevious = usePlayerStore((state) => state.playPrevious);
   const playNext = usePlayerStore((state) => state.playNext);
-  const cyclePlaybackMode = usePlayerStore((state) => state.cyclePlaybackMode);
+  const setShuffleEnabled = usePlayerStore((state) => state.setShuffleEnabled);
+  const toggleLoopSong = usePlayerStore((state) => state.toggleLoopSong);
   const seekTo = usePlayerStore((state) => state.seekTo);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const removeQueuedSong = usePlayerStore((state) => state.removeQueuedSong);
@@ -56,9 +59,7 @@ const NowPlayingPage = () => {
   }, [manualQueueSongIds, queueSongIds, songs]);
 
   const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
-  const playbackMode: PlaybackMode = shuffleEnabled ? 'shuffle' : repeatMode === 'all' || repeatMode === 'one' ? 'repeat' : 'order';
-  const modeIcon = playbackMode === 'shuffle' ? shuffleIcon : playbackMode === 'repeat' ? repeatIcon : playIcon;
-  const modeLabel = playbackMode === 'shuffle' ? 'Shuffle' : playbackMode === 'repeat' ? 'Repeat' : 'In Order';
+  const isLooping = repeatMode === 'one';
   const isLyricsTab = nowPlayingTab === 'lyrics';
 
   const tabs = useMemo(
@@ -74,13 +75,18 @@ const NowPlayingPage = () => {
     <div
       className={clsx(
         'flex h-full min-h-0 flex-col pt-2',
-        isLyricsTab ? 'w-full gap-3 pb-2' : 'mx-auto max-w-5xl gap-6 pb-12',
+        isLyricsTab ? 'w-full gap-3 pb-2' : 'w-full gap-6 pb-10',
       )}
     >
       {!isLyricsTab ? (
-        <div className="grid grid-cols-[320px_1fr] gap-10">
-          <div className="h-[320px] w-[320px] overflow-hidden rounded-card bg-zinc-800 shadow-card">
-            {song?.albumArt ? <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" /> : null}
+        <div className="grid grid-cols-[minmax(260px,320px)_minmax(0,1fr)] gap-8">
+          <div
+            className="w-full max-w-[320px] overflow-hidden rounded-card bg-zinc-800 shadow-card"
+            style={{ aspectRatio: '1 / 1' }}
+          >
+            {song?.albumArt ? (
+              <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            ) : null}
           </div>
 
           <div className="flex flex-col justify-center gap-5">
@@ -109,28 +115,45 @@ const NowPlayingPage = () => {
             </div>
 
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={cyclePlaybackMode}
-                className={`rounded-full p-2 ${playbackMode !== 'order' ? 'text-amply-accent' : 'text-amply-textSecondary'} hover:bg-amply-hover`}
-                title={`Playback mode: ${modeLabel}. Click to cycle.`}
-              >
-                <img src={modeIcon} alt={modeLabel} className={darkSurfaceIconClass} />
-              </button>
-              <button type="button" onClick={() => void playPrevious()} className="rounded-full p-2 text-amply-textSecondary hover:bg-amply-hover">
-                <img src={prevIcon} alt="Previous" className={darkSurfaceIconClass} />
-              </button>
-              <button
-                type="button"
-                onClick={togglePlayPause}
-                className="flex h-14 w-14 items-center justify-center rounded-full bg-amply-accent text-black transition-colors hover:bg-amply-accentHover"
-              >
-                <img src={isPlaying ? pauseIcon : playIcon} alt="Play/Pause" className="h-6 w-6" />
-              </button>
-              <button type="button" onClick={() => void playNext()} className="rounded-full p-2 text-amply-textSecondary hover:bg-amply-hover">
-                <img src={nextIcon} alt="Next" className={darkSurfaceIconClass} />
-              </button>
-              <p className="text-[12px] text-amply-textSecondary">{modeLabel}</p>
+              <div className="flex flex-1 items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShuffleEnabled(!shuffleEnabled)}
+                  className={`rounded-full p-2 ${shuffleEnabled ? 'text-amply-accent' : 'text-amply-textSecondary'} hover:bg-amply-hover`}
+                  title={shuffleEnabled ? 'Shuffle on' : 'Shuffle off'}
+                >
+                  <img
+                    src={shuffleEnabled ? shuffleIcon : queueIcon}
+                    alt={shuffleEnabled ? 'Shuffle' : 'In order'}
+                    className={darkSurfaceIconClass}
+                  />
+                </button>
+              </div>
+              <div className="flex items-center justify-center gap-3">
+                <button type="button" onClick={() => void playPrevious()} className="rounded-full p-2 text-amply-textSecondary hover:bg-amply-hover">
+                  <img src={prevIcon} alt="Previous" className={darkSurfaceIconClass} />
+                </button>
+                <button
+                  type="button"
+                  onClick={togglePlayPause}
+                  className="flex h-14 w-14 items-center justify-center rounded-full bg-amply-accent text-black transition-colors hover:bg-amply-accentHover"
+                >
+                  <img src={isPlaying ? pauseIcon : playIcon} alt="Play/Pause" className="h-6 w-6" />
+                </button>
+                <button type="button" onClick={() => void playNext(true)} className="rounded-full p-2 text-amply-textSecondary hover:bg-amply-hover">
+                  <img src={nextIcon} alt="Next" className={darkSurfaceIconClass} />
+                </button>
+              </div>
+              <div className="flex flex-1 items-center justify-start">
+                <button
+                  type="button"
+                  onClick={toggleLoopSong}
+                  className={`rounded-full p-2 ${isLooping ? 'text-amply-accent' : 'text-amply-textSecondary'} hover:bg-amply-hover`}
+                  title={isLooping ? 'Loop on' : 'Loop off'}
+                >
+                  <img src={isLooping ? repeatOnIcon : repeatIcon} alt="Loop song" className={darkSurfaceIconClass} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
