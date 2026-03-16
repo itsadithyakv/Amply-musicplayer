@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Playlist, Song } from '@/types/music';
+import type { AppSettings, Playlist, Song } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists } from '@/services/playlistGenerator';
@@ -93,49 +93,65 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       return;
     }
 
-    const songs = state.songs;
-    if (!songs.length) {
+    void (async () => {
+      const settings = await readStorageJson<Partial<AppSettings>>('settings.json', {});
+      if (settings.gameMode) {
+        set({
+          metadataFetch: {
+            running: false,
+            total: 0,
+            done: 0,
+            artists: 0,
+            lyrics: 0,
+            genres: 0,
+            message: 'Game Mode disables metadata fetching.',
+          },
+        });
+        return;
+      }
+
+      const songs = get().songs;
+      if (!songs.length) {
+        set({
+          metadataFetch: {
+            running: false,
+            total: 0,
+            done: 0,
+            artists: 0,
+            lyrics: 0,
+            genres: 0,
+            message: 'No songs available to scan.',
+          },
+        });
+        return;
+      }
+
       set({
         metadataFetch: {
-          running: false,
+          running: true,
           total: 0,
           done: 0,
           artists: 0,
           lyrics: 0,
           genres: 0,
-          message: 'No songs available to scan.',
+          message: 'Checking cache...',
         },
       });
-      return;
-    }
 
-    set({
-      metadataFetch: {
-        running: true,
-        total: 0,
-        done: 0,
-        artists: 0,
-        lyrics: 0,
-        genres: 0,
-        message: 'Checking cache...',
-      },
-    });
+      const yieldToMain = () =>
+        new Promise<void>((resolve) => {
+          const idle = (globalThis as typeof globalThis & {
+            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+          }).requestIdleCallback;
 
-    const yieldToMain = () =>
-      new Promise<void>((resolve) => {
-        const idle = (globalThis as typeof globalThis & {
-          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-        }).requestIdleCallback;
+          if (typeof idle === 'function') {
+            idle(() => resolve(), { timeout: 300 });
+            return;
+          }
 
-        if (typeof idle === 'function') {
-          idle(() => resolve(), { timeout: 300 });
-          return;
-        }
+          setTimeout(() => resolve(), 0);
+        });
 
-        setTimeout(() => resolve(), 0);
-      });
-
-    void (async () => {
       const seenArtists = new Set<string>();
       let artistCount = 0;
       let lyricCount = 0;

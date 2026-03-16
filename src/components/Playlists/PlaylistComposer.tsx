@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
+import AutoSizer from 'react-virtualized-auto-sizer';
+import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 import type { Playlist, Song } from '@/types/music';
 
 interface PlaylistComposerProps {
@@ -15,6 +17,45 @@ const toDataUrl = (file: File): Promise<string> => {
     reader.readAsDataURL(file);
   });
 };
+
+interface PlaylistSongRowData {
+  songs: Song[];
+  selectedSongIds: string[];
+  togglePlaylistSong: (songId: string) => void;
+}
+
+const PlaylistSongRow = memo(({ index, style, data }: ListChildComponentProps<PlaylistSongRowData>) => {
+  const song = data.songs[index];
+  if (!song) {
+    return null;
+  }
+  const selected = data.selectedSongIds.includes(song.id);
+
+  return (
+    <div
+      style={style}
+      className="flex min-w-0 items-center justify-between rounded-md px-3 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+    >
+      <div className="min-w-0">
+        <p className="truncate text-[13px] text-amply-textPrimary">{song.title}</p>
+        <p className="truncate text-[11px] text-amply-textMuted">
+          {song.artist} â€¢ {song.album}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => data.togglePlaylistSong(song.id)}
+        className={`rounded-md border px-3 py-1 text-[11px] transition-colors ${
+          selected
+            ? 'border-amply-accent text-amply-accent'
+            : 'border-amply-border text-amply-textSecondary hover:bg-amply-hover'
+        }`}
+      >
+        {selected ? 'Added' : 'Add'}
+      </button>
+    </div>
+  );
+});
 
 const PlaylistComposer = ({ songs, onSave, onCancel }: PlaylistComposerProps) => {
   const [playlistName, setPlaylistName] = useState('');
@@ -52,6 +93,15 @@ const PlaylistComposer = ({ songs, onSave, onCancel }: PlaylistComposerProps) =>
   const togglePlaylistSong = (songId: string) => {
     setSelectedSongIds((current) => (current.includes(songId) ? current.filter((id) => id !== songId) : [...current, songId]));
   };
+
+  const rowData = useMemo(
+    () => ({
+      songs: composerSongs,
+      selectedSongIds,
+      togglePlaylistSong,
+    }),
+    [composerSongs, selectedSongIds, togglePlaylistSong],
+  );
 
   return (
     <div className="space-y-4">
@@ -181,36 +231,26 @@ const PlaylistComposer = ({ songs, onSave, onCancel }: PlaylistComposerProps) =>
               ))}
             </div>
           </div>
-
-          <div className="max-h-80 space-y-1 overflow-y-auto rounded-lg border border-amply-border bg-amply-bgSecondary p-2">
-            {composerSongs.map((song) => {
-              const selected = selectedSongIds.includes(song.id);
-              return (
-                <div
-                  key={`playlist-song-${song.id}`}
-                  className="flex min-w-0 items-center justify-between rounded-md px-3 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+          <div className="h-80 rounded-lg border border-amply-border bg-amply-bgSecondary p-2">
+            <AutoSizer>
+              {({ height, width }) => (
+                <List
+                  height={height}
+                  width={width}
+                  itemCount={composerSongs.length}
+                  itemSize={56}
+                  itemData={rowData}
+                  overscanCount={6}
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] text-amply-textPrimary">{song.title}</p>
-                    <p className="truncate text-[11px] text-amply-textMuted">{song.artist} • {song.album}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePlaylistSong(song.id)}
-                    className={`rounded-md border px-3 py-1 text-[11px] transition-colors ${
-                      selected
-                        ? 'border-amply-accent text-amply-accent'
-                        : 'border-amply-border text-amply-textSecondary hover:bg-amply-hover'
-                    }`}
-                  >
-                    {selected ? 'Added' : 'Add'}
-                  </button>
-                </div>
-              );
-            })}
+                  {PlaylistSongRow}
+                </List>
+              )}
+            </AutoSizer>
           </div>
         </div>
       </div>
+
+      
 
       {playlistError ? <p className="mt-3 text-[12px] text-red-400">{playlistError}</p> : null}
 
@@ -258,3 +298,5 @@ const PlaylistComposer = ({ songs, onSave, onCancel }: PlaylistComposerProps) =>
 };
 
 export default PlaylistComposer;
+
+

@@ -220,7 +220,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   }, [genres, genreQuery, genreSort]);
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-5 pb-8">
       <header className="space-y-1">
         <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Library</h1>
         <p className="text-[13px] text-amply-textSecondary">{songs.length.toLocaleString()} songs indexed</p>
@@ -273,7 +273,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             </label>
           </div>
 
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
             {filteredAlbums.map((song) => (
             <AlbumCard
               key={`album-${song.album}`}
@@ -320,7 +320,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             </label>
           </div>
 
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
             {filteredArtists.map((artistGroup) => (
             <AlbumCard
               key={`artist-${artistGroup.label.toLowerCase()}`}
@@ -367,7 +367,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             </label>
           </div>
 
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
             {filteredGenres.map((genreGroup) => (
             <AlbumCard
               key={`genre-${genreGroup.label.toLowerCase()}`}

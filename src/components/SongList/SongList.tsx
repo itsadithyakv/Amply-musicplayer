@@ -1,11 +1,10 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
-import heartIcon from '@/assets/icons/heart.svg';
 import addIcon from '@/assets/icons/add.svg';
 import queueIcon from '@/assets/icons/queue.svg';
 
@@ -109,6 +108,16 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
   } = data;
   const song = songs[index];
   const isCurrent = song?.id === currentSongId;
+  const [favoritePulse, setFavoritePulse] = useState(false);
+  const pulseRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pulseRef.current) {
+        window.clearTimeout(pulseRef.current);
+      }
+    };
+  }, []);
 
   if (!song) {
     return null;
@@ -181,7 +190,17 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
         type="button"
         onClick={(event) => {
           event.stopPropagation();
+          const willFavorite = !song.favorite;
           void toggleFavorite(song.id);
+          if (willFavorite) {
+            setFavoritePulse(true);
+            if (pulseRef.current) {
+              window.clearTimeout(pulseRef.current);
+            }
+            pulseRef.current = window.setTimeout(() => {
+              setFavoritePulse(false);
+            }, 450);
+          }
         }}
         className={`inline-flex items-center justify-center rounded-md border border-amply-border p-2 transition-colors ${
           song.favorite
@@ -190,7 +209,22 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
         }`}
         title={song.favorite ? 'Remove from favorites' : 'Add to favorites'}
       >
-        <img src={heartIcon} alt="" className="h-4 w-4 brightness-0 invert" />
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill={song.favorite ? 'currentColor' : 'none'}
+          className={`h-4 w-4 ${favoritePulse ? 'favorite-pulse' : ''}`}
+          aria-hidden="true"
+        >
+          <path
+            d="M12 20.4L10.3 18.9C6.6 15.5 4.2 13.2 4.2 10.2C4.2 8.1 5.8 6.5 7.9 6.5C9.2 6.5 10.4 7.1 11.2 8.1C12 7.1 13.2 6.5 14.5 6.5C16.6 6.5 18.2 8.1 18.2 10.2C18.2 13.2 15.8 15.5 12.1 18.9L12 19L12 20.4Z"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
 
       <div className="flex items-center gap-2">

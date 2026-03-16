@@ -1,4 +1,4 @@
-import { useState } from 'react';
+ï»¿import { useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { clearStorageCache, pickMusicFolders } from '@/services/storageService';
@@ -52,6 +52,9 @@ const SettingsPage = () => {
   const setVolumeNormalizationEnabled = usePlayerStore((state) => state.setVolumeNormalizationEnabled);
   const setSleepTimer = usePlayerStore((state) => state.setSleepTimer);
   const setLaunchOnStartup = usePlayerStore((state) => state.setLaunchOnStartup);
+  const setCloseToTaskbar = usePlayerStore((state) => state.setCloseToTaskbar);
+  const setGameMode = usePlayerStore((state) => state.setGameMode);
+  const setMiniNowPlayingOverlay = usePlayerStore((state) => state.setMiniNowPlayingOverlay);
   const setLyricsVisualsEnabled = usePlayerStore((state) => state.setLyricsVisualsEnabled);
   const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
 
@@ -62,13 +65,14 @@ const SettingsPage = () => {
   const [clearingCache, setClearingCache] = useState(false);
 
   return (
-    <div className="max-w-3xl space-y-8 pb-10">
+    <div className="space-y-6 pb-8">
       <header className="space-y-1">
         <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Settings</h1>
         <p className="text-[13px] text-amply-textSecondary">Library scan settings and advanced playback controls.</p>
       </header>
 
-      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
+      <div className="grid gap-6 xl:grid-cols-2">
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Music Library</h2>
           <p className="text-[13px] text-amply-textSecondary">
@@ -137,9 +141,9 @@ const SettingsPage = () => {
             </div>
           ))}
         </div>
-      </section>
+        </section>
 
-      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Library Data</h2>
           <p className="text-[13px] text-amply-textSecondary">
@@ -184,7 +188,7 @@ const SettingsPage = () => {
 
         {metadataFetch.running && metadataFetch.total > 0 ? (
           <div className="mt-3 rounded-lg border border-amply-border/60 bg-amply-surface px-3 py-2 text-[12px] text-amply-textMuted">
-            Processed {metadataFetch.done}/{metadataFetch.total} pending songs · Artists {metadataFetch.artists} · Lyrics {metadataFetch.lyrics} · Genres {metadataFetch.genres}
+            Processed {metadataFetch.done}/{metadataFetch.total} pending songs Â· Artists {metadataFetch.artists} Â· Lyrics {metadataFetch.lyrics} Â· Genres {metadataFetch.genres}
           </div>
         ) : null}
 
@@ -193,9 +197,9 @@ const SettingsPage = () => {
             {metadataFetch.message ?? bulkMessage}
           </div>
         ) : null}
-      </section>
+        </section>
 
-      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">App Behavior</h2>
           <p className="text-[13px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
@@ -210,10 +214,34 @@ const SettingsPage = () => {
               void setLaunchOnStartup(next);
             }}
           />
+          <ToggleRow
+            title="Close to Taskbar"
+            description="Keep Amply running when you close the window."
+            checked={settings.closeToTaskbar}
+            onChange={(next) => {
+              void setCloseToTaskbar(next);
+            }}
+          />
+          <ToggleRow
+            title="Game Mode"
+            description="Bare-minimum mode: only playlists + playbar. Disables smart fetching and heavy panels."
+            checked={settings.gameMode}
+            onChange={(next) => {
+              void setGameMode(next);
+            }}
+          />
+          <ToggleRow
+            title="Mini Now Playing Overlay"
+            description="Show an always-on-top translucent overlay on your desktop."
+            checked={settings.miniNowPlayingOverlay}
+            onChange={(next) => {
+              void setMiniNowPlayingOverlay(next);
+            }}
+          />
         </div>
-      </section>
+        </section>
 
-      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <h2 className="text-[18px] font-bold text-amply-textPrimary">Advanced Playback</h2>
 
         <div className="mt-4 grid gap-3">
@@ -280,9 +308,9 @@ const SettingsPage = () => {
             />
           </div>
         </div>
-      </section>
+        </section>
 
-      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>
           <p className="text-[13px] text-amply-textSecondary">Ambient backgrounds for the lyrics view.</p>
@@ -313,9 +341,9 @@ const SettingsPage = () => {
             </select>
           </div>
         </div>
-      </section>
+        </section>
 
-      <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-5 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[18px] font-bold text-amply-textPrimary">Sleep Timer</h2>
           <p className="text-[13px] text-amply-textSecondary">Stop playback automatically after a selected duration.</p>
@@ -346,9 +374,11 @@ const SettingsPage = () => {
         ) : (
           <p className="mt-3 text-[12px] text-amply-textMuted">No active sleep timer.</p>
         )}
-      </section>
+        </section>
+      </div>
     </div>
   );
 };
 
 export default SettingsPage;
+

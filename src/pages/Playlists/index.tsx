@@ -89,7 +89,7 @@ const PlaylistsPage = () => {
   };
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-8">
       <header className="space-y-1">
         <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Playlists</h1>
         <p className="text-[13px] text-amply-textSecondary">Custom playlists and smart mixes.</p>
@@ -148,7 +148,7 @@ const PlaylistsPage = () => {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {playlistCards.map(({ playlist, artwork, artworkSet, totalDuration }, index) => {
           const firstSong = songs.find((song) => playlist.songIds.includes(song.id));
           const backgroundStyle = artworkSet[0]

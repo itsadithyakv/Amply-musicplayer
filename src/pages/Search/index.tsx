@@ -35,7 +35,7 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   }, [query, filteredSongs]);
 
   return (
-    <div className={embedded ? 'space-y-4' : 'space-y-6 pb-8'}>
+    <div className={embedded ? 'space-y-4' : 'space-y-5 pb-8'}>
       {!embedded ? (
         <header className="space-y-1">
           <h1 className="text-2xl font-bold text-amply-textPrimary">Search</h1>
