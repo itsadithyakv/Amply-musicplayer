@@ -1,4 +1,4 @@
-﻿import { readStorageJson, writeStorageJson } from '@/services/storageService';
+import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 
 const cacheFolder = 'artist_cache';
 
@@ -290,7 +290,7 @@ export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistPr
       return { status: 'missing', cachePath };
     }
 
-    await writeStorageJson(cacheKey, fetched);
+    await writeStorageJsonDebounced(cacheKey, fetched);
     return {
       status: 'ready',
       profile: fetched,

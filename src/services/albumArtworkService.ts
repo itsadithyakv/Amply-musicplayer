@@ -1,4 +1,4 @@
-import { readStorageJson, writeStorageJson } from '@/services/storageService';
+import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 
 const cachePath = 'metadata_cache/album_art_cache.json';
 
@@ -83,7 +83,7 @@ export const loadAlbumArtwork = async (artist: string, album: string): Promise<s
     const compressed = await compressImageToDataUrl(fetched);
     const stored = compressed ?? fetched;
 
-    await writeStorageJson(cachePath, {
+    await writeStorageJsonDebounced(cachePath, {
       ...cache,
       [key]: stored,
     });

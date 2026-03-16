@@ -27,7 +27,7 @@ const SectionRow = ({
     <section className="space-y-3">
       <h2 className="text-[20px] font-semibold text-amply-textPrimary">{title}</h2>
       {scrollable ? (
-        <div className="flex gap-6 overflow-x-auto pb-3 pr-2">
+        <div className="flex gap-5 overflow-x-auto pb-3 pr-2">
           {songs.map((song) => (
             <div key={`${title}-${song.id}`} className="min-w-[200px] max-w-[220px] flex-1">
               <AlbumCard title={song.title} subtitle={song.artist} artwork={song.albumArt} onClick={() => onPick(song)} />
@@ -35,7 +35,7 @@ const SectionRow = ({
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
           {songs.map((song) => (
             <AlbumCard
               key={`${title}-${song.id}`}
@@ -325,8 +325,8 @@ const HomePage = () => {
   };
 
   return (
-    <div className="space-y-10 pb-10">
-      <header className="space-y-2 border-b border-amply-border/60 pb-5">
+    <div className="space-y-8 pb-8">
+      <header className="space-y-2 border-b border-amply-border/60 pb-4">
         <h1 className="text-[32px] font-bold tracking-tight text-amply-textPrimary">Discover</h1>
       </header>
 
@@ -335,7 +335,7 @@ const HomePage = () => {
           <h2 className="text-[20px] font-semibold text-amply-textPrimary">Smart Playlists</h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
           {smartPlaylistCards.map((item, index) => {
             const isFeatured = index === 0;
             const artworkSet = item.artworks?.length ? item.artworks : item.artwork ? [item.artwork] : [];
@@ -452,7 +452,7 @@ const HomePage = () => {
         {showMoreMixes ? (
           <div className="space-y-3">
             <h3 className="text-[14px] font-semibold text-amply-textSecondary">All Mixes</h3>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               {smartMixesAll.length ? (
                 smartMixesAll.map((item, index) => (
                   <button
@@ -473,7 +473,9 @@ const HomePage = () => {
                         <p className="truncate text-[12px] text-amply-textSecondary">{item.subtitle}</p>
                       </div>
                       <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-amply-border/60 bg-amply-surface/70">
-                        {item.artwork ? <img src={item.artwork} alt={item.title} className="h-full w-full object-cover" /> : null}
+                        {item.artwork ? (
+                          <img src={item.artwork} alt={item.title} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                        ) : null}
                       </div>
                     </div>
                   </button>
@@ -494,7 +496,7 @@ const HomePage = () => {
       {userPlaylists.length ? (
         <section className="space-y-3">
           <h2 className="text-[20px] font-semibold text-amply-textPrimary">Your Playlists</h2>
-          <div className="flex gap-6 overflow-x-auto pb-3 pr-2">
+          <div className="flex gap-5 overflow-x-auto pb-3 pr-2">
             {userPlaylists.map((playlist) => (
               <div key={playlist.id} className="min-w-[200px] max-w-[220px] flex-1">
                 <AlbumCard
@@ -511,7 +513,7 @@ const HomePage = () => {
 
       <section className="space-y-3">
         <h2 className="text-[20px] font-semibold text-amply-textPrimary">Top Artists</h2>
-        <div className="flex gap-6 overflow-x-auto pb-3 pr-2">
+        <div className="flex gap-5 overflow-x-auto pb-3 pr-2">
           {topArtists.map((entry) => (
             <div key={entry.artistName} className="min-w-[200px] max-w-[220px] flex-1">
               <AlbumCard
