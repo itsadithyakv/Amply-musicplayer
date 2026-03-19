@@ -19,7 +19,8 @@ use lofty::{
     probe::Probe,
 };
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+use serde_json::Value as JsonValue;
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -1571,6 +1572,44 @@ fn main() {
             audio_list_output_devices,
             audio_analyze_loudness
         ])
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "overlay" {
+                    return;
+                }
+                let app = window.app_handle();
+                let close_to_tray = read_close_to_tray(&app);
+                if close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    let _ = overlay.close();
+                }
+                app.exit(0);
+            }
+        })
         .run(tauri::generate_context!())
         .expect("failed to run amply");
+}
+
+fn read_close_to_tray(app: &tauri::AppHandle) -> bool {
+    let root = match storage_root(app) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let settings_path = root.join("settings.json");
+    let content = match fs::read_to_string(settings_path) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let parsed: JsonValue = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    parsed
+        .get("closeToTaskbar")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
