@@ -28,6 +28,28 @@ export const ensureStorageDirs = async (): Promise<string> => {
   return 'storage';
 };
 
+export type StorageStats = {
+  storagePath: string;
+  lyricsFiles: number;
+  artistFiles: number;
+  metadataFiles: number;
+  playlistsFiles: number;
+  totalFiles: number;
+};
+
+export const getStorageStats = async (): Promise<StorageStats | null> => {
+  if (isTauri()) {
+    return invoke<StorageStats>('get_storage_stats');
+  }
+  return null;
+};
+
+export const openStorageDir = async (): Promise<void> => {
+  if (isTauri()) {
+    await invoke('open_storage_dir');
+  }
+};
+
 export const pickMusicFolder = async (): Promise<string | null> => {
   if (isTauri()) {
     return invoke<string | null>('pick_music_folder');

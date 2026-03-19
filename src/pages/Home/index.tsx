@@ -237,26 +237,9 @@ const HomePage = () => {
       }))
       .filter((entry) => entry.songIds.length);
 
-    const favoritesIndex = smart.findIndex((entry) => entry.id === 'smart_favorites');
-    const reorderedSmart =
-      favoritesIndex > 0
-        ? [smart[favoritesIndex], ...smart.filter((entry) => entry.id !== 'smart_favorites')]
-        : smart;
-
-    const recentlyPlayedCustom = playlists
+    const custom = playlists
       .filter((playlist) => playlist.type === 'custom')
-      .map((playlist) => {
-        const maxLastPlayed = Math.max(0, ...playlist.songIds.map((id) => songsById.get(id)?.lastPlayed ?? 0));
-
-        return {
-          playlist,
-          maxLastPlayed,
-        };
-      })
-      .filter((entry) => entry.maxLastPlayed > 0)
-      .sort((a, b) => b.maxLastPlayed - a.maxLastPlayed)
-      .slice(0, 6)
-      .map(({ playlist }) => ({
+      .map((playlist) => ({
         id: `${playlist.id}-recent`,
         title: playlist.name,
         subtitle: `Recently played - ${playlist.songIds.length} songs`,
@@ -268,12 +251,9 @@ const HomePage = () => {
       }))
       .filter((entry) => entry.songIds.length);
 
-    const combined = [...reorderedSmart, ...recentlyPlayedCustom];
-    const sliced = combined.slice(0, 7);
-    if (favoritesIndex >= 0 && !sliced.some((entry) => entry.id === 'smart_favorites')) {
-      sliced[sliced.length - 1] = reorderedSmart[0] ?? smart[favoritesIndex];
-    }
-    return sliced;
+    const combined = [...smart, ...custom].slice(0, 7);
+
+    return combined;
   }, [playlists, songsById]);
 
   const smartMixesAll = useMemo<PlaylistCardItem[]>(() => {
@@ -452,16 +432,16 @@ const HomePage = () => {
         {showMoreMixes ? (
           <div className="space-y-3">
             <h3 className="text-[14px] font-semibold text-amply-textSecondary">All Mixes</h3>
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-              {smartMixesAll.length ? (
-                smartMixesAll.map((item, index) => (
+            {smartMixesAll.length ? (
+              <div className="flex gap-4 overflow-x-auto pb-2 pr-2">
+                {smartMixesAll.map((item, index) => (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => playPlaylist(item.songIds)}
                     onDoubleClick={() => openPlaylistQueue(item.songIds)}
                     className={clsx(
-                      'card-sheen relative overflow-hidden rounded-card border border-amply-border/60 p-5 text-left shadow-card transition-all duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
+                      'card-sheen relative min-w-[220px] max-w-[240px] flex-1 overflow-hidden rounded-card border border-amply-border/60 p-5 text-left shadow-card transition-all duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
                       playlistToneClasses[(index + 1) % playlistToneClasses.length],
                     )}
                     title="Click to play. Double-click to open queue."
@@ -479,13 +459,13 @@ const HomePage = () => {
                       </div>
                     </div>
                   </button>
-                ))
-              ) : (
-                <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 text-[13px] text-amply-textMuted">
-                  No mixes available yet. Add more music to expand smart mixes.
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 text-[13px] text-amply-textMuted">
+                No mixes available yet. Add more music to expand smart mixes.
+              </div>
+            )}
           </div>
         ) : null}
       </section>

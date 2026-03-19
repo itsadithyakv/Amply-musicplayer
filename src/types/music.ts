@@ -19,6 +19,7 @@ export interface Song {
   lastPlayed?: number;
   favorite: boolean;
   replayGain?: number;
+  loudnessLufs?: number;
 }
 
 export interface Playlist {
@@ -43,13 +44,18 @@ export interface AppSettings {
   gaplessEnabled: boolean;
   volumeNormalizationEnabled: boolean;
   playbackSpeed: number;
+  outputDeviceName?: string;
+  eqPreset: EqPreset;
   launchOnStartup: boolean;
   closeToTaskbar: boolean;
   gameMode: boolean;
   miniNowPlayingOverlay: boolean;
+  overlayAutoHide: boolean;
   lyricsVisualsEnabled: boolean;
   lyricsVisualTheme: 'ember' | 'aurora' | 'mono';
 }
+
+export type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club';
 
 export interface ListeningStats {
   totalListeningSeconds: number;

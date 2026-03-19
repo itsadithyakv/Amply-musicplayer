@@ -37,8 +37,7 @@ const Sidebar = () => {
       <div className="mb-10 flex items-center gap-3 px-2">
         <img src={logoIcon} alt="Amply" className="h-10 w-10 rounded-lg shadow-card" />
         <div>
-          <p className="text-sm uppercase tracking-[0.16em] text-amply-textMuted">Amply</p>
-          <p className="text-xs text-amply-textSecondary">Offline Music Player</p>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.24em] text-amply-textMuted">Amply</p>
         </div>
       </div>
       {metadataFetch.running ? (
@@ -59,7 +58,7 @@ const Sidebar = () => {
                 clsx(
                   'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-200 ease-smooth',
                   isActive
-                    ? 'bg-amply-surface text-amply-textPrimary shadow-glow'
+                    ? 'bg-amply-surface text-amply-textPrimary'
                     : 'text-amply-textSecondary hover:bg-amply-hover/80 hover:text-amply-textPrimary',
                 )
               }
@@ -80,7 +79,7 @@ const Sidebar = () => {
                   clsx(
                     'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-200 ease-smooth',
                     isActive
-                      ? 'bg-amply-surface text-amply-textPrimary shadow-glow'
+                      ? 'bg-amply-surface text-amply-textPrimary'
                       : 'text-amply-textSecondary hover:bg-amply-hover/80 hover:text-amply-textPrimary',
                   )
                 }

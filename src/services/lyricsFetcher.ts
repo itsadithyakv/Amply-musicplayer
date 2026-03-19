@@ -307,16 +307,8 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
 
   const ranked = rankCandidatesWithScore(song, candidates);
 
-  if (ranked.length === 1) {
+  if (ranked.length >= 1) {
     const lyrics = await saveLyricsSelection(song, ranked[0].candidate);
-    return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
-  }
-
-  const top = ranked[0];
-  const runnerUp = ranked[1];
-
-  if (isCertainMatch(song, top, runnerUp)) {
-    const lyrics = await saveLyricsSelection(song, top.candidate);
     return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
   }
 

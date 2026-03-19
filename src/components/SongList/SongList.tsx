@@ -202,9 +202,9 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
             }, 450);
           }
         }}
-        className={`inline-flex items-center justify-center rounded-md border border-amply-border p-2 transition-colors ${
+        className={`inline-flex items-center justify-center rounded-full p-2 transition-colors ${
           song.favorite
-            ? 'border-amply-accent text-amply-accent'
+            ? 'text-amply-accent'
             : 'text-amply-textMuted hover:bg-amply-hover hover:text-amply-textSecondary'
         }`}
         title={song.favorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -259,7 +259,7 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
           event.stopPropagation();
           enqueueSong(song.id);
         }}
-        className="inline-flex items-center justify-center rounded-md border border-amply-border p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+        className="inline-flex items-center justify-center rounded-full p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
         title="Add to queue"
       >
         <img src={queueIcon} alt="" className="h-4 w-4 brightness-0 invert" />

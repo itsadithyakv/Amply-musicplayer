@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Song } from '@/types/music';
 import {
+  findLyricsCandidates,
   loadLyrics,
   saveLyricsSelection,
   type LyricsCandidate,
@@ -60,6 +61,8 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const [savingChoiceId, setSavingChoiceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [offsetMs, setOffsetMs] = useState(0);
+  const offsetRef = useRef(0);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
   const autoScrollLockRef = useRef<number | null>(null);
@@ -124,6 +127,95 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
       alive = false;
     };
   }, [active, song?.id, gameMode]);
+
+  useEffect(() => {
+    if (!song?.id) {
+      setOffsetMs(0);
+      return;
+    }
+
+    let alive = true;
+    const key = 'lyrics_offsets.json';
+    const loadOffset = async () => {
+      const cache = await readStorageJson<Record<string, number>>(key, {});
+      if (!alive) {
+        return;
+      }
+      const saved = cache[song.id];
+      if (typeof saved === 'number' && Number.isFinite(saved)) {
+        setOffsetMs(saved);
+      } else {
+        setOffsetMs(0);
+      }
+    };
+    void loadOffset();
+    return () => {
+      alive = false;
+    };
+  }, [song?.id]);
+
+  useEffect(() => {
+    offsetRef.current = offsetMs;
+  }, [offsetMs]);
+
+  const handleOffsetChange = async (deltaMs: number) => {
+    if (!song?.id) {
+      return;
+    }
+    const next = Math.max(-8000, Math.min(8000, offsetRef.current + deltaMs));
+    setOffsetMs(next);
+    const cache = await readStorageJson<Record<string, number>>('lyrics_offsets.json', {});
+    await writeStorageJson('lyrics_offsets.json', {
+      ...cache,
+      [song.id]: next,
+    });
+  };
+
+  const handleManualChoose = async () => {
+    if (!song || loading) {
+      return;
+    }
+    setSavingChoiceId(null);
+    setError(null);
+    setLoading(true);
+    try {
+      const candidates = await findLyricsCandidates(song);
+      if (!candidates.length) {
+        setError('No alternate lyrics found.');
+        return;
+      }
+      setChoices(candidates);
+    } catch {
+      setError('Lyrics fetch failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (!song) {
+      return;
+    }
+    const handleOffset = (event: Event) => {
+      const detail = (event as CustomEvent<{ deltaMs?: number }>).detail;
+      if (!detail || typeof detail.deltaMs !== 'number') {
+        return;
+      }
+      void handleOffsetChange(detail.deltaMs);
+    };
+    const handleChoose = () => {
+      void handleManualChoose();
+    };
+    window.addEventListener('amply://lyrics-offset', handleOffset as EventListener);
+    window.addEventListener('amply://lyrics-choose', handleChoose);
+    return () => {
+      window.removeEventListener('amply://lyrics-offset', handleOffset as EventListener);
+      window.removeEventListener('amply://lyrics-choose', handleChoose);
+    };
+  }, [song?.id, loading]);
 
   useEffect(() => {
     if (gameMode) {
@@ -199,22 +291,24 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     };
   }, [song?.id, song?.albumArt, gameMode]);
 
+  const lines = useMemo(() => (Array.isArray(lyrics?.lines) ? lyrics!.lines : []), [lyrics]);
+
   const timedIndex = useMemo(() => {
-    if (!lyrics?.isSynced) {
+    if (!lyrics?.isSynced || !lines.length) {
       return [];
     }
 
-    return lyrics.lines
+    return lines
       .map((line, index) => (line.timeMs === null ? null : { timeMs: line.timeMs, index }))
       .filter((entry): entry is { timeMs: number; index: number } => Boolean(entry));
-  }, [lyrics]);
+  }, [lyrics?.isSynced, lines]);
 
   const currentIndex = useMemo(() => {
     if (!lyrics?.isSynced || timedIndex.length === 0) {
       return -1;
     }
 
-    const target = positionSec * 1000;
+    const target = positionSec * 1000 + offsetMs;
     let left = 0;
     let right = timedIndex.length - 1;
     let best = -1;
@@ -396,10 +490,11 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
             setAutoScroll(false);
           } else if (!autoScroll && distance < reengageThreshold) {
             if (lock) {
-              window.clearTimeout(lock);
+              return;
             }
             autoScrollLockRef.current = window.setTimeout(() => {
               setAutoScroll(true);
+              autoScrollLockRef.current = null;
             }, 600);
           }
         }}
@@ -416,7 +511,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
           </div>
         ) : null}
         <div className="relative z-10 space-y-5 text-center">
-          {lyrics.lines.map((line, index) => {
+          {lines.map((line, index) => {
             const isCurrent = lyrics.isSynced && index === currentIndex;
             const isPast = lyrics.isSynced && currentIndex >= 0 && index < currentIndex;
             const isClickable = lyrics.isSynced && line.timeMs !== null;
@@ -443,14 +538,14 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
                   }
                 }}
                 className={[
-                  'will-change-[transform,opacity] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]',
+                  'will-change-[transform,opacity] transition-[transform,opacity,color] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]',
                   isCurrent
-                    ? 'translate-y-0 scale-[1.02] text-2xl font-bold text-amply-textPrimary'
+                    ? 'translate-y-0 scale-[1.02] text-[clamp(18px,2.4vw,28px)] font-bold text-amply-textPrimary'
                     : isPast
-                      ? '-translate-y-[1px] text-lg text-amply-textSecondary opacity-80'
+                      ? '-translate-y-[1px] text-[clamp(14px,1.8vw,20px)] text-amply-textSecondary opacity-80'
                       : lyrics.isSynced
-                        ? 'translate-y-[2px] text-lg text-amply-textMuted opacity-60'
-                        : 'text-lg text-amply-textSecondary',
+                        ? 'translate-y-[2px] text-[clamp(14px,1.8vw,20px)] text-amply-textMuted opacity-60'
+                        : 'text-[clamp(14px,1.8vw,20px)] text-amply-textSecondary',
                   isClickable ? 'cursor-pointer hover:text-amply-textPrimary' : '',
                 ].join(' ')}
               >
@@ -461,7 +556,6 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
         </div>
       </div>
       {!lyrics.isSynced ? <p className="text-center text-[12px] text-amply-textMuted">Unsynced</p> : null}
-      <p className="text-center text-[11px] text-amply-textMuted">{lyrics.fromCache ? `Cached: ${lyrics.cachePath}` : `Saved to: ${cachePath ?? lyrics.cachePath}`}</p>
     </div>
   );
 };

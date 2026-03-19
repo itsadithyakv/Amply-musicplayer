@@ -11,6 +11,28 @@ const hash = (value: string): number => {
   return Math.abs(h);
 };
 
+const getIsoWeek = (date: Date): { year: number; week: number } => {
+  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return { year: target.getUTCFullYear(), week };
+};
+
+const weeklySeed = (): number => {
+  const { year, week } = getIsoWeek(new Date());
+  return Number(`${year}${String(week).padStart(2, '0')}`);
+};
+
+const weeklyShuffle = (songs: Song[], seed: number): Song[] => {
+  return [...songs].sort((a, b) => {
+    const scoreA = hash(`${a.id}:${seed}`);
+    const scoreB = hash(`${b.id}:${seed}`);
+    return scoreA - scoreB;
+  });
+};
+
 const slugify = (value: string): string => {
   return value
     .trim()
@@ -79,14 +101,9 @@ const interleaveByGenre = (songs: Song[]): Song[] => {
 };
 
 const pickDailyMix = (songs: Song[]): Song[] => {
-  const now = new Date();
-  const seed = Number(`${now.getUTCFullYear()}${now.getUTCMonth() + 1}${now.getUTCDate()}`);
+  const seed = weeklySeed();
 
-  const shuffled = [...songs].sort((a, b) => {
-    const scoreA = hash(`${a.id}:${seed}`);
-    const scoreB = hash(`${b.id}:${seed}`);
-    return scoreA - scoreB;
-  });
+  const shuffled = weeklyShuffle(songs, seed);
 
   const recentThreshold = Math.floor(Date.now() / 1000) - 3 * 24 * 60 * 60;
   const nonRecent = shuffled.filter((song) => !song.lastPlayed || song.lastPlayed < recentThreshold);
@@ -197,6 +214,41 @@ const buildMoodMixes = (songs: Song[]): Playlist[] => {
       genreHints: ['edm', 'electronic', 'rock', 'hip hop', 'hip-hop', 'metal'],
       titleHints: ['run', 'burn', 'power', 'move', 'energy'],
     },
+    {
+      id: 'late_night',
+      name: 'Late Night Mix',
+      description: 'Low-light listening for winding down.',
+      genreHints: ['ambient', 'lofi', 'lo-fi', 'chill', 'soul', 'r&b'],
+      titleHints: ['night', 'midnight', 'moon', 'late', 'after dark', 'dream'],
+    },
+    {
+      id: 'road_trip',
+      name: 'Road Trip Mix',
+      description: 'Open-road anthems and sing-alongs.',
+      genreHints: ['rock', 'pop', 'country', 'indie'],
+      titleHints: ['road', 'drive', 'highway', 'trip', 'ride'],
+    },
+    {
+      id: 'morning_boost',
+      name: 'Morning Boost',
+      description: 'Bright, upbeat tracks to start the day.',
+      genreHints: ['pop', 'dance', 'funk', 'disco', 'electronic'],
+      titleHints: ['morning', 'sun', 'rise', 'wake', 'bright', 'good'],
+    },
+    {
+      id: 'acoustic',
+      name: 'Acoustic Mix',
+      description: 'Unplugged and mellow acoustic tracks.',
+      genreHints: ['acoustic', 'folk', 'singer-songwriter', 'indie'],
+      titleHints: ['acoustic', 'unplugged', 'stripped'],
+    },
+    {
+      id: 'instrumental',
+      name: 'Instrumental Focus',
+      description: 'Instrumental picks for focus and flow.',
+      genreHints: ['instrumental', 'classical', 'piano', 'ambient', 'lofi', 'lo-fi'],
+      titleHints: ['instrumental', 'piano', 'study', 'focus'],
+    },
   ];
 
   const scoredMixes = moods.map((mood) => {
@@ -256,8 +308,12 @@ const mapPlaylist = (
   updatedAt: Math.floor(Date.now() / 1000),
 });
 
-export const generateSmartPlaylists = (songs: Song[]): Playlist[] => {
+export const generateSmartPlaylists = (
+  songs: Song[],
+  overrides: Record<string, string[]> = {},
+): Playlist[] => {
   const now = Math.floor(Date.now() / 1000);
+  const seed = weeklySeed();
   const recentlyAdded = [...songs].sort((a, b) => b.addedAt - a.addedAt).slice(0, 100);
   const mostPlayed = [...songs].sort(byPlayCount).slice(0, 100);
   const rediscoverCutoff = now - 60 * 24 * 60 * 60;
@@ -271,16 +327,79 @@ export const generateSmartPlaylists = (songs: Song[]): Playlist[] => {
   const onRepeat = pickOnRepeat(songs);
   const genreMixes = buildGenreMixes(songs);
   const moodMixes = buildMoodMixes(songs);
+  const quickHits = songs.filter((song) => song.duration > 0 && song.duration <= 180).sort(byPlayCount).slice(0, 100);
+  const longSessions = songs.filter((song) => song.duration >= 360).sort(byPlayCount).slice(0, 100);
+  const deepCuts = songs
+    .filter((song) => song.playCount <= 1 && song.addedAt < now - 14 * 24 * 60 * 60)
+    .sort((a, b) => (a.lastPlayed ?? 0) - (b.lastPlayed ?? 0))
+    .slice(0, 100);
+  const lovedAndPlayed = songs.filter((song) => song.favorite && song.playCount > 0).sort(byPlayCount).slice(0, 100);
 
-  return [
-    mapPlaylist('smart_daily_mix', 'Daily Mix', 'Fresh daily mix with genre balance.', dailyMix),
-    mapPlaylist('smart_on_repeat', 'On Repeat', 'Songs you have been playing most this week.', onRepeat),
-    ...moodMixes,
-    ...genreMixes,
-    mapPlaylist('smart_recently_played', 'Recently Played', 'Tracks you listened to most recently.', recentlyPlayed),
-    mapPlaylist('smart_recently_added', 'Recently Added', 'Latest tracks added to your library.', recentlyAdded),
-    mapPlaylist('smart_most_played', 'Most Played', 'Your most replayed songs.', mostPlayed),
-    mapPlaylist('smart_rediscover', 'Rediscover', 'Songs you have not played in a while.', rediscover),
-    mapPlaylist('smart_favorites', 'Favorites', 'Your favorited songs.', favorites),
+  const playlists: Playlist[] = [
+    mapPlaylist('smart_daily_mix', 'Daily Mix', 'Fresh daily mix with genre balance.', weeklyShuffle(dailyMix, seed)),
+    mapPlaylist('smart_on_repeat', 'On Repeat', 'Songs you have been playing most this week.', weeklyShuffle(onRepeat, seed)),
+    ...moodMixes.map((entry) => ({
+      ...entry,
+      songIds: weeklyShuffle(
+        entry.songIds.map((id) => songs.find((song) => song.id === id)).filter(Boolean) as Song[],
+        seed,
+      ).map((song) => song.id),
+    })),
+    ...genreMixes.map((entry) => ({
+      ...entry,
+      songIds: weeklyShuffle(
+        entry.songIds.map((id) => songs.find((song) => song.id === id)).filter(Boolean) as Song[],
+        seed,
+      ).map((song) => song.id),
+    })),
+    mapPlaylist('smart_recently_played', 'Recently Played', 'Tracks you listened to most recently.', weeklyShuffle(recentlyPlayed, seed)),
+    mapPlaylist('smart_recently_added', 'Recently Added', 'Latest tracks added to your library.', weeklyShuffle(recentlyAdded, seed)),
+    mapPlaylist('smart_most_played', 'Most Played', 'Your most replayed songs.', weeklyShuffle(mostPlayed, seed)),
+    mapPlaylist('smart_rediscover', 'Rediscover', 'Songs you have not played in a while.', weeklyShuffle(rediscover, seed)),
+    mapPlaylist('smart_favorites', 'Favorites', 'Your favorited songs.', weeklyShuffle(favorites, seed)),
   ];
+
+  if (lovedAndPlayed.length) {
+    playlists.push(
+      mapPlaylist('smart_loved_played', 'Loved & Played', 'Favorites you keep coming back to.', weeklyShuffle(lovedAndPlayed, seed)),
+    );
+  }
+  if (quickHits.length) {
+    playlists.push(
+      mapPlaylist('smart_quick_hits', 'Quick Hits', 'Short, punchy tracks under 3 minutes.', weeklyShuffle(quickHits, seed)),
+    );
+  }
+  if (longSessions.length) {
+    playlists.push(
+      mapPlaylist('smart_long_sessions', 'Long Sessions', 'Longer tracks for deep listening.', weeklyShuffle(longSessions, seed)),
+    );
+  }
+  if (deepCuts.length) {
+    playlists.push(
+      mapPlaylist('smart_deep_cuts', 'Deep Cuts', 'Less-played gems from your library.', weeklyShuffle(deepCuts, seed)),
+    );
+  }
+
+  if (!Object.keys(overrides).length) {
+    return playlists;
+  }
+
+  const songSet = new Set(songs.map((song) => song.id));
+
+  return playlists.map((playlist) => {
+    const extras = overrides[playlist.id] ?? [];
+    if (!extras.length) {
+      return playlist;
+    }
+    const merged = [...playlist.songIds];
+    for (const id of extras) {
+      if (songSet.has(id) && !merged.includes(id)) {
+        merged.push(id);
+      }
+    }
+    return {
+      ...playlist,
+      songIds: merged,
+    };
+  });
 };

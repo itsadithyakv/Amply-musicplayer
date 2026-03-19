@@ -7,6 +7,8 @@ import { usePlayerStore } from '@/store/playerStore';
 import { isTauri } from '@/services/storageService';
 
 export const useOverlayController = (enabled: boolean): void => {
+  const closeToTaskbar = usePlayerStore((state) => state.settings.closeToTaskbar);
+  const overlayAutoHide = usePlayerStore((state) => state.settings.overlayAutoHide);
   const buildOverlayPayload = () => {
     const playerState = usePlayerStore.getState();
     const songId = playerState.currentSongId;
@@ -131,13 +133,18 @@ export const useOverlayController = (enabled: boolean): void => {
     };
 
     void ensureOverlay();
-    const retry = window.setTimeout(() => {
-      void ensureOverlay();
-    }, 1200);
+    let retry: number | null = null;
+    if (enabled) {
+      retry = window.setTimeout(() => {
+        void ensureOverlay();
+      }, 1200);
+    }
 
     return () => {
       cancelled = true;
-      window.clearTimeout(retry);
+      if (retry) {
+        window.clearTimeout(retry);
+      }
     };
   }, [enabled]);
 
@@ -155,9 +162,89 @@ export const useOverlayController = (enabled: boolean): void => {
       return;
     }
 
+    let disposed = false;
+
+    const syncVisibility = async () => {
+      if (disposed) {
+        return;
+      }
+      const overlay = (await WebviewWindow.getAll()).find((window) => window.label === 'overlay') ?? null;
+      if (!overlay) {
+        return;
+      }
+      const { isPlaying } = usePlayerStore.getState();
+      if (overlayAutoHide && !isPlaying) {
+        await overlay.hide().catch(() => {});
+      } else {
+        await overlay.show().catch(() => {});
+      }
+    };
+
+    const unsub = usePlayerStore.subscribe((state) => state.isPlaying, () => {
+      void syncVisibility();
+    });
+
+    void syncVisibility();
+
+    return () => {
+      disposed = true;
+      unsub();
+    };
+  }, [enabled, overlayAutoHide]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    const currentWindow = getCurrentWebviewWindow();
+    if (currentWindow.label === 'overlay') {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    (async () => {
+      unlisten = await currentWindow.onCloseRequested(async () => {
+        if (closeToTaskbar) {
+          return;
+        }
+        const overlay = (await WebviewWindow.getAll()).find((window) => window.label === 'overlay') ?? null;
+        if (overlay) {
+          await overlay.close().catch(() => {});
+        }
+      });
+
+      if (disposed && unlisten) {
+        unlisten();
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [closeToTaskbar]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    const currentWindow = getCurrentWebviewWindow();
+    if (currentWindow.label === 'overlay') {
+      return;
+    }
+
+    if (!enabled) {
+      return;
+    }
+
     let scheduled = false;
     let cancelled = false;
-    let interval: number | null = null;
 
     const scheduleEmit = () => {
       if (scheduled) {
@@ -175,19 +262,16 @@ export const useOverlayController = (enabled: boolean): void => {
       });
     };
 
-    const unsubPlayer = usePlayerStore.subscribe(() => scheduleEmit());
-    const unsubLibrary = useLibraryStore.subscribe(() => scheduleEmit());
+    const unsubPlayer = usePlayerStore.subscribe(
+      (state) => [state.currentSongId, state.isPlaying],
+      () => scheduleEmit(),
+    );
+    const unsubLibrary = useLibraryStore.subscribe((state) => state.songs, () => scheduleEmit());
 
     scheduleEmit();
-    interval = window.setInterval(() => {
-      scheduleEmit();
-    }, 1000);
 
     return () => {
       cancelled = true;
-      if (interval) {
-        window.clearInterval(interval);
-      }
       unsubPlayer();
       unsubLibrary();
     };

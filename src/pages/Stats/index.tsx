@@ -222,11 +222,33 @@ const StatsPage = () => {
     if (!energyCards.length) {
       return;
     }
-    const interval = window.setInterval(() => {
-      setEnergyIndex((prev) => (prev + 1) % energyCards.length);
-    }, 4200);
+    let interval: number | null = null;
+    const start = () => {
+      if (interval) {
+        return;
+      }
+      interval = window.setInterval(() => {
+        setEnergyIndex((prev) => (prev + 1) % energyCards.length);
+      }, 4200);
+    };
+    const stop = () => {
+      if (interval) {
+        window.clearInterval(interval);
+        interval = null;
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stop();
+      } else {
+        start();
+      }
+    };
+    handleVisibility();
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
-      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      stop();
     };
   }, [energyCards.length]);
 

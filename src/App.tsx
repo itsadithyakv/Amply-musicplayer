@@ -57,7 +57,7 @@ const App = () => {
     (async () => {
       unlisten = await appWindow.onCloseRequested(async (event) => {
         event.preventDefault();
-        await appWindow.minimize();
+        await appWindow.hide();
       });
 
       if (disposed && unlisten) {

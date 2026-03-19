@@ -5,6 +5,8 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { LibraryTab, Song } from '@/types/music';
 import { splitArtistNames } from '@/utils/artists';
+import { pickMusicFolders } from '@/services/storageService';
+import addIcon from '@/assets/icons/add.svg';
 
 const tabs: Array<{ label: string; value: LibraryTab }> = [
   { label: 'Songs', value: 'songs' },
@@ -150,6 +152,10 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const songs = useLibraryStore((state) => state.songs);
   const isScanning = useLibraryStore((state) => state.isScanning);
   const scanError = useLibraryStore((state) => state.scanError);
+  const libraryPaths = useLibraryStore((state) => state.libraryPaths);
+  const addLibraryPath = useLibraryStore((state) => state.addLibraryPath);
+  const setLibraryPaths = useLibraryStore((state) => state.setLibraryPaths);
+  const scanLibrary = useLibraryStore((state) => state.scanLibrary);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
 
@@ -160,6 +166,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const [artistQuery, setArtistQuery] = useState('');
   const [genreSort, setGenreSort] = useState<GenreSort>('name_asc');
   const [genreQuery, setGenreQuery] = useState('');
+  const [localPath, setLocalPath] = useState('');
 
   const albums = useMemo(() => getRepresentativeSongs(songs, 'album'), [songs]);
   const filteredAlbums = useMemo(() => {
@@ -226,21 +233,62 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
         <p className="text-[13px] text-amply-textSecondary">{songs.length.toLocaleString()} songs indexed</p>
       </header>
 
-      <div className="flex gap-2 rounded-xl border border-amply-border/60 bg-amply-surface p-2">
-        {tabs.map((tab) => (
-          <button
-            key={tab.value}
-            type="button"
-            onClick={() => setActiveTab(tab.value)}
-            className={`rounded-lg px-4 py-2 text-[13px] transition-colors ${
-              activeTab === tab.value
-                ? 'bg-amply-hover text-amply-textPrimary shadow-glow'
-                : 'text-amply-textSecondary hover:bg-amply-hover'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amply-border/60 bg-amply-surface p-2">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              className={`rounded-lg px-4 py-2 text-[13px] transition-colors ${
+                activeTab === tab.value
+                  ? 'bg-amply-hover text-amply-textPrimary'
+                  : 'text-amply-textSecondary hover:bg-amply-hover'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'songs' ? (
+          <div className="flex items-center gap-2">
+            <input
+              value={localPath}
+              onChange={(event) => setLocalPath(event.target.value)}
+              placeholder="Add folder path..."
+              className="hidden min-w-[220px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent md:block"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                if (localPath.trim()) {
+                  await addLibraryPath(localPath.trim());
+                  setLocalPath('');
+                  return;
+                }
+                const picked = await pickMusicFolders();
+                if (picked.length) {
+                  const merged = Array.from(new Set([...libraryPaths, ...picked]));
+                  await setLibraryPaths(merged);
+                }
+              }}
+              className="inline-flex items-center justify-center rounded-lg border border-amply-border/60 bg-amply-bgSecondary p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
+              title="Add music folder"
+            >
+              <img src={addIcon} alt="" className="h-4 w-4 brightness-0 invert" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void scanLibrary();
+              }}
+              className="rounded-lg border border-amply-border/60 px-3 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            >
+              {isScanning ? 'Scanning...' : 'Rescan'}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {isScanning ? <p className="text-[13px] text-amply-textSecondary">Scanning library...</p> : null}

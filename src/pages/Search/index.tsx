@@ -38,18 +38,20 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
     <div className={embedded ? 'space-y-4' : 'space-y-5 pb-8'}>
       {!embedded ? (
         <header className="space-y-1">
-          <h1 className="text-2xl font-bold text-amply-textPrimary">Search</h1>
-          <p className="text-[13px] text-amply-textSecondary">Instant search across songs, artists, albums, genres, and playlists.</p>
+          <h1 className="text-[30px] font-bold tracking-tight text-amply-textPrimary">Search</h1>
         </header>
       ) : null}
 
       <div className="rounded-card border border-amply-border bg-amply-card p-4">
-        <input
-          value={query}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Search songs, artists, albums, playlists..."
-          className="w-full rounded-lg border border-amply-border bg-amply-bgSecondary px-4 py-3 text-[13px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
-        />
+        <div className="flex items-center gap-3 rounded-xl border border-amply-border/60 bg-amply-bgSecondary px-4 py-3">
+          <div className="h-2 w-2 rounded-full bg-amply-accent" />
+          <input
+            value={query}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search songs, artists, albums, playlists..."
+            className="w-full bg-transparent text-[13px] text-amply-textPrimary outline-none"
+          />
+        </div>
 
         {suggestions.length ? (
           <div className="mt-3 flex flex-wrap gap-2">
@@ -58,7 +60,7 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
                 key={suggestion}
                 type="button"
                 onClick={() => setSearchQuery(suggestion)}
-                className="rounded-full border border-amply-border px-3 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                className="rounded-full border border-amply-border/60 bg-amply-bgPrimary/40 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-amply-textSecondary transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
               >
                 {suggestion}
               </button>

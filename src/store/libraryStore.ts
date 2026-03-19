@@ -4,6 +4,7 @@ import { ensureStorageDirs, readStorageJson, writeStorageJson } from '@/services
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists } from '@/services/playlistGenerator';
 import { hasCachedGenre, hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
+import { hydrateSongsWithCachedLoudness } from '@/services/loudnessService';
 import { hasCachedLyrics, loadLyrics } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
 import { filterAndRankSongs } from '@/utils/search';
@@ -20,6 +21,7 @@ interface LibraryState {
   songs: Song[];
   playlists: Playlist[];
   customPlaylists: Playlist[];
+  smartPlaylistOverrides: Record<string, string[]>;
   searchQuery: string;
   metadataFetch: {
     running: boolean;
@@ -41,17 +43,82 @@ interface LibraryState {
   getSongById: (songId: string) => Song | undefined;
   updateSongGenre: (songId: string, genre: string) => Promise<void>;
   refreshSongGenreIfUnknown: (songId: string) => Promise<void>;
+  updateSongLoudness: (songId: string, lufs: number) => Promise<void>;
   toggleFavorite: (songId: string) => Promise<void>;
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
+  addSongToPlaylist: (playlistId: string, songId: string) => Promise<'added' | 'exists' | 'missing'>;
   recordSongPlay: (songId: string) => Promise<void>;
   upsertCustomPlaylist: (playlist: Playlist) => Promise<void>;
 }
 
 const libraryCachePath = 'playlists/library_cache.json';
 const customPlaylistsPath = 'playlists/custom_playlists.json';
+const smartOverridesPath = 'playlists/smart_overrides.json';
+const smartCachePath = 'playlists/smart_cache.json';
 
-const buildPlaylists = (songs: Song[], customPlaylists: Playlist[]): Playlist[] => {
-  return [...generateSmartPlaylists(songs), ...customPlaylists];
+type SmartCache = {
+  weekKey: string;
+  playlists: Playlist[];
+};
+
+let smartPlaylistsCache: Playlist[] = [];
+let smartCacheWeek: string | null = null;
+
+const getIsoWeekKey = (date = new Date()): string => {
+  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+};
+
+const applySmartOverrides = (
+  playlists: Playlist[],
+  overrides: Record<string, string[]>,
+  songs: Song[],
+): Playlist[] => {
+  const songSet = new Set(songs.map((song) => song.id));
+  return playlists.map((playlist) => {
+    const extras = overrides[playlist.id] ?? [];
+    if (!extras.length) {
+      return playlist;
+    }
+    const merged = [...playlist.songIds];
+    for (const id of extras) {
+      if (songSet.has(id) && !merged.includes(id)) {
+        merged.push(id);
+      }
+    }
+    return {
+      ...playlist,
+      songIds: merged,
+    };
+  });
+};
+
+const refreshSmartPlaylists = async (songs: Song[], overrides: Record<string, string[]>): Promise<Playlist[]> => {
+  const weekKey = getIsoWeekKey();
+  if (smartCacheWeek === weekKey && smartPlaylistsCache.length) {
+    return smartPlaylistsCache;
+  }
+
+  const cached = await readStorageJson<SmartCache | null>(smartCachePath, null);
+  if (cached?.weekKey === weekKey && cached.playlists?.length) {
+    smartCacheWeek = cached.weekKey;
+    smartPlaylistsCache = applySmartOverrides(cached.playlists, overrides, songs);
+    return smartPlaylistsCache;
+  }
+
+  const generated = generateSmartPlaylists(songs, overrides);
+  smartCacheWeek = weekKey;
+  smartPlaylistsCache = generated;
+  await writeStorageJson(smartCachePath, { weekKey, playlists: generated });
+  return generated;
+};
+
+const buildPlaylists = (customPlaylists: Playlist[]): Playlist[] => {
+  return [...smartPlaylistsCache, ...customPlaylists];
 };
 
 const normalizeLibraryPaths = (paths: string[]): string[] => {
@@ -76,6 +143,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   songs: [],
   playlists: [],
   customPlaylists: [],
+  smartPlaylistOverrides: {},
   searchQuery: '',
   metadataFetch: {
     running: false,
@@ -272,17 +340,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const settings = await readStorageJson<{ libraryPath?: string; libraryPaths?: string[] }>('settings.json', {});
     const cache = await readStorageJson<LibraryPersisted>(libraryCachePath, { songs: [] });
     const customPlaylists = await readStorageJson<Playlist[]>(customPlaylistsPath, []);
+    const smartOverrides = await readStorageJson<Record<string, string[]>>(smartOverridesPath, {});
     const libraryPaths = normalizeLibraryPaths([
       ...(settings.libraryPaths ?? []),
       ...(settings.libraryPath ? [settings.libraryPath] : []),
     ]);
 
+    await refreshSmartPlaylists(cache.songs, smartOverrides);
+
     set({
       initialized: true,
       songs: cache.songs,
       customPlaylists,
-      playlists: buildPlaylists(cache.songs, customPlaylists),
+      playlists: buildPlaylists(customPlaylists),
       libraryPaths,
+      smartPlaylistOverrides: smartOverrides,
     });
 
     await get().scanLibrary(libraryPaths);
@@ -317,12 +389,14 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         };
       });
       const hydratedSongs = await hydrateSongsWithCachedGenres(mergedSongs);
+      const loudnessHydrated = await hydrateSongsWithCachedLoudness(hydratedSongs);
 
       const customPlaylists = get().customPlaylists;
-      const playlists = buildPlaylists(hydratedSongs, customPlaylists);
+      await refreshSmartPlaylists(loudnessHydrated, get().smartPlaylistOverrides);
+      const playlists = buildPlaylists(customPlaylists);
 
-      set({ songs: hydratedSongs, playlists, isScanning: false });
-      await persistLibrary(hydratedSongs, customPlaylists);
+      set({ songs: loudnessHydrated, playlists, isScanning: false });
+      await persistLibrary(loudnessHydrated, customPlaylists);
     } catch (error) {
       set({
         isScanning: false,
@@ -395,7 +469,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     const customPlaylists = get().customPlaylists;
-    set({ songs, playlists: buildPlaylists(songs, customPlaylists) });
+    set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -438,7 +512,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     });
 
     const customPlaylists = get().customPlaylists;
-    set({ songs, playlists: buildPlaylists(songs, customPlaylists) });
+    set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -463,8 +537,63 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     const updated = [...existing];
     updated[index] = updatedPlaylist;
-    set({ customPlaylists: updated, playlists: buildPlaylists(songs, updated) });
+    set({ customPlaylists: updated, playlists: buildPlaylists(updated) });
     await persistLibrary(songs, updated);
+  },
+
+  updateSongLoudness: async (songId, lufs) => {
+    const songs = get().songs.map((song) => {
+      if (song.id !== songId) {
+        return song;
+      }
+
+      if (song.loudnessLufs === lufs) {
+        return song;
+      }
+
+      return {
+        ...song,
+        loudnessLufs: lufs,
+      };
+    });
+
+    const customPlaylists = get().customPlaylists;
+    set({ songs, playlists: buildPlaylists(customPlaylists) });
+    await persistLibrary(songs, customPlaylists);
+  },
+
+  addSongToPlaylist: async (playlistId, songId) => {
+    const state = get();
+    const playlist = state.playlists.find((entry) => entry.id === playlistId);
+    if (!playlist) {
+      return 'missing';
+    }
+    if (playlist.songIds.includes(songId)) {
+      return 'exists';
+    }
+
+    if (playlist.type === 'custom') {
+      await get().addSongToCustomPlaylist(playlistId, songId);
+      return 'added';
+    }
+
+    const overrides = {
+      ...state.smartPlaylistOverrides,
+    };
+    const list = overrides[playlistId] ? [...overrides[playlistId]] : [];
+    if (!list.includes(songId)) {
+      list.push(songId);
+    }
+    overrides[playlistId] = list;
+
+    smartPlaylistsCache = applySmartOverrides(smartPlaylistsCache, overrides, state.songs);
+    const customPlaylists = state.customPlaylists;
+    set({
+      smartPlaylistOverrides: overrides,
+      playlists: buildPlaylists(customPlaylists),
+    });
+    await writeStorageJson(smartOverridesPath, overrides);
+    return 'added';
   },
 
   recordSongPlay: async (songId) => {
@@ -483,7 +612,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     });
 
     const customPlaylists = get().customPlaylists;
-    set({ songs, playlists: buildPlaylists(songs, customPlaylists) });
+    set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -500,7 +629,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     const songs = get().songs;
-    set({ customPlaylists: updated, playlists: buildPlaylists(songs, updated) });
+    set({ customPlaylists: updated, playlists: buildPlaylists(updated) });
     await persistLibrary(songs, updated);
   },
 }));

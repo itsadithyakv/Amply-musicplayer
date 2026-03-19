@@ -1,5 +1,7 @@
 import { Howl, Howler } from 'howler';
-import { toPlayableSrc } from '@/services/storageService';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { isTauri, toPlayableSrc } from '@/services/storageService';
 import type { AppSettings, Song } from '@/types/music';
 
 interface LoadOptions {
@@ -7,6 +9,11 @@ interface LoadOptions {
   transition?: boolean;
   startAtSec?: number;
 }
+
+type AudioProgressEvent = {
+  position: number;
+  duration: number;
+};
 
 const resolveExtension = (value: string): string | null => {
   const clean = value.split(/[?#]/)[0];
@@ -56,16 +63,256 @@ const resolveSongFormats = (song: Song): string[] | undefined => {
   return [extension];
 };
 
-class AudioEngine {
+const defaultSettings: AppSettings = {
+  libraryPath: 'music',
+  crossfadeEnabled: true,
+  crossfadeDurationSec: 6,
+  gaplessEnabled: true,
+  volumeNormalizationEnabled: true,
+  playbackSpeed: 1,
+  outputDeviceName: undefined,
+  eqPreset: 'flat',
+  launchOnStartup: false,
+  closeToTaskbar: false,
+  gameMode: false,
+  miniNowPlayingOverlay: false,
+  overlayAutoHide: true,
+  lyricsVisualsEnabled: true,
+  lyricsVisualTheme: 'ember',
+};
+
+class NativeAudioEngine {
+  private currentSong: Song | null = null;
+  private currentPosition = 0;
+  private currentDuration = 0;
+  private isPlayingFlag = false;
+  private lastProgressAt = 0;
+  private onProgress: ((position: number, duration: number) => void) | null = null;
+  private onEnded: (() => void) | null = null;
+  private settings: AppSettings = defaultSettings;
+  private masterVolume = 0.85;
+  private readonly crossfadeMinDurationSec = 20;
+  private readonly silenceTrimStartSec = 0.08;
+  private listening = false;
+
+  constructor() {
+    if (isTauri()) {
+      void this.bindNativeEvents();
+    }
+  }
+
+  private async bindNativeEvents(): Promise<void> {
+    if (this.listening) {
+      return;
+    }
+    this.listening = true;
+
+    await listen<AudioProgressEvent>('amply://audio-progress', (event) => {
+      const { position, duration } = event.payload;
+      this.currentPosition = position;
+      this.currentDuration = duration;
+      this.lastProgressAt = performance.now();
+      this.onProgress?.(position, duration);
+    });
+
+    await listen('amply://audio-ended', () => {
+      this.isPlayingFlag = false;
+      this.onEnded?.();
+    });
+  }
+
+  setCallbacks(callbacks: {
+    onProgress?: (position: number, duration: number) => void;
+    onEnded?: () => void;
+  }): void {
+    this.onProgress = callbacks.onProgress ?? null;
+    this.onEnded = callbacks.onEnded ?? null;
+  }
+
+  applySettings(settings: AppSettings): void {
+    const previous = this.settings;
+    this.settings = settings;
+    void invoke('audio_set_rate', { rate: settings.playbackSpeed });
+    if (settings.outputDeviceName !== previous.outputDeviceName) {
+      void invoke('audio_set_output_device', { name: settings.outputDeviceName ?? null });
+    }
+    if (settings.eqPreset !== previous.eqPreset) {
+      void invoke('audio_set_eq_preset', { preset: settings.eqPreset });
+    }
+    this.refreshTrackVolumes();
+  }
+
+  setLoop(enabled: boolean): void {
+    void invoke('audio_set_loop', { enabled });
+  }
+
+  getCurrentSongId(): string | null {
+    return this.currentSong?.id ?? null;
+  }
+
+  getPosition(): number {
+    if (this.isPlayingFlag && this.lastProgressAt > 0) {
+      const delta = (performance.now() - this.lastProgressAt) / 1000;
+      return Math.min(this.currentDuration || Infinity, this.currentPosition + delta);
+    }
+    return this.currentPosition;
+  }
+
+  getDuration(): number {
+    return this.currentDuration;
+  }
+
+  async loadSong(song: Song, options: LoadOptions = {}): Promise<void> {
+    const { autoplay = true, transition = true, startAtSec = 0 } = options;
+    const path = song.path || song.source;
+    if (!path) {
+      return;
+    }
+    const currentDuration = this.currentSong?.duration ?? 0;
+    const canCrossfade =
+      transition &&
+      this.settings.crossfadeEnabled &&
+      !this.settings.gaplessEnabled &&
+      currentDuration >= this.crossfadeMinDurationSec &&
+      song.duration >= this.crossfadeMinDurationSec;
+
+    const trimmedStart =
+      startAtSec > 0
+        ? startAtSec
+        : Math.max(0, Math.min(this.silenceTrimStartSec, song.duration * 0.02));
+
+    const volume = this.resolveTrackVolume(song);
+    const shouldAutoplay = autoplay || canCrossfade;
+
+    if (!canCrossfade) {
+      void invoke('audio_stop');
+    }
+
+    await invoke('audio_load_song', {
+      path,
+      autoplay: shouldAutoplay,
+      transition: canCrossfade,
+      startAtSec: trimmedStart,
+      durationSec: song.duration,
+      crossfadeDurationSec: this.settings.crossfadeDurationSec,
+      crossfade: canCrossfade,
+      trackVolume: volume,
+    });
+
+    this.currentSong = song;
+    this.currentDuration = song.duration;
+    this.currentPosition = trimmedStart;
+    this.lastProgressAt = performance.now();
+    this.isPlayingFlag = shouldAutoplay;
+    this.onProgress?.(this.currentPosition, this.currentDuration);
+  }
+
+  preloadSong(song: Song): void {
+    this.preloadSongs([song]);
+  }
+
+  preloadSongs(songs: Song[]): void {
+    if (!this.settings.gaplessEnabled) {
+      void invoke('audio_preload', { paths: [] });
+      return;
+    }
+
+    const unique: Song[] = [];
+    const seen = new Set<string>();
+    for (const song of songs) {
+      if (!song?.id || seen.has(song.id) || song.id === this.currentSong?.id) {
+        continue;
+      }
+      seen.add(song.id);
+      unique.push(song);
+      if (unique.length >= 3) {
+        break;
+      }
+    }
+
+    void invoke('audio_preload', {
+      paths: unique
+        .map((song) => song.path)
+        .filter((path): path is string => typeof path === 'string' && path.length > 0),
+    });
+  }
+
+  play(): void {
+    void invoke('audio_play');
+    this.isPlayingFlag = true;
+    this.lastProgressAt = performance.now();
+  }
+
+  playFrom(positionSec: number): void {
+    void invoke('audio_play_from', { positionSec });
+    this.isPlayingFlag = true;
+    this.currentPosition = positionSec;
+    this.lastProgressAt = performance.now();
+  }
+
+  pause(): void {
+    void invoke('audio_pause');
+    this.isPlayingFlag = false;
+  }
+
+  stop(): void {
+    void invoke('audio_stop');
+    this.isPlayingFlag = false;
+    this.currentPosition = 0;
+  }
+
+  seek(positionSec: number): void {
+    void invoke('audio_seek', { positionSec });
+    this.currentPosition = positionSec;
+    this.lastProgressAt = performance.now();
+    this.onProgress?.(positionSec, this.currentDuration);
+  }
+
+  setVolume(volume: number): void {
+    this.masterVolume = volume;
+    this.refreshTrackVolumes();
+  }
+
+  setRate(rate: number): void {
+    void invoke('audio_set_rate', { rate });
+  }
+
+  isPlaying(): boolean {
+    return this.isPlayingFlag;
+  }
+
+  private resolveTrackVolume(song: Song): number {
+    if (!this.settings.volumeNormalizationEnabled || typeof song.replayGain !== 'number') {
+      return this.masterVolume;
+    }
+
+    const dbGain = song.replayGain;
+    const amp = Math.pow(10, dbGain / 20);
+    return Math.max(0.1, Math.min(1, this.masterVolume * amp));
+  }
+
+  private refreshTrackVolumes(): void {
+    if (!this.currentSong) {
+      return;
+    }
+    const volume = this.resolveTrackVolume(this.currentSong);
+    void invoke('audio_set_volume', { volume });
+  }
+}
+
+class HowlerAudioEngine {
   private currentHowl: Howl | null = null;
 
   private fadingHowl: Howl | null = null;
 
   private preloadedHowls = new Map<string, Howl>();
+  private preloadedMeta = new Map<string, Song>();
 
   private currentSong: Song | null = null;
 
   private progressTimer: number | null = null;
+  private progressIntervalMs = 250;
+  private visibilityHandler: (() => void) | null = null;
 
   private onProgress: ((position: number, duration: number) => void) | null = null;
 
@@ -77,20 +324,11 @@ class AudioEngine {
 
   private loadToken = 0;
 
-  private settings: AppSettings = {
-    libraryPath: 'music',
-    crossfadeEnabled: true,
-    crossfadeDurationSec: 6,
-    gaplessEnabled: true,
-    volumeNormalizationEnabled: true,
-    playbackSpeed: 1,
-    launchOnStartup: false,
-    closeToTaskbar: false,
-    gameMode: false,
-    miniNowPlayingOverlay: false,
-    lyricsVisualsEnabled: true,
-    lyricsVisualTheme: 'ember',
-  };
+  private settings: AppSettings = defaultSettings;
+
+  private readonly crossfadeMinDurationSec = 20;
+
+  private readonly silenceTrimStartSec = 0.08;
 
   setCallbacks(callbacks: {
     onProgress?: (position: number, duration: number) => void;
@@ -108,6 +346,7 @@ class AudioEngine {
     this.preloadedHowls.forEach((howl) => {
       howl.rate(settings.playbackSpeed);
     });
+    this.refreshTrackVolumes();
   }
 
   setLoop(enabled: boolean): void {
@@ -136,7 +375,13 @@ class AudioEngine {
   async loadSong(song: Song, options: LoadOptions = {}): Promise<void> {
     const { autoplay = true, transition = true, startAtSec = 0 } = options;
     const token = (this.loadToken += 1);
-    const canCrossfade = transition && this.settings.crossfadeEnabled;
+    const currentDuration = this.currentHowl?.duration() ?? 0;
+    const canCrossfade =
+      transition &&
+      this.settings.crossfadeEnabled &&
+      !this.settings.gaplessEnabled &&
+      currentDuration >= this.crossfadeMinDurationSec &&
+      song.duration >= this.crossfadeMinDurationSec;
 
     if (!this.currentHowl) {
       const targetHowl = this.createHowl(song, autoplay, startAtSec);
@@ -194,6 +439,7 @@ class AudioEngine {
     if (!this.settings.gaplessEnabled) {
       this.preloadedHowls.forEach((howl) => howl.unload());
       this.preloadedHowls.clear();
+      this.preloadedMeta.clear();
       return;
     }
 
@@ -215,6 +461,7 @@ class AudioEngine {
       if (!nextIds.has(id)) {
         howl.unload();
         this.preloadedHowls.delete(id);
+        this.preloadedMeta.delete(id);
       }
     });
 
@@ -231,6 +478,7 @@ class AudioEngine {
         rate: this.settings.playbackSpeed,
       });
       this.preloadedHowls.set(song.id, howl);
+      this.preloadedMeta.set(song.id, song);
     });
   }
 
@@ -291,6 +539,7 @@ class AudioEngine {
 
   setVolume(volume: number): void {
     Howler.volume(volume);
+    this.refreshTrackVolumes();
   }
 
   setRate(rate: number): void {
@@ -337,6 +586,7 @@ class AudioEngine {
     const howl = this.preloadedHowls.get(songId) ?? null;
     if (howl) {
       this.preloadedHowls.delete(songId);
+      this.preloadedMeta.delete(songId);
     }
     return howl;
   }
@@ -347,11 +597,16 @@ class AudioEngine {
       this.publishProgress();
     });
     howl.on('play', () => {
-      if (startAtSec > 0) {
-        howl.seek(startAtSec);
-      } else if (this.pendingSeek !== null) {
+      if (this.pendingSeek !== null) {
         howl.seek(this.pendingSeek);
         this.pendingSeek = null;
+      } else if (startAtSec > 0) {
+        howl.seek(startAtSec);
+      } else {
+        const trimmedStart = Math.max(0, Math.min(this.silenceTrimStartSec, song.duration * 0.02));
+        if (trimmedStart > 0) {
+          howl.seek(trimmedStart);
+        }
       }
       this.startProgressLoop();
     });
@@ -418,17 +673,47 @@ class AudioEngine {
 
     const dbGain = song.replayGain;
     const amp = Math.pow(10, dbGain / 20);
-    return Math.max(0.15, Math.min(1, Howler.volume() * amp));
+    return Math.max(0.1, Math.min(1, Howler.volume() * amp));
+  }
+
+  private refreshTrackVolumes(): void {
+    const current = this.currentSong;
+    if (current && this.currentHowl) {
+      this.currentHowl.volume(this.resolveTrackVolume(current));
+    }
+
+    this.preloadedHowls.forEach((howl, id) => {
+      const song = this.preloadedMeta.get(id);
+      if (song) {
+        howl.volume(this.resolveTrackVolume(song));
+      }
+    });
   }
 
   private startProgressLoop(): void {
     if (this.progressTimer) {
       window.clearInterval(this.progressTimer);
     }
-
+    const resolveInterval = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return 1000;
+      }
+      return 250;
+    };
+    this.progressIntervalMs = resolveInterval();
     this.progressTimer = window.setInterval(() => {
       this.publishProgress();
-    }, 250);
+    }, this.progressIntervalMs);
+
+    if (!this.visibilityHandler && typeof document !== 'undefined') {
+      this.visibilityHandler = () => {
+        const next = resolveInterval();
+        if (next !== this.progressIntervalMs) {
+          this.startProgressLoop();
+        }
+      };
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+    }
   }
 
   private publishProgress(): void {
@@ -446,7 +731,11 @@ class AudioEngine {
 
     window.clearInterval(this.progressTimer);
     this.progressTimer = null;
+    if (this.visibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
   }
 }
 
-export const audioEngine = new AudioEngine();
+export const audioEngine = isTauri() ? new NativeAudioEngine() : new HowlerAudioEngine();

@@ -40,11 +40,15 @@ const PlayerBar = () => {
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
   const customPlaylists = useLibraryStore((state) => state.customPlaylists);
   const addSongToCustomPlaylist = useLibraryStore((state) => state.addSongToCustomPlaylist);
+  const upsertCustomPlaylist = useLibraryStore((state) => state.upsertCustomPlaylist);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [favoritePulse, setFavoritePulse] = useState(false);
   const [favoriteMessage, setFavoriteMessage] = useState<string | null>(null);
+  const [playlistMessage, setPlaylistMessage] = useState<string | null>(null);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
   const favoriteClickRef = useRef<number | null>(null);
   const favoriteMessageRef = useRef<number | null>(null);
+  const playlistMessageRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -53,6 +57,9 @@ const PlayerBar = () => {
       }
       if (favoriteMessageRef.current) {
         window.clearTimeout(favoriteMessageRef.current);
+      }
+      if (playlistMessageRef.current) {
+        window.clearTimeout(playlistMessageRef.current);
       }
     };
   }, []);
@@ -135,7 +142,7 @@ const PlayerBar = () => {
             </button>
             <button
               type="button"
-              disabled={!song || !customPlaylists.length}
+              disabled={!song}
               onClick={() => setShowPlaylistPicker((value) => !value)}
               className="rounded-lg border border-amply-border/60 p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
               title="Add to playlist"
@@ -147,32 +154,114 @@ const PlayerBar = () => {
           {favoriteMessage ? (
             <span className="text-[11px] text-amply-accent">{favoriteMessage}</span>
           ) : null}
+          {playlistMessage ? (
+            <span className="text-[11px] text-amply-accent">{playlistMessage}</span>
+          ) : null}
 
           {showPlaylistPicker ? (
-            <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-amply-border/60 bg-amply-surface p-2 shadow-card">
-              <p className="px-2 pb-2 text-[11px] uppercase tracking-wide text-amply-textMuted">Add to playlist</p>
-              <div className="space-y-1">
-                {customPlaylists.length ? (
-                  customPlaylists.map((playlist) => (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-md"
+              onClick={() => setShowPlaylistPicker(false)}
+            >
+              <div
+                className="w-full max-w-md rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-amply-border/60 pb-3">
+                  <p className="text-[12px] uppercase tracking-[0.2em] text-amply-textMuted">Add to playlist</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowPlaylistPicker(false)}
+                    className="rounded-md border border-amply-border/60 px-2 py-1 text-[11px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <label className="text-[10px] uppercase tracking-[0.2em] text-amply-textMuted">Quick Create</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={newPlaylistName}
+                      onChange={(event) => setNewPlaylistName(event.target.value)}
+                      placeholder="New playlist name"
+                      className="flex-1 rounded-md border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+                    />
                     <button
-                      key={playlist.id}
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (!song) {
                           return;
                         }
-                        void addSongToCustomPlaylist(playlist.id, song.id);
+                        const name = newPlaylistName.trim();
+                        if (!name) {
+                          return;
+                        }
+                        const playlist = {
+                          id: `custom_${Date.now()}`,
+                          name,
+                          type: 'custom' as const,
+                          description: 'User playlist',
+                          songIds: [song.id],
+                          updatedAt: Math.floor(Date.now() / 1000),
+                        };
+                        await upsertCustomPlaylist(playlist);
+                        setNewPlaylistName('');
                         setShowPlaylistPicker(false);
+                        setPlaylistMessage(`Created ${name}`);
+                        if (playlistMessageRef.current) {
+                          window.clearTimeout(playlistMessageRef.current);
+                        }
+                        playlistMessageRef.current = window.setTimeout(() => {
+                          setPlaylistMessage(null);
+                        }, 1600);
                       }}
-                      className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
+                      className="rounded-md bg-amply-accent px-3 py-2 text-[11px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
                     >
-                      <span className="truncate">{playlist.name}</span>
-                      <span className="text-[11px] text-amply-textMuted">{playlist.songIds.length}</span>
+                      Create
                     </button>
-                  ))
-                ) : (
-                  <p className="px-2 py-2 text-[12px] text-amply-textMuted">No custom playlists yet.</p>
-                )}
+                  </div>
+                </div>
+
+                <div className="mt-4 max-h-64 space-y-1 overflow-y-auto pr-1">
+                  {customPlaylists.length ? (
+                    customPlaylists.map((playlist) => {
+                      const inPlaylist = Boolean(song && playlist.songIds.includes(song.id));
+                      return (
+                        <button
+                          key={playlist.id}
+                          type="button"
+                          onClick={async () => {
+                            if (!song) {
+                              return;
+                            }
+                            if (inPlaylist) {
+                              setPlaylistMessage(`Already in ${playlist.name}`);
+                            } else {
+                              await addSongToCustomPlaylist(playlist.id, song.id);
+                              setPlaylistMessage(`Added to ${playlist.name}`);
+                            }
+                            if (playlistMessageRef.current) {
+                              window.clearTimeout(playlistMessageRef.current);
+                            }
+                            playlistMessageRef.current = window.setTimeout(() => {
+                              setPlaylistMessage(null);
+                            }, 1600);
+                            setShowPlaylistPicker(false);
+                          }}
+                          className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
+                        >
+                          <span className="truncate">{playlist.name}</span>
+                          <span className="text-[11px] text-amply-textMuted">
+                            {inPlaylist ? 'Added' : playlist.songIds.length}
+                          </span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="px-2 py-2 text-[12px] text-amply-textMuted">No playlists yet.</p>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}

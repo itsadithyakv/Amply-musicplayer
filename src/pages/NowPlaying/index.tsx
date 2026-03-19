@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import prevIcon from '@/assets/icons/prev.svg';
 import nextIcon from '@/assets/icons/next.svg';
 import playIcon from '@/assets/icons/play.svg';
@@ -8,6 +8,7 @@ import shuffleIcon from '@/assets/icons/shuffle.svg';
 import queueIcon from '@/assets/icons/queue.svg';
 import repeatIcon from '@/assets/icons/repeat.svg';
 import repeatOnIcon from '@/assets/icons/repeat-on.svg';
+import settingsIcon from '@/assets/icons/settings.svg';
 import LyricsViewer from '@/components/LyricsViewer/LyricsViewer';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { useLibraryStore } from '@/store/libraryStore';
@@ -23,6 +24,7 @@ const NowPlayingPage = () => {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const queueSongIds = usePlayerStore((state) => state.queueSongIds);
   const manualQueueSongIds = usePlayerStore((state) => state.manualQueueSongIds);
+  const queueCursor = usePlayerStore((state) => state.queueCursor);
   const positionSec = usePlayerStore((state) => state.positionSec);
   const durationSec = usePlayerStore((state) => state.durationSec);
   const shuffleEnabled = usePlayerStore((state) => state.shuffleEnabled);
@@ -38,6 +40,7 @@ const NowPlayingPage = () => {
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const removeQueuedSong = usePlayerStore((state) => state.removeQueuedSong);
   const reorderQueue = usePlayerStore((state) => state.reorderQueue);
+  const reshuffleQueue = usePlayerStore((state) => state.reshuffleQueue);
 
   const songs = useLibraryStore((state) => state.songs);
 
@@ -50,26 +53,46 @@ const NowPlayingPage = () => {
   }, [currentSongId, songs]);
 
   const queueSongs = useMemo(() => {
-    const ids = manualQueueSongIds.length ? manualQueueSongIds : queueSongIds;
+    const baseIds = manualQueueSongIds.length ? manualQueueSongIds : queueSongIds;
+    const startIndex = manualQueueSongIds.length ? 0 : Math.max(0, queueCursor);
+    const ids = baseIds.slice(startIndex);
     const songsById = new Map(songs.map((entry) => [entry.id, entry]));
 
-    return ids
-      .map((id) => songsById.get(id))
-      .filter((entry): entry is Song => Boolean(entry));
-  }, [manualQueueSongIds, queueSongIds, songs]);
+    return ids.map((id) => songsById.get(id)).filter((entry): entry is Song => Boolean(entry));
+  }, [manualQueueSongIds, queueSongIds, queueCursor, songs]);
+
+  const nextSongId = useMemo(() => {
+    if (manualQueueSongIds.length) {
+      return manualQueueSongIds[0] ?? null;
+    }
+    const nextIndex = queueCursor + 1;
+    return queueSongIds[nextIndex] ?? null;
+  }, [manualQueueSongIds, queueCursor, queueSongIds]);
+
+  const allowReorder = manualQueueSongIds.length > 0;
 
   const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
   const isLooping = repeatMode === 'one';
   const isLyricsTab = nowPlayingTab === 'lyrics';
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const tabs = useMemo(
     () => [
-      { id: 'now-playing' as const, label: 'Now Playing' },
       { id: 'lyrics' as const, label: 'Lyrics' },
       { id: 'queue' as const, label: 'Queue' },
     ],
     [],
   );
+
+  useEffect(() => {
+    if (nowPlayingTab === 'now-playing') {
+      setNowPlayingTab('queue');
+    }
+  }, [nowPlayingTab, setNowPlayingTab]);
+
+  useEffect(() => {
+    setSettingsOpen(false);
+  }, [nowPlayingTab]);
 
   return (
     <div
@@ -159,28 +182,91 @@ const NowPlayingPage = () => {
         </div>
       ) : null}
 
-      <div className="flex gap-2 border-b border-amply-border pb-2">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setNowPlayingTab(tab.id)}
-            className={`rounded-md px-3 py-2 text-[13px] transition-colors ${
-              nowPlayingTab === tab.id ? 'bg-amply-hover text-amply-textPrimary' : 'text-amply-textSecondary hover:bg-amply-hover'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {nowPlayingTab === 'now-playing' ? (
-        <div className="rounded-card border border-amply-border bg-amply-card p-4 text-[13px] text-amply-textSecondary">
-          <p>Album: {song?.album ?? '-'}</p>
-          <p>Genre: {song?.genre ?? '-'}</p>
-          <p>Playback source: {song?.path ?? '-'}</p>
+      <div className="flex items-center justify-between border-b border-amply-border pb-2">
+        <div className="flex-1" />
+        <div className="flex flex-1 justify-center">
+          <div className="inline-flex items-center gap-1 rounded-full border border-amply-border/60 bg-amply-bgSecondary/60 p-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setNowPlayingTab(tab.id)}
+              className={`rounded-full px-4 py-1.5 text-[12px] font-medium transition-colors ${
+                nowPlayingTab === tab.id ? 'bg-amply-hover text-amply-textPrimary' : 'text-amply-textSecondary hover:bg-amply-hover'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+          </div>
         </div>
-      ) : null}
+        <div className="relative flex flex-1 justify-end">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((prev) => !prev)}
+            className="rounded-full p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            title="Tab settings"
+          >
+            <img src={settingsIcon} alt="" className={darkSurfaceIconClass} />
+          </button>
+          {settingsOpen ? (
+            <div className="absolute right-0 top-11 z-20 w-48 rounded-xl border border-amply-border/60 bg-amply-card p-2 shadow-card">
+              {isLyricsTab ? (
+                <div className="space-y-1 text-[12px] text-amply-textSecondary">
+                  <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.2em] text-amply-textMuted">Lyrics</p>
+                  <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1">
+                    <span>Sync</span>
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('amply://lyrics-offset', { detail: { deltaMs: -500 } }));
+                        }}
+                        className="rounded-full px-2 py-1 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                      >
+                        –
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('amply://lyrics-offset', { detail: { deltaMs: 500 } }));
+                        }}
+                        className="rounded-full px-2 py-1 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('amply://lyrics-choose'));
+                      setSettingsOpen(false);
+                    }}
+                    className="w-full rounded-lg px-2 py-1.5 text-left text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                  >
+                    Choose lyrics
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1 text-[12px] text-amply-textSecondary">
+                  <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.2em] text-amply-textMuted">Queue</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reshuffleQueue();
+                      setSettingsOpen(false);
+                    }}
+                    className="w-full rounded-lg px-2 py-1.5 text-left text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                  >
+                    Re-shuffle queue
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       {nowPlayingTab === 'lyrics' ? (
         <div className="min-h-0 flex-1">
@@ -197,43 +283,70 @@ const NowPlayingPage = () => {
       ) : null}
 
       {nowPlayingTab === 'queue' ? (
-        <div className="space-y-2 rounded-card border border-amply-border bg-amply-card p-4">
-          {queueSongs.length === 0 ? <p className="text-[13px] text-amply-textMuted">Queue is empty.</p> : null}
-          {queueSongs.map((queuedSong, index) => (
-            <div
-              key={queuedSong.id}
-              draggable
-              onDragStart={(event) => {
-                event.dataTransfer.setData('text/queue-index', String(index));
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-              }}
-              onDrop={(event) => {
-                const from = Number(event.dataTransfer.getData('text/queue-index'));
-                reorderQueue(from, index);
-              }}
-              className="flex items-center justify-between rounded-md border border-amply-border bg-amply-bgSecondary px-3 py-2"
-            >
-              <button
-                type="button"
-                className="text-left"
-                onClick={() => {
-                  void playSongById(queuedSong.id);
-                }}
-              >
-                <p className="text-[13px] text-amply-textPrimary">{queuedSong.title}</p>
-                <p className="text-[12px] text-amply-textSecondary">{queuedSong.artist}</p>
-              </button>
-              <button
-                type="button"
-                className="text-[12px] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
-                onClick={() => removeQueuedSong(queuedSong.id)}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
+        <div className="rounded-card border border-amply-border bg-amply-card">
+          <div className="flex items-center justify-between border-b border-amply-border/60 px-4 py-3">
+            <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Queue</p>
+            <span className="text-[11px] text-amply-textMuted">{queueSongs.length} songs</span>
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto">
+            {queueSongs.length === 0 ? (
+              <p className="px-4 py-6 text-[13px] text-amply-textMuted">Queue is empty.</p>
+            ) : (
+              <div className="divide-y divide-amply-border/40">
+                {queueSongs.map((queuedSong, index) => {
+                  const isCurrent = queuedSong.id === currentSongId;
+                  const isNext = queuedSong.id === nextSongId;
+                  return (
+                  <div
+                    key={queuedSong.id}
+                    draggable={allowReorder}
+                    onDragStart={(event) => {
+                      if (!allowReorder) {
+                        event.preventDefault();
+                        return;
+                      }
+                      event.dataTransfer.setData('text/queue-index', String(index));
+                    }}
+                    onDragOver={(event) => {
+                      if (allowReorder) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onDrop={(event) => {
+                      if (!allowReorder) {
+                        return;
+                      }
+                      const from = Number(event.dataTransfer.getData('text/queue-index'));
+                      reorderQueue(from, index);
+                    }}
+                    className={clsx(
+                      'flex items-center justify-between gap-3 px-4 py-3',
+                      isCurrent && 'border-l-2 border-amply-accent bg-amply-hover/60',
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={() => {
+                        void playSongById(queuedSong.id);
+                      }}
+                    >
+                      <p className="truncate text-[13px] font-medium text-amply-textPrimary">{queuedSong.title}</p>
+                      <p className="truncate text-[12px] text-amply-textSecondary">{queuedSong.artist}</p>
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
+                      onClick={() => removeQueuedSong(queuedSong.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

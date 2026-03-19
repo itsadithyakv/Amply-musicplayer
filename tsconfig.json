@@ -13,6 +13,8 @@
     "jsx": "react-jsx",
     "strict": true,
     "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]

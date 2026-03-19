@@ -1,6 +1,6 @@
 [package]
 name = "amply"
-version = "1.2.0"
+version = "1.4.0"
 edition = "2021"
 description = "Amply offline music player"
 authors = ["Amply Studio <hello@amply.local>"]
@@ -15,9 +15,11 @@ lofty = "0.21"
 rfd = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tauri = { version = "2.0.0", features = ["protocol-asset", "image-png"] }
+tauri = { version = "2.0.0", features = ["protocol-asset", "image-png", "tray-icon"] }
 tauri-plugin-autostart = "2.0.0"
 walkdir = "2.5"
+rodio = "0.20"
+ebur128 = "0.1"
 
 [profile.release]
 codegen-units = 1

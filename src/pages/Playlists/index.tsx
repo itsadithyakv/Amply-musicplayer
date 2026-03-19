@@ -149,7 +149,7 @@ const PlaylistsPage = () => {
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {playlistCards.map(({ playlist, artwork, artworkSet, totalDuration }, index) => {
+        {playlistCards.map(({ playlist, artworkSet }, index) => {
           const firstSong = songs.find((song) => playlist.songIds.includes(song.id));
           const backgroundStyle = artworkSet[0]
             ? {

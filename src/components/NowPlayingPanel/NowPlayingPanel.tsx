@@ -46,8 +46,23 @@ const scheduleIdle = (task: () => void, timeoutMs = 300): (() => void) => {
   };
 };
 
+const scheduleDeferredIdle = (task: () => void, delayMs = 1200, idleTimeoutMs = 1200): (() => void) => {
+  let idleCancel: (() => void) | null = null;
+  const timeoutHandle = window.setTimeout(() => {
+    idleCancel = scheduleIdle(task, idleTimeoutMs);
+  }, delayMs);
+
+  return () => {
+    window.clearTimeout(timeoutHandle);
+    if (idleCancel) {
+      idleCancel();
+    }
+  };
+};
+
 const NowPlayingPanel = () => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
+  const isPlaying = usePlayerStore((state) => state.isPlaying);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const songs = useLibraryStore((state) => state.songs);
   const updateSongGenre = useLibraryStore((state) => state.updateSongGenre);
@@ -99,7 +114,7 @@ const NowPlayingPanel = () => {
     }
 
     let alive = true;
-    const cancel = scheduleIdle(() => {
+    const cancel = scheduleDeferredIdle(() => {
       if (!alive) {
         return;
       }
@@ -134,7 +149,7 @@ const NowPlayingPanel = () => {
       alive = false;
       cancel();
     };
-  }, [song?.id, song?.genre, song?.artist, song?.title, updateSongGenre, gameMode]);
+  }, [song?.id, song?.genre, song?.artist, song?.title, updateSongGenre, gameMode, isPlaying]);
 
   useEffect(() => {
     if (gameMode) {
@@ -162,7 +177,7 @@ const NowPlayingPanel = () => {
     setArtistCachePath(null);
     setArtistFromCache(false);
 
-    const cancel = scheduleIdle(() => {
+    const cancel = scheduleDeferredIdle(() => {
       if (!alive) {
         return;
       }
@@ -192,7 +207,7 @@ const NowPlayingPanel = () => {
       alive = false;
       cancel();
     };
-  }, [song?.artist, gameMode]);
+  }, [song?.artist, gameMode, isPlaying]);
 
   return (
     <aside className="panel-surface flex h-full min-h-0 flex-col border-l border-amply-border/60 p-5">
@@ -219,6 +234,12 @@ const NowPlayingPanel = () => {
                 <span className="h-1 w-1 rounded-full bg-amply-border/70" />
                 <span>{formatDuration(song.duration)}</span>
               </div>
+              {!gameMode ? (
+                <p className="text-[11px] text-amply-textMuted">
+                  Loudness:{' '}
+                  {typeof song.loudnessLufs === 'number' ? `${song.loudnessLufs.toFixed(1)} LUFS` : 'Analyzing...'}
+                </p>
+              ) : null}
               {genreLoading ? <p className="text-[11px] text-amply-textMuted">Fetching genre...</p> : null}
               {!genreLoading && genreStatus === 'ready' && isUnknownGenre(song.genre) ? (
                 <p className="text-[11px] text-amply-textMuted">
