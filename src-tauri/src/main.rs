@@ -19,11 +19,8 @@ use lofty::{
     probe::Probe,
 };
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use walkdir::WalkDir;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use rodio::cpal;
@@ -1371,55 +1368,11 @@ fn main() {
                 }
             }
 
-            let tray_icon = Image::from_bytes(include_bytes!("../../icons/AmplyLogo.png")).ok();
-
+            let window_icon = Image::from_bytes(include_bytes!("../../icons/icon.png")).ok();
             if let Some(window) = app.get_webview_window("main") {
-                if let Some(icon) = tray_icon.clone() {
+                if let Some(icon) = window_icon {
                     let _ = window.set_icon(icon);
                 }
-            }
-
-            if let Some(tray_icon) = tray_icon.clone() {
-                let show = MenuItem::with_id(app, "show", "Show Amply", true, None::<&str>)?;
-                let hide = MenuItem::with_id(app, "hide", "Hide Amply", true, None::<&str>)?;
-                let quit = MenuItem::with_id(app, "quit", "Quit Amply", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
-
-                let _tray = TrayIconBuilder::new()
-                    .menu(&menu)
-                    .icon(tray_icon)
-                    .tooltip("Amply")
-                    .on_menu_event(|app: &tauri::AppHandle, event: tauri::menu::MenuEvent| match event.id().as_ref() {
-                        "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                        "hide" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.hide();
-                            }
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
-                    })
-                    .on_tray_icon_event(|tray: &tauri::tray::TrayIcon, event: TrayIconEvent| {
-                        if let TrayIconEvent::Click { .. } = event {
-                            let app = tray.app_handle();
-                            if let Some(window) = app.get_webview_window("main") {
-                                if window.is_visible().unwrap_or(true) {
-                                    let _ = window.hide();
-                                } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
-                            }
-                        }
-                    })
-                    .build(app);
             }
 
             let app_handle = app.handle().clone();
@@ -1573,20 +1526,12 @@ fn main() {
             audio_analyze_loudness
         ])
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            if let WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "overlay" {
                     return;
                 }
                 let app = window.app_handle();
-                let close_to_tray = read_close_to_tray(&app);
-                if close_to_tray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    return;
-                }
-                if let Some(overlay) = app.get_webview_window("overlay") {
-                    let _ = overlay.close();
-                }
+                close_all_windows(&app);
                 app.exit(0);
             }
         })
@@ -1594,22 +1539,8 @@ fn main() {
         .expect("failed to run amply");
 }
 
-fn read_close_to_tray(app: &tauri::AppHandle) -> bool {
-    let root = match storage_root(app) {
-        Ok(path) => path,
-        Err(_) => return false,
-    };
-    let settings_path = root.join("settings.json");
-    let content = match fs::read_to_string(settings_path) {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    let parsed: JsonValue = match serde_json::from_str(&content) {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    parsed
-        .get("closeToTaskbar")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
+fn close_all_windows(app: &tauri::AppHandle) {
+    for (_label, window) in app.webview_windows() {
+        let _ = window.close();
+    }
 }

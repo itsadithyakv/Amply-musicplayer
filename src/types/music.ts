@@ -47,7 +47,6 @@ export interface AppSettings {
   outputDeviceName?: string;
   eqPreset: EqPreset;
   launchOnStartup: boolean;
-  closeToTaskbar: boolean;
   gameMode: boolean;
   miniNowPlayingOverlay: boolean;
   overlayAutoHide: boolean;

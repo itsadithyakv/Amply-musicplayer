@@ -63,7 +63,6 @@ const SettingsPage = () => {
   const setVolumeNormalizationEnabled = usePlayerStore((state) => state.setVolumeNormalizationEnabled);
   const setSleepTimer = usePlayerStore((state) => state.setSleepTimer);
   const setLaunchOnStartup = usePlayerStore((state) => state.setLaunchOnStartup);
-  const setCloseToTaskbar = usePlayerStore((state) => state.setCloseToTaskbar);
   const setGameMode = usePlayerStore((state) => state.setGameMode);
   const setMiniNowPlayingOverlay = usePlayerStore((state) => state.setMiniNowPlayingOverlay);
   const setOverlayAutoHide = usePlayerStore((state) => state.setOverlayAutoHide);
@@ -362,14 +361,6 @@ const SettingsPage = () => {
             checked={settings.launchOnStartup}
             onChange={(next) => {
               void setLaunchOnStartup(next);
-            }}
-          />
-          <ToggleRow
-            title="Close to Tray"
-            description="Keep Amply running in the tray when you close the window."
-            checked={settings.closeToTaskbar}
-            onChange={(next) => {
-              void setCloseToTaskbar(next);
             }}
           />
           <ToggleRow

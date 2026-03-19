@@ -1,6 +1,5 @@
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useOverlayController } from '@/hooks/useOverlayController';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { useMediaSession } from '@/hooks/useMediaSession';
@@ -18,7 +17,7 @@ import OverlayPage from '@/pages/Overlay';
 import GameModePage from '@/pages/GameMode';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
-import { flushDebouncedWrites, isTauri } from '@/services/storageService';
+import { flushDebouncedWrites } from '@/services/storageService';
 
 const App = () => {
   const initializeLibrary = useLibraryStore((state) => state.initialize);
@@ -27,7 +26,6 @@ const App = () => {
   const metadataFetch = useLibraryStore((state) => state.metadataFetch);
   const initializePlayer = usePlayerStore((state) => state.initialize);
   const playerInitialized = usePlayerStore((state) => state.initialized);
-  const closeToTaskbar = usePlayerStore((state) => state.settings.closeToTaskbar);
   const settings = usePlayerStore((state) => state.settings);
   const location = useLocation();
   const navigate = useNavigate();
@@ -46,32 +44,8 @@ const App = () => {
   }, [initializeLibrary, initializePlayer]);
 
   useEffect(() => {
-    if (!isTauri() || !closeToTaskbar) {
-      return;
-    }
-
-    const appWindow = getCurrentWindow();
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-
-    (async () => {
-      unlisten = await appWindow.onCloseRequested(async (event) => {
-        event.preventDefault();
-        await appWindow.hide();
-      });
-
-      if (disposed && unlisten) {
-        unlisten();
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, [closeToTaskbar]);
+    return;
+  }, []);
 
   useOverlayController(settings.miniNowPlayingOverlay);
   useMediaSession();

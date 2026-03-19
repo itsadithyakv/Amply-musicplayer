@@ -7,7 +7,6 @@ import { usePlayerStore } from '@/store/playerStore';
 import { isTauri } from '@/services/storageService';
 
 export const useOverlayController = (enabled: boolean): void => {
-  const closeToTaskbar = usePlayerStore((state) => state.settings.closeToTaskbar);
   const overlayAutoHide = usePlayerStore((state) => state.settings.overlayAutoHide);
   const buildOverlayPayload = () => {
     const playerState = usePlayerStore.getState();
@@ -193,41 +192,8 @@ export const useOverlayController = (enabled: boolean): void => {
   }, [enabled, overlayAutoHide]);
 
   useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    const currentWindow = getCurrentWebviewWindow();
-    if (currentWindow.label === 'overlay') {
-      return;
-    }
-
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-
-    (async () => {
-      unlisten = await currentWindow.onCloseRequested(async () => {
-        if (closeToTaskbar) {
-          return;
-        }
-        const overlay = (await WebviewWindow.getAll()).find((window) => window.label === 'overlay') ?? null;
-        if (overlay) {
-          await overlay.close().catch(() => {});
-        }
-      });
-
-      if (disposed && unlisten) {
-        unlisten();
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, [closeToTaskbar]);
+    return;
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) {

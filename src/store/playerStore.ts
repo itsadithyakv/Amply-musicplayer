@@ -46,7 +46,6 @@ interface PlayerState {
   setGaplessEnabled: (enabled: boolean) => Promise<void>;
   setVolumeNormalizationEnabled: (enabled: boolean) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
-  setCloseToTaskbar: (enabled: boolean) => Promise<void>;
   setGameMode: (enabled: boolean) => Promise<void>;
   setMiniNowPlayingOverlay: (enabled: boolean) => Promise<void>;
   setOverlayAutoHide: (enabled: boolean) => Promise<void>;
@@ -69,7 +68,6 @@ const defaultSettings: AppSettings = {
   outputDeviceName: undefined,
   eqPreset: 'flat',
   launchOnStartup: false,
-  closeToTaskbar: false,
   gameMode: false,
   miniNowPlayingOverlay: false,
   overlayAutoHide: true,
@@ -641,15 +639,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     await persistSettings(settings);
   },
 
-  setCloseToTaskbar: async (enabled) => {
-    const settings = {
-      ...get().settings,
-      closeToTaskbar: enabled,
-    };
-
-    set({ settings });
-    await persistSettings(settings);
-  },
 
   setGameMode: async (enabled) => {
     const settings = {

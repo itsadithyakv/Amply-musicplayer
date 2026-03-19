@@ -73,7 +73,6 @@ const defaultSettings: AppSettings = {
   outputDeviceName: undefined,
   eqPreset: 'flat',
   launchOnStartup: false,
-  closeToTaskbar: false,
   gameMode: false,
   miniNowPlayingOverlay: false,
   overlayAutoHide: true,
