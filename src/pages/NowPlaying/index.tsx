@@ -61,14 +61,6 @@ const NowPlayingPage = () => {
     return ids.map((id) => songsById.get(id)).filter((entry): entry is Song => Boolean(entry));
   }, [manualQueueSongIds, queueSongIds, queueCursor, songs]);
 
-  const nextSongId = useMemo(() => {
-    if (manualQueueSongIds.length) {
-      return manualQueueSongIds[0] ?? null;
-    }
-    const nextIndex = queueCursor + 1;
-    return queueSongIds[nextIndex] ?? null;
-  }, [manualQueueSongIds, queueCursor, queueSongIds]);
-
   const allowReorder = manualQueueSongIds.length > 0;
 
   const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
@@ -295,7 +287,6 @@ const NowPlayingPage = () => {
               <div className="divide-y divide-amply-border/40">
                 {queueSongs.map((queuedSong, index) => {
                   const isCurrent = queuedSong.id === currentSongId;
-                  const isNext = queuedSong.id === nextSongId;
                   return (
                   <div
                     key={queuedSong.id}

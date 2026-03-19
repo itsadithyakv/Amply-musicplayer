@@ -215,30 +215,6 @@ const rankCandidates = (song: Song, candidates: LyricsCandidate[]): LyricsCandid
   return rankCandidatesWithScore(song, candidates).map((entry) => entry.candidate);
 };
 
-const isCertainMatch = (
-  song: Song,
-  top: { candidate: LyricsCandidate; score: number },
-  runnerUp?: { candidate: LyricsCandidate; score: number },
-): boolean => {
-  const candidate = top.candidate;
-  const exactTitle = normalizeMatchName(candidate.trackName) === normalizeMatchName(song.title);
-  const exactArtist = normalizeMatchName(candidate.artistName) === normalizeMatchName(song.artist);
-  const durationClose =
-    candidate.durationSec && song.duration > 0
-      ? Math.abs(candidate.durationSec - song.duration) <= 4
-      : false;
-
-  if (exactTitle && exactArtist && (candidate.isSynced || durationClose)) {
-    return true;
-  }
-
-  if (top.score >= 8 && (!runnerUp || top.score - runnerUp.score >= 2)) {
-    return true;
-  }
-
-  return false;
-};
-
 export interface LyricsResult {
   raw: string;
   lines: ReturnType<typeof parseLrc>;

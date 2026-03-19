@@ -9,10 +9,3 @@ export const formatDuration = (seconds: number): string => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
-export const formatDateLabel = (timestamp: number): string => {
-  if (!timestamp) {
-    return '-';
-  }
-
-  return new Date(timestamp * 1000).toLocaleDateString();
-};

@@ -180,7 +180,7 @@ export const useOverlayController = (enabled: boolean): void => {
       }
     };
 
-    const unsub = usePlayerStore.subscribe((state) => state.isPlaying, () => {
+    const unsub = usePlayerStore.subscribe(() => {
       void syncVisibility();
     });
 
@@ -262,11 +262,8 @@ export const useOverlayController = (enabled: boolean): void => {
       });
     };
 
-    const unsubPlayer = usePlayerStore.subscribe(
-      (state) => [state.currentSongId, state.isPlaying],
-      () => scheduleEmit(),
-    );
-    const unsubLibrary = useLibraryStore.subscribe((state) => state.songs, () => scheduleEmit());
+    const unsubPlayer = usePlayerStore.subscribe(() => scheduleEmit());
+    const unsubLibrary = useLibraryStore.subscribe(() => scheduleEmit());
 
     scheduleEmit();
 

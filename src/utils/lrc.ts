@@ -29,25 +29,3 @@ export const parseLrc = (raw: string): LyricLine[] => {
   return parsed.sort((a, b) => (a.timeMs ?? Number.MAX_SAFE_INTEGER) - (b.timeMs ?? Number.MAX_SAFE_INTEGER));
 };
 
-export const getCurrentLyricIndex = (lines: LyricLine[], positionSec: number): number => {
-  if (!lines.length) {
-    return -1;
-  }
-
-  const positionMs = positionSec * 1000;
-  let current = -1;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const stamp = lines[i].timeMs;
-    if (stamp === null) {
-      continue;
-    }
-    if (stamp <= positionMs) {
-      current = i;
-    } else {
-      break;
-    }
-  }
-
-  return current;
-};

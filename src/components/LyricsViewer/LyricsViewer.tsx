@@ -56,7 +56,6 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const [artworkTint, setArtworkTint] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricsResult | null>(null);
   const [choices, setChoices] = useState<LyricsCandidate[]>([]);
-  const [cachePath, setCachePath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingChoiceId, setSavingChoiceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +73,6 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
       setError('Lyrics disabled in Game Mode.');
       setLyrics(null);
       setChoices([]);
-      setCachePath(null);
       return;
     }
 
@@ -88,7 +86,6 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     setError(null);
     setLyrics(null);
     setChoices([]);
-    setCachePath(null);
 
     setAutoScroll(true);
 
@@ -97,8 +94,6 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
         if (!alive) {
           return;
         }
-
-        setCachePath(result.cachePath);
 
         if (result.status === 'ready') {
           setLyrics(result.lyrics);

@@ -50,14 +50,6 @@ export const openStorageDir = async (): Promise<void> => {
   }
 };
 
-export const pickMusicFolder = async (): Promise<string | null> => {
-  if (isTauri()) {
-    return invoke<string | null>('pick_music_folder');
-  }
-
-  return null;
-};
-
 export const pickMusicFolders = async (): Promise<string[]> => {
   if (isTauri()) {
     return invoke<string[]>('pick_music_folders');
