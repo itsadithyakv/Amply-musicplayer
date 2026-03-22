@@ -77,7 +77,6 @@ const SettingsPage = () => {
   const [clearingCache, setClearingCache] = useState(false);
   const songs = useLibraryStore((state) => state.songs);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
   const [outputDevices, setOutputDevices] = useState<OutputDeviceInfo[]>([]);
   const sleepTimerRemainingMs = sleepTimerEndsAt ? Math.max(0, sleepTimerEndsAt - timeTick) : 0;
   const sleepTimerRemainingMin = sleepTimerEndsAt ? Math.max(0, Math.ceil(sleepTimerRemainingMs / 60000)) : 0;
@@ -88,32 +87,41 @@ const SettingsPage = () => {
 
   const totalSongs = songs.length || 1;
   const lyricsProgress = storageStats ? Math.min(100, (storageStats.lyricsFiles / totalSongs) * 100) : 0;
-  const artistProgress = storageStats ? Math.min(100, (storageStats.artistFiles / totalSongs) * 100) : 0;
-  const metadataProgress = storageStats ? Math.min(100, (storageStats.metadataFiles / totalSongs) * 100) : 0;
+  const artistTotal = useMemo(() => {
+    const set = new Set<string>();
+    for (const song of songs) {
+      if (song.artist?.trim()) {
+        set.add(song.artist.trim().toLowerCase());
+      }
+    }
+    return set.size || 1;
+  }, [songs]);
+  const artistProgress = storageStats ? Math.min(100, (storageStats.artistFiles / artistTotal) * 100) : 0;
+  const genresFound = useMemo(
+    () => songs.filter((song) => song.genre?.trim() && song.genre.trim().toLowerCase() !== 'unknown genre').length,
+    [songs],
+  );
+  const genresProgress = Math.min(100, (genresFound / totalSongs) * 100);
 
   const statusItems = useMemo(
     () => [
-      { label: 'Lyrics Cache', count: storageStats?.lyricsFiles ?? 0, progress: lyricsProgress },
-      { label: 'Artist Cache', count: storageStats?.artistFiles ?? 0, progress: artistProgress },
-      { label: 'Metadata Cache', count: storageStats?.metadataFiles ?? 0, progress: metadataProgress },
-      { label: 'Playlists', count: storageStats?.playlistsFiles ?? 0, progress: 100 },
+      { label: 'Lyrics Cached', count: storageStats?.lyricsFiles ?? 0, progress: lyricsProgress },
+      { label: 'Genres Found', count: genresFound, progress: genresProgress },
+      { label: 'Artist Data Cached', count: storageStats?.artistFiles ?? 0, progress: artistProgress },
     ],
-    [storageStats, lyricsProgress, artistProgress, metadataProgress],
+    [storageStats, lyricsProgress, artistProgress, genresFound, genresProgress],
   );
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      setStatsLoading(true);
       try {
         const stats = await getStorageStats();
         if (alive) {
           setStorageStats(stats);
         }
-      } finally {
-        if (alive) {
-          setStatsLoading(false);
-        }
+      } catch {
+        // Ignore stats load errors; storage stats are optional.
       }
     };
     void load();
@@ -293,18 +301,6 @@ const SettingsPage = () => {
             className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
           >
             Open Storage
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              setStatsLoading(true);
-              const stats = await getStorageStats();
-              setStorageStats(stats);
-              setStatsLoading(false);
-            }}
-            className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-          >
-            {statsLoading ? 'Refreshing...' : 'Refresh Status'}
           </button>
         </div>
 
