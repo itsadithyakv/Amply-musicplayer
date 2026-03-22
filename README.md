@@ -1,4 +1,4 @@
-﻿# Amply v1.4.1
+﻿# Amply v1.4.2
 
 A modern, offline-first desktop music player built for local libraries. Amply combines fast scanning, smart mixes, and a smooth desktop UI while keeping your music fully local.
 
@@ -112,3 +112,4 @@ npm run tauri dev
 - Default scan path is `music` in the project root; configurable in Settings.
 - In non-Tauri browser mode, the app falls back to demo songs.
 - Overlay and Game Mode are controlled in Settings.
+
