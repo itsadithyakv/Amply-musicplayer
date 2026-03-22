@@ -35,7 +35,7 @@ const fieldScore = (field: string, queryTokens: string[]): number => {
   return score;
 };
 
-export const scoreSongForQuery = (song: Song, query: string): number => {
+const scoreSongForQuery = (song: Song, query: string): number => {
   const tokens = tokenize(query);
   if (!tokens.length) {
     return 0;

@@ -11,7 +11,7 @@ type LoudnessCacheEntry = {
 
 type LoudnessCache = Record<string, LoudnessCacheEntry>;
 
-export type LoudnessLoadResult =
+type LoudnessLoadResult =
   | { status: 'ready'; lufs: number; fromCache: boolean; cachePath: string }
   | { status: 'missing'; cachePath: string }
   | { status: 'no-tauri'; cachePath: string };

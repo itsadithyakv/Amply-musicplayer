@@ -234,7 +234,7 @@ export interface LyricsCandidate {
   preview: string;
 }
 
-export type LyricsLoadResult =
+type LyricsLoadResult =
   | { status: 'ready'; lyrics: LyricsResult; cachePath: string }
   | { status: 'choose'; candidates: LyricsCandidate[]; cachePath: string }
   | { status: 'missing'; cachePath: string };

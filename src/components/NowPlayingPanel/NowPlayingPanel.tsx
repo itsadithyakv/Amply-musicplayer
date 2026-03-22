@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import {
@@ -62,7 +62,6 @@ const scheduleDeferredIdle = (task: () => void, delayMs = 1200, idleTimeoutMs = 
 
 const NowPlayingPanel = () => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
-  const isPlaying = usePlayerStore((state) => state.isPlaying);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const songs = useLibraryStore((state) => state.songs);
   const updateSongGenre = useLibraryStore((state) => state.updateSongGenre);
@@ -81,6 +80,7 @@ const NowPlayingPanel = () => {
   const [genreFromCache, setGenreFromCache] = useState(false);
   const [genreCachePath, setGenreCachePath] = useState<string | null>(null);
   const idleReady = useIdleRender(300);
+  const lastArtistRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (gameMode) {
@@ -149,7 +149,7 @@ const NowPlayingPanel = () => {
       alive = false;
       cancel();
     };
-  }, [song?.id, song?.genre, song?.artist, song?.title, updateSongGenre, gameMode, isPlaying]);
+  }, [song?.id, song?.genre, song?.artist, song?.title, updateSongGenre, gameMode]);
 
   useEffect(() => {
     if (gameMode) {
@@ -158,6 +158,7 @@ const NowPlayingPanel = () => {
       setArtistStatus('missing');
       setArtistCachePath(null);
       setArtistFromCache(false);
+      lastArtistRef.current = null;
       return;
     }
 
@@ -167,18 +168,28 @@ const NowPlayingPanel = () => {
       setArtistStatus('missing');
       setArtistCachePath(null);
       setArtistFromCache(false);
+      lastArtistRef.current = null;
       return;
     }
 
     let alive = true;
-    setArtistLoading(false);
-    setArtistStatus('missing');
-    setArtistProfile(null);
-    setArtistCachePath(null);
-    setArtistFromCache(false);
+    const normalizedArtist = song.artist.trim();
+    const isSameArtist = lastArtistRef.current === normalizedArtist;
+    lastArtistRef.current = normalizedArtist;
+
+    if (!isSameArtist) {
+      setArtistLoading(false);
+      setArtistStatus('missing');
+      setArtistProfile(null);
+      setArtistCachePath(null);
+      setArtistFromCache(false);
+    }
 
     const cancel = scheduleDeferredIdle(() => {
       if (!alive) {
+        return;
+      }
+      if (isSameArtist && artistProfile) {
         return;
       }
       setArtistLoading(true);
@@ -207,7 +218,7 @@ const NowPlayingPanel = () => {
       alive = false;
       cancel();
     };
-  }, [song?.artist, gameMode, isPlaying]);
+  }, [song?.artist, gameMode, artistProfile]);
 
   return (
     <aside className="panel-surface flex h-full min-h-0 flex-col border-l border-amply-border/60 p-5">

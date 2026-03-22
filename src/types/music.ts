@@ -56,12 +56,5 @@ export interface AppSettings {
 
 export type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club';
 
-export interface ListeningStats {
-  totalListeningSeconds: number;
-  topSongIds: string[];
-  topArtistNames: string[];
-  topAlbumNames: string[];
-}
-
 export type LibraryTab = 'songs' | 'albums' | 'artists' | 'genres';
 export type NowPlayingTab = 'now-playing' | 'lyrics' | 'queue';

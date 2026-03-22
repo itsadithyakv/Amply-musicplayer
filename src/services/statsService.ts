@@ -1,7 +1,7 @@
 import type { Song } from '@/types/music';
 import { splitArtistNames } from '@/utils/artists';
 
-export interface StatsCards {
+interface StatsCards {
   totalListeningHours: number;
   topSongs: Song[];
   topArtists: { artist: string; count: number }[];
