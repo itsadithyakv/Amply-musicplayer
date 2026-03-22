@@ -1,0 +1,10 @@
+﻿Amply v1.4.2
+
+Highlights
+- Auto idle metadata fetching with FPS-aware throttling.
+- Smart playlist regeneration improvements and usage-based ordering.
+- Playlist view virtualization for large libraries.
+- UI and settings refinements (cache status, buttons, layout).
+
+Notes
+- Windows installers included: MSI and NSIS.
