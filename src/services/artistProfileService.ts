@@ -17,6 +17,17 @@ const cacheKeyForArtist = (artistName: string): string => {
 
 const normalizeText = (value: string): string => value.trim().toLowerCase();
 
+const countWords = (value: string): number => {
+  if (!value) {
+    return 0;
+  }
+  return value
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean).length;
+};
+
 const isDisambiguationText = (value: string): boolean => {
   const text = normalizeText(value);
   return text.includes('may refer to') || text.includes('can refer to');
@@ -226,7 +237,8 @@ const fetchArtistProfile = async (artistName: string): Promise<ArtistProfile | n
       continue;
     }
 
-    if (!isMusicRelatedText(mergedSummary)) {
+    const titleMatches = isLikelyArtistTitle(resolvedTitle, artistName);
+    if (!isMusicRelatedText(mergedSummary) && !titleMatches) {
       continue;
     }
 
@@ -247,7 +259,11 @@ const isValidCachedSummary = (summary: string | undefined): boolean => {
     return false;
   }
 
-  return !isDisambiguationText(summary) && isMusicRelatedText(summary);
+  if (isDisambiguationText(summary)) {
+    return false;
+  }
+
+  return isMusicRelatedText(summary) || countWords(summary) >= 40;
 };
 
 export const hasCachedArtistProfile = async (artistNameRaw: string): Promise<boolean> => {
