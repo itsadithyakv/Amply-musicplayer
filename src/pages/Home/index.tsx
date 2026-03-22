@@ -314,6 +314,7 @@ const HomePage = () => {
       .filter((playlist) => playlist.type === 'smart')
       .map((playlist) => ({
         id: playlist.id,
+        baseId: playlist.id,
         title: playlist.name,
         subtitle: playlist.description || `${playlist.songIds.length} songs`,
         artwork: getPlaylistArtwork(playlist),
