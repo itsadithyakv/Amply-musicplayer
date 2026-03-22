@@ -13,6 +13,11 @@ interface LibraryPersisted {
   songs: Song[];
 }
 
+type PlaylistUsageEntry = {
+  count: number;
+  lastUsed: number;
+};
+
 interface LibraryState {
   initialized: boolean;
   isScanning: boolean;
@@ -22,6 +27,9 @@ interface LibraryState {
   playlists: Playlist[];
   customPlaylists: Playlist[];
   smartPlaylistOverrides: Record<string, string[]>;
+  playlistUsage: Record<string, PlaylistUsageEntry>;
+  smartPlaylistSeed: number;
+  regeneratingSmartPlaylists: boolean;
   searchQuery: string;
   metadataFetch: {
     running: boolean;
@@ -33,6 +41,7 @@ interface LibraryState {
     message: string | null;
   };
   startMetadataFetch: () => void;
+  regenerateSmartPlaylists: () => Promise<void>;
   initialize: () => Promise<void>;
   scanLibrary: (pathsOverride?: string[]) => Promise<void>;
   setLibraryPaths: (paths: string[]) => Promise<void>;
@@ -48,6 +57,7 @@ interface LibraryState {
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
   addSongToPlaylist: (playlistId: string, songId: string) => Promise<'added' | 'exists' | 'missing'>;
   recordSongPlay: (songId: string) => Promise<void>;
+  recordPlaylistUse: (playlistId: string) => Promise<void>;
   upsertCustomPlaylist: (playlist: Playlist) => Promise<void>;
 }
 
@@ -55,6 +65,7 @@ const libraryCachePath = 'playlists/library_cache.json';
 const customPlaylistsPath = 'playlists/custom_playlists.json';
 const smartOverridesPath = 'playlists/smart_overrides.json';
 const smartCachePath = 'playlists/smart_cache.json';
+const playlistUsagePath = 'playlists/playlist_usage.json';
 
 type SmartCache = {
   weekKey: string;
@@ -63,6 +74,16 @@ type SmartCache = {
 
 let smartPlaylistsCache: Playlist[] = [];
 let smartCacheWeek: string | null = null;
+
+const seedFromWeekKey = (weekKey: string): number => {
+  const [yearPart, weekPart] = weekKey.split('-W');
+  const year = Number(yearPart);
+  const week = Number(weekPart);
+  if (!Number.isFinite(year) || !Number.isFinite(week)) {
+    return Date.now();
+  }
+  return Number(`${year}${String(week).padStart(2, '0')}`);
+};
 
 const getIsoWeekKey = (date = new Date()): string => {
   const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -97,20 +118,26 @@ const applySmartOverrides = (
   });
 };
 
-const refreshSmartPlaylists = async (songs: Song[], overrides: Record<string, string[]>): Promise<Playlist[]> => {
+const refreshSmartPlaylists = async (
+  songs: Song[],
+  overrides: Record<string, string[]>,
+  force = false,
+  seedOverride?: number,
+): Promise<Playlist[]> => {
   const weekKey = getIsoWeekKey();
-  if (smartCacheWeek === weekKey && smartPlaylistsCache.length) {
+  if (!force && smartCacheWeek === weekKey && smartPlaylistsCache.length) {
     return smartPlaylistsCache;
   }
 
-  const cached = await readStorageJson<SmartCache | null>(smartCachePath, null);
-  if (cached?.weekKey === weekKey && cached.playlists?.length) {
+  const cached = force ? null : await readStorageJson<SmartCache | null>(smartCachePath, null);
+  if (!force && cached?.weekKey === weekKey && cached.playlists?.length) {
     smartCacheWeek = cached.weekKey;
     smartPlaylistsCache = applySmartOverrides(cached.playlists, overrides, songs);
     return smartPlaylistsCache;
   }
 
-  const generated = generateSmartPlaylists(songs, overrides);
+  const resolvedSeed = seedOverride ?? (force ? Date.now() : undefined);
+  const generated = generateSmartPlaylists(songs, overrides, resolvedSeed);
   smartCacheWeek = weekKey;
   smartPlaylistsCache = generated;
   await writeStorageJson(smartCachePath, { weekKey, playlists: generated });
@@ -144,6 +171,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   playlists: [],
   customPlaylists: [],
   smartPlaylistOverrides: {},
+  playlistUsage: {},
+  smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
+  regeneratingSmartPlaylists: false,
   searchQuery: '',
   metadataFetch: {
     running: false,
@@ -316,7 +346,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         }
       }
 
+      await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, true, seedFromWeekKey(getIsoWeekKey()));
+      const customPlaylists = get().customPlaylists;
       set({
+        playlists: buildPlaylists(customPlaylists),
+        smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
         metadataFetch: {
           running: false,
           total: pendingSongs.length,
@@ -330,6 +364,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     })();
   },
 
+  regenerateSmartPlaylists: async () => {
+    if (get().regeneratingSmartPlaylists) {
+      return;
+    }
+    const seed = Date.now();
+    set({ regeneratingSmartPlaylists: true });
+    try {
+      await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, true, seed);
+      const customPlaylists = get().customPlaylists;
+      set({ playlists: buildPlaylists(customPlaylists), smartPlaylistSeed: seed });
+    } finally {
+      set({ regeneratingSmartPlaylists: false });
+    }
+  },
+
   initialize: async () => {
     if (get().initialized) {
       return;
@@ -341,12 +390,14 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const cache = await readStorageJson<LibraryPersisted>(libraryCachePath, { songs: [] });
     const customPlaylists = await readStorageJson<Playlist[]>(customPlaylistsPath, []);
     const smartOverrides = await readStorageJson<Record<string, string[]>>(smartOverridesPath, {});
+    const playlistUsage = await readStorageJson<Record<string, PlaylistUsageEntry>>(playlistUsagePath, {});
     const libraryPaths = normalizeLibraryPaths([
       ...(settings.libraryPaths ?? []),
       ...(settings.libraryPath ? [settings.libraryPath] : []),
     ]);
 
     await refreshSmartPlaylists(cache.songs, smartOverrides);
+    const initialSeed = seedFromWeekKey(getIsoWeekKey());
 
     set({
       initialized: true,
@@ -355,6 +406,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       playlists: buildPlaylists(customPlaylists),
       libraryPaths,
       smartPlaylistOverrides: smartOverrides,
+      playlistUsage,
+      smartPlaylistSeed: initialSeed,
     });
 
     await get().scanLibrary(libraryPaths);
@@ -392,10 +445,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const loudnessHydrated = await hydrateSongsWithCachedLoudness(hydratedSongs);
 
       const customPlaylists = get().customPlaylists;
-      await refreshSmartPlaylists(loudnessHydrated, get().smartPlaylistOverrides);
+      const weeklySeed = seedFromWeekKey(getIsoWeekKey());
+      await refreshSmartPlaylists(loudnessHydrated, get().smartPlaylistOverrides, true, weeklySeed);
       const playlists = buildPlaylists(customPlaylists);
 
-      set({ songs: loudnessHydrated, playlists, isScanning: false });
+      set({ songs: loudnessHydrated, playlists, isScanning: false, smartPlaylistSeed: weeklySeed });
       await persistLibrary(loudnessHydrated, customPlaylists);
     } catch (error) {
       set({
@@ -614,6 +668,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);
+  },
+
+  recordPlaylistUse: async (playlistId) => {
+    if (!playlistId) {
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const usage = { ...get().playlistUsage };
+    const current = usage[playlistId] ?? { count: 0, lastUsed: 0 };
+    usage[playlistId] = {
+      count: current.count + 1,
+      lastUsed: now,
+    };
+    set({ playlistUsage: usage });
+    await writeStorageJson(playlistUsagePath, usage);
   },
 
   upsertCustomPlaylist: async (playlist) => {

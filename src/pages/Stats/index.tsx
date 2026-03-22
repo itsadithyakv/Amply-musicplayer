@@ -286,8 +286,20 @@ const StatsPage = () => {
 
   useEffect(() => {
     let alive = true;
+    const idle = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const idleWait = () =>
+      new Promise<void>((resolve) => {
+        if (typeof idle === 'function') {
+          idle(() => resolve(), { timeout: 300 });
+          return;
+        }
+        setTimeout(() => resolve(), 0);
+      });
     const load = async () => {
       const next: Record<string, string | undefined> = {};
+      let handled = 0;
       for (const artist of stats.topArtists) {
         const result = await loadArtistProfile(artist.artist);
         if (!alive) {
@@ -295,6 +307,10 @@ const StatsPage = () => {
         }
         if (result.status === 'ready') {
           next[artist.artist] = result.profile.imageUrl ?? undefined;
+        }
+        handled += 1;
+        if (handled % 3 === 0) {
+          await idleWait();
         }
       }
       if (alive) {
@@ -310,6 +326,17 @@ const StatsPage = () => {
 
   useEffect(() => {
     let alive = true;
+    const idle = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const idleWait = () =>
+      new Promise<void>((resolve) => {
+        if (typeof idle === 'function') {
+          idle(() => resolve(), { timeout: 300 });
+          return;
+        }
+        setTimeout(() => resolve(), 0);
+      });
     const load = async () => {
       const next: Record<string, string | undefined> = {};
       const targets = [
@@ -317,6 +344,7 @@ const StatsPage = () => {
         ...stats.topSongs.map((song) => song.album),
       ].filter(Boolean);
 
+      let handled = 0;
       for (const album of targets) {
         if (!album || next[album]) {
           continue;
@@ -330,6 +358,10 @@ const StatsPage = () => {
           return;
         }
         next[album] = remote ?? rep.albumArt;
+        handled += 1;
+        if (handled % 3 === 0) {
+          await idleWait();
+        }
       }
 
       if (alive) {

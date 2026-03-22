@@ -1,8 +1,9 @@
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useOverlayController } from '@/hooks/useOverlayController';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { useMediaSession } from '@/hooks/useMediaSession';
+import { useFpsMonitor } from '@/hooks/useFpsMonitor';
 import Sidebar from '@/components/Sidebar/Sidebar';
 import PlayerBar from '@/components/Player/PlayerBar';
 import NowPlayingPanel from '@/components/NowPlayingPanel/NowPlayingPanel';
@@ -24,11 +25,16 @@ const App = () => {
   const libraryInitialized = useLibraryStore((state) => state.initialized);
   const libraryScanning = useLibraryStore((state) => state.isScanning);
   const metadataFetch = useLibraryStore((state) => state.metadataFetch);
+  const startMetadataFetch = useLibraryStore((state) => state.startMetadataFetch);
+  const songsCount = useLibraryStore((state) => state.songs.length);
   const initializePlayer = usePlayerStore((state) => state.initialize);
   const playerInitialized = usePlayerStore((state) => state.initialized);
+  const isPlaying = usePlayerStore((state) => state.isPlaying);
   const settings = usePlayerStore((state) => state.settings);
   const location = useLocation();
   const navigate = useNavigate();
+  const lastIdleFetchRef = useRef(0);
+  const { lowPerf } = useFpsMonitor();
 
   const isOverlayRoute =
     location.pathname === '/overlay' ||
@@ -65,6 +71,7 @@ const App = () => {
   useEffect(() => {
     let alive = true;
     let idleHandle: number | null = null;
+    let timeoutHandle: number | null = null;
     const idle = (globalThis as typeof globalThis & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
       cancelIdleCallback?: (handle: number) => void;
@@ -95,8 +102,90 @@ const App = () => {
       if (idleHandle !== null && typeof cancelIdle === 'function') {
         cancelIdle(idleHandle);
       }
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let idleHandle: number | null = null;
+    let interval: number | null = null;
+    let timeoutHandle: number | null = null;
+    const idle = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (cb: (deadline: { timeRemaining: () => number }) => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    }).requestIdleCallback;
+    const cancelIdle = (globalThis as typeof globalThis & {
+      cancelIdleCallback?: (handle: number) => void;
+    }).cancelIdleCallback;
+
+    const scheduleIdleFetch = () => {
+      if (!alive) {
+        return;
+      }
+      if (typeof idle === 'function') {
+        idleHandle = idle((deadline) => {
+          if (!alive) {
+            return;
+          }
+          if (deadline.timeRemaining() < 20) {
+            return;
+          }
+          runFetch();
+        }, { timeout: 4000 });
+      } else {
+        timeoutHandle = window.setTimeout(runFetch, 2000);
+      }
+    };
+
+    const runFetch = () => {
+      if (!alive) {
+        return;
+      }
+      if (settings.gameMode || libraryScanning || metadataFetch.running || isPlaying || !songsCount) {
+        return;
+      }
+      if (lowPerf) {
+        return;
+      }
+      if (document.hidden) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastIdleFetchRef.current < 5 * 60_000) {
+        return;
+      }
+      lastIdleFetchRef.current = now;
+      startMetadataFetch();
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        return;
+      }
+      scheduleIdleFetch();
+    };
+
+    scheduleIdleFetch();
+    interval = window.setInterval(scheduleIdleFetch, 15_000);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      alive = false;
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (idleHandle !== null && typeof cancelIdle === 'function') {
+        cancelIdle(idleHandle);
+      }
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+      }
+    };
+  }, [settings.gameMode, libraryScanning, metadataFetch.running, isPlaying, songsCount, startMetadataFetch, lowPerf]);
 
   useEffect(() => {
     if (settings.gameMode && location.pathname !== '/game') {

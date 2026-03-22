@@ -59,6 +59,7 @@ interface TopArtistEntry {
 
 interface PlaylistCardItem {
   id: string;
+  baseId: string;
   title: string;
   subtitle: string;
   artwork?: string;
@@ -83,10 +84,24 @@ const playlistGlowClasses = [
   'shadow-[0_0_0_1px_rgba(210,120,230,0.16),0_14px_30px_rgba(17,10,15,0.6)]',
 ];
 
+const hash = (value: string): number => {
+  let h = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    h = (h << 5) - h + value.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+};
+
 
 const HomePage = () => {
   const songs = useLibraryStore((state) => state.songs);
   const playlists = useLibraryStore((state) => state.playlists);
+  const regenerateSmartPlaylists = useLibraryStore((state) => state.regenerateSmartPlaylists);
+  const smartPlaylistSeed = useLibraryStore((state) => state.smartPlaylistSeed);
+  const regeneratingSmartPlaylists = useLibraryStore((state) => state.regeneratingSmartPlaylists);
+  const playlistUsage = useLibraryStore((state) => state.playlistUsage);
+  const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const navigate = useNavigate();
 
   const setQueue = usePlayerStore((state) => state.setQueue);
@@ -94,6 +109,7 @@ const HomePage = () => {
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
+  const [regenMessage, setRegenMessage] = useState<string | null>(null);
 
   const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
 
@@ -171,8 +187,20 @@ const HomePage = () => {
 
   useEffect(() => {
     let alive = true;
+    const idle = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const idleWait = () =>
+      new Promise<void>((resolve) => {
+        if (typeof idle === 'function') {
+          idle(() => resolve(), { timeout: 300 });
+          return;
+        }
+        setTimeout(() => resolve(), 0);
+      });
     const load = async () => {
       const next: Record<string, string | undefined> = {};
+      let handled = 0;
       for (const entry of topArtists) {
         const result = await loadArtistProfile(entry.artistName);
         if (!alive) {
@@ -180,6 +208,10 @@ const HomePage = () => {
         }
         if (result.status === 'ready') {
           next[entry.artistName] = result.profile.imageUrl ?? undefined;
+        }
+        handled += 1;
+        if (handled % 3 === 0) {
+          await idleWait();
         }
       }
       if (alive) {
@@ -227,6 +259,7 @@ const HomePage = () => {
       .filter((playlist) => playlist.type === 'smart')
       .map((playlist) => ({
         id: playlist.id,
+        baseId: playlist.id,
         title: playlist.name,
         subtitle: `${playlist.songIds.length} songs`,
         artwork: getPlaylistArtwork(playlist),
@@ -241,6 +274,7 @@ const HomePage = () => {
       .filter((playlist) => playlist.type === 'custom')
       .map((playlist) => ({
         id: `${playlist.id}-recent`,
+        baseId: playlist.id,
         title: playlist.name,
         subtitle: `Recently played - ${playlist.songIds.length} songs`,
         artwork: getPlaylistArtwork(playlist),
@@ -251,10 +285,29 @@ const HomePage = () => {
       }))
       .filter((entry) => entry.songIds.length);
 
-    const combined = [...smart, ...custom].slice(0, 7);
+    const seed = smartPlaylistSeed || Date.now();
+    const now = Date.now() / 1000;
+    const scoreFor = (baseId: string) => {
+      const usage = playlistUsage[baseId];
+      if (!usage) {
+        return 0;
+      }
+      const daysSince = Math.max(0, (now - usage.lastUsed) / 86_400);
+      const recencyBoost = Math.max(0, 14 - daysSince) * 2;
+      return usage.count * 10 + recencyBoost;
+    };
+    const combined = [...smart, ...custom]
+      .sort((a, b) => {
+        const scoreDiff = scoreFor(b.baseId) - scoreFor(a.baseId);
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+        return hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`);
+      })
+      .slice(0, 7);
 
     return combined;
-  }, [playlists, songsById]);
+  }, [playlists, songsById, smartPlaylistSeed, playlistUsage]);
 
   const smartMixesAll = useMemo<PlaylistCardItem[]>(() => {
     return playlists
@@ -277,7 +330,7 @@ const HomePage = () => {
     void playSongById(song.id, false);
   };
 
-  const playPlaylist = (playlistSongIds: string[], startSongId?: string) => {
+  const playPlaylist = (playlistSongIds: string[], startSongId?: string, playlistId?: string) => {
     const queue = playlistSongIds.filter((songId) => songs.some((song) => song.id === songId));
     const fallbackSongId = queue[0];
     const targetSongId = startSongId && queue.includes(startSongId) ? startSongId : fallbackSongId;
@@ -288,9 +341,12 @@ const HomePage = () => {
 
     setQueue(queue, targetSongId);
     void playSongById(targetSongId, false);
+    if (playlistId) {
+      void recordPlaylistUse(playlistId);
+    }
   };
 
-  const openPlaylistQueue = (playlistSongIds: string[], startSongId?: string) => {
+  const openPlaylistQueue = (playlistSongIds: string[], startSongId?: string, playlistId?: string) => {
     const queue = playlistSongIds.filter((songId) => songs.some((song) => song.id === songId));
     const fallbackSongId = queue[0];
     const targetSongId = startSongId && queue.includes(startSongId) ? startSongId : fallbackSongId;
@@ -302,12 +358,53 @@ const HomePage = () => {
     setQueue(queue, targetSongId);
     setNowPlayingTab('queue');
     navigate('/now-playing');
+    if (playlistId) {
+      void recordPlaylistUse(playlistId);
+    }
   };
 
   return (
     <div className="space-y-8 pb-8">
       <header className="space-y-2 border-b border-amply-border/60 pb-4">
-        <h1 className="text-[32px] font-bold tracking-tight text-amply-textPrimary">Discover</h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-[32px] font-bold tracking-tight text-amply-textPrimary">Discover</h1>
+          <button
+            type="button"
+            onClick={async () => {
+              setRegenMessage(null);
+              await regenerateSmartPlaylists();
+              setRegenMessage('Smart playlists regenerated.');
+              window.setTimeout(() => setRegenMessage(null), 2500);
+            }}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-amply-border/60 text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Regenerate playlists"
+            title="Regenerate playlists"
+            disabled={regeneratingSmartPlaylists}
+          >
+            {regeneratingSmartPlaylists ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="animate-spin">
+                <path
+                  d="M12 4a8 8 0 1 1-7.32 11.2"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M20 12a8 8 0 0 1-13.66 5.66M4 12a8 8 0 0 1 13.66-5.66M4 4v4h4M20 20v-4h-4"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
+        {regenMessage ? <p className="text-[11px] text-amply-textMuted">{regenMessage}</p> : null}
       </header>
 
       <section className="max-w-none space-y-3">
@@ -315,7 +412,24 @@ const HomePage = () => {
           <h2 className="text-[20px] font-semibold text-amply-textPrimary">Smart Playlists</h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
+        <div className="relative">
+          {regeneratingSmartPlaylists ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-card bg-black/25 backdrop-blur-sm">
+              <div className="flex items-center gap-2 rounded-full border border-amply-border/60 bg-amply-surface/80 px-3 py-2 text-[12px] text-amply-textSecondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="animate-spin">
+                  <path
+                    d="M12 4a8 8 0 1 1-7.32 11.2"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Refreshing playlists…
+              </div>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-1 gap-5 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
           {smartPlaylistCards.map((item, index) => {
             const isFeatured = index === 0;
             const artworkSet = item.artworks?.length ? item.artworks : item.artwork ? [item.artwork] : [];
@@ -333,8 +447,8 @@ const HomePage = () => {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => playPlaylist(item.songIds, item.startSongId)}
-                onDoubleClick={() => openPlaylistQueue(item.songIds, item.startSongId)}
+                onClick={() => playPlaylist(item.songIds, item.startSongId, item.baseId)}
+                onDoubleClick={() => openPlaylistQueue(item.songIds, item.startSongId, item.baseId)}
                 className={clsx(
                   'playlist-card group relative overflow-hidden rounded-card border border-amply-border/60 p-6 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
                   playlistToneClasses[index % playlistToneClasses.length],
@@ -427,6 +541,7 @@ const HomePage = () => {
               </div>
             </div>
           </button>
+          </div>
         </div>
 
         {showMoreMixes ? (
@@ -438,8 +553,8 @@ const HomePage = () => {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => playPlaylist(item.songIds)}
-                    onDoubleClick={() => openPlaylistQueue(item.songIds)}
+                    onClick={() => playPlaylist(item.songIds, undefined, item.baseId)}
+                    onDoubleClick={() => openPlaylistQueue(item.songIds, undefined, item.baseId)}
                     className={clsx(
                       'card-sheen relative min-w-[220px] max-w-[240px] flex-1 overflow-hidden rounded-card border border-amply-border/60 p-5 text-left shadow-card transition-all duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
                       playlistToneClasses[(index + 1) % playlistToneClasses.length],
@@ -483,7 +598,7 @@ const HomePage = () => {
                   title={playlist.name}
                   subtitle={`${playlist.songIds.length} songs`}
                   artwork={getPlaylistArtwork(playlist)}
-                  onClick={() => playPlaylist(playlist.songIds)}
+                  onClick={() => playPlaylist(playlist.songIds, undefined, playlist.id)}
                 />
               </div>
             ))}

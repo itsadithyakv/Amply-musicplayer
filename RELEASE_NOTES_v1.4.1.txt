@@ -1,0 +1,10 @@
+﻿Amply v1.4.1
+
+Highlights
+- Simplified close behavior: closing the window exits the app cleanly.
+- Removed tray/close-to-tray code to eliminate stuck background instances.
+- Updated app/taskbar icon assets.
+- Overlay and settings layout polish and small UX fixes.
+
+Notes
+- Windows installers included: MSI and NSIS.

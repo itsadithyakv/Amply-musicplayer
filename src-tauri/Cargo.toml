@@ -2,8 +2,8 @@
 name = "amply"
 version = "1.4.1"
 edition = "2021"
-description = "Amply offline music player"
-authors = ["Amply Studio <hello@amply.local>"]
+description = "Amply Music Player"
+authors = ["Adithya KV <hello@amply.local>"]
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
@@ -27,8 +27,8 @@ lto = true
 opt-level = "s"
 
 [package.metadata.winres]
-ProductName = "Amply"
-FileDescription = "Amply offline music player"
+ProductName = "Amply Music Player"
+FileDescription = "Amply Music Player"
 OriginalFilename = "Amply.exe"
-CompanyName = "Amply Studio"
-LegalCopyright = "Copyright (c) 2026 Amply Studio"
+CompanyName = "Adithya KV"
+LegalCopyright = "Copyright (c) 2026 Adithya KV"

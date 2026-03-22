@@ -100,9 +100,7 @@ const interleaveByGenre = (songs: Song[]): Song[] => {
   return result;
 };
 
-const pickDailyMix = (songs: Song[]): Song[] => {
-  const seed = weeklySeed();
-
+const pickDailyMix = (songs: Song[], seed: number): Song[] => {
   const shuffled = weeklyShuffle(songs, seed);
 
   const recentThreshold = Math.floor(Date.now() / 1000) - 3 * 24 * 60 * 60;
@@ -311,9 +309,10 @@ const mapPlaylist = (
 export const generateSmartPlaylists = (
   songs: Song[],
   overrides: Record<string, string[]> = {},
+  seedOverride?: number,
 ): Playlist[] => {
   const now = Math.floor(Date.now() / 1000);
-  const seed = weeklySeed();
+  const seed = seedOverride ?? weeklySeed();
   const recentlyAdded = [...songs].sort((a, b) => b.addedAt - a.addedAt).slice(0, 100);
   const mostPlayed = [...songs].sort(byPlayCount).slice(0, 100);
   const rediscoverCutoff = now - 60 * 24 * 60 * 60;
@@ -323,7 +322,7 @@ export const generateSmartPlaylists = (
     .slice(0, 100);
   const favorites = songs.filter((song) => song.favorite).sort(byPlayCount);
   const recentlyPlayed = [...songs].filter((song) => song.lastPlayed).sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0)).slice(0, 100);
-  const dailyMix = pickDailyMix(songs);
+  const dailyMix = pickDailyMix(songs, seed);
   const onRepeat = pickOnRepeat(songs);
   const genreMixes = buildGenreMixes(songs);
   const moodMixes = buildMoodMixes(songs);

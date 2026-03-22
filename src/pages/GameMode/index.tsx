@@ -5,6 +5,7 @@ import { usePlayerStore } from '@/store/playerStore';
 const GameModePage = () => {
   const songs = useLibraryStore((state) => state.songs);
   const playlists = useLibraryStore((state) => state.playlists);
+  const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setGameMode = usePlayerStore((state) => state.setGameMode);
@@ -20,7 +21,7 @@ const GameModePage = () => {
     [playlists],
   );
 
-  const playPlaylist = async (songIds: string[]) => {
+  const playPlaylist = async (songIds: string[], playlistId?: string) => {
     const queue = songIds.filter((songId) => songs.some((song) => song.id === songId));
     const first = queue[0];
     if (!first) {
@@ -28,6 +29,9 @@ const GameModePage = () => {
     }
     setQueue(queue, first);
     await playSongById(first, false);
+    if (playlistId) {
+      void recordPlaylistUse(playlistId);
+    }
   };
 
   return (
@@ -67,7 +71,7 @@ const GameModePage = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    void playPlaylist(playlist.songIds);
+                    void playPlaylist(playlist.songIds, playlist.id);
                   }}
                   className="rounded-full bg-amply-accent px-4 py-2 text-[11px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
                 >
