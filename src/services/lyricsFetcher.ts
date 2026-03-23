@@ -1,5 +1,6 @@
 import { parseLrc } from '@/utils/lrc';
 import { readStorageText, writeStorageText } from '@/services/storageService';
+import { markSongCached } from '@/services/metadataCacheIndex';
 import type { Song } from '@/types/music';
 
 const cacheFolder = 'lyrics_cache';
@@ -242,6 +243,9 @@ type LyricsLoadResult =
 export const saveLyricsSelection = async (song: Song, candidate: LyricsCandidate): Promise<LyricsResult> => {
   const key = cacheKeyForSong(song);
   await writeStorageText(key, candidate.raw);
+  if (song.id) {
+    void markSongCached(song.id, 'lyrics');
+  }
   return buildLyricsResult(candidate.raw, false, key);
 };
 
@@ -265,6 +269,9 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
 
   if (cached?.trim()) {
     const lyrics = buildLyricsResult(cached, true, key);
+    if (song.id) {
+      void markSongCached(song.id, 'lyrics');
+    }
     return {
       status: 'ready',
       lyrics,
@@ -295,8 +302,15 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   };
 };
 
-export const hasCachedLyrics = async (song: Song): Promise<boolean> => {
+export const readCachedLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   const key = cacheKeyForSong(song);
   const cached = await readStorageText(key);
-  return Boolean(cached?.trim());
+  if (cached?.trim()) {
+    const lyrics = buildLyricsResult(cached, true, key);
+    if (song.id) {
+      void markSongCached(song.id, 'lyrics');
+    }
+    return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
+  }
+  return { status: 'missing', cachePath: `storage/${key}` };
 };

@@ -1,14 +1,30 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import {
-  loadArtistProfile,
+  readCachedArtistProfile,
   type ArtistProfile,
   type ArtistProfileLoadResult,
 } from '@/services/artistProfileService';
-import { loadSongGenre, type SongGenreLoadResult } from '@/services/songMetadataService';
 import { formatDuration } from '@/utils/time';
 import { useIdleRender } from '@/hooks/useIdleRender';
+import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
+import {
+  getAlbumTracklistKey,
+  loadAlbumTracklist,
+  loadAlbumTracklistCache,
+  normalizeTrackTitle,
+  type AlbumTracklist,
+} from '@/services/albumTracklistService';
+import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptService';
+import {
+  getAlbumQueueCacheKey,
+  getArtistQueueCacheKey,
+  getCachedQueue,
+  getGenreQueueCacheKey,
+  setCachedQueue,
+} from '@/services/queueCacheService';
 
 const isUnknownGenre = (value: string | undefined): boolean => {
   if (!value?.trim()) {
@@ -63,10 +79,17 @@ const scheduleDeferredIdle = (task: () => void, delayMs = 1200, idleTimeoutMs = 
 const NowPlayingPanel = () => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
+  const setQueue = usePlayerStore((state) => state.setQueue);
+  const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
+  const setAlbumQueueView = usePlayerStore((state) => state.setAlbumQueueView);
+  const playSongById = usePlayerStore((state) => state.playSongById);
   const songs = useLibraryStore((state) => state.songs);
-  const updateSongGenre = useLibraryStore((state) => state.updateSongGenre);
-
+  const metadataFetchDone = useLibraryStore((state) => state.metadataFetch.done);
+  const navigate = useNavigate();
+  const songsById = useMemo(() => new Map(songs.map((entry) => [entry.id, entry])), [songs]);
   const song = currentSongId ? songs.find((entry) => entry.id === currentSongId) : undefined;
+  const primaryArtist = song ? getPrimaryArtistName(song.artist) : null;
   const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
   const [artistProfile, setArtistProfile] = useState<ArtistProfile | null>(null);
@@ -74,82 +97,25 @@ const NowPlayingPanel = () => {
   const [artistStatus, setArtistStatus] = useState<ArtistProfileLoadResult['status']>('missing');
   const [artistCachePath, setArtistCachePath] = useState<string | null>(null);
   const [artistFromCache, setArtistFromCache] = useState(false);
+  const [artistChecked, setArtistChecked] = useState(false);
   const [resolvedGenre, setResolvedGenre] = useState<string>('Unknown Genre');
-  const [genreLoading, setGenreLoading] = useState(false);
-  const [genreStatus, setGenreStatus] = useState<SongGenreLoadResult['status']>('missing');
-  const [genreFromCache, setGenreFromCache] = useState(false);
-  const [genreCachePath, setGenreCachePath] = useState<string | null>(null);
   const idleReady = useIdleRender(300);
   const lastArtistRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (gameMode) {
       setResolvedGenre('Unknown Genre');
-      setGenreLoading(false);
-      setGenreStatus('missing');
-      setGenreFromCache(false);
-      setGenreCachePath(null);
       return;
     }
 
     if (!song) {
       setResolvedGenre('Unknown Genre');
-      setGenreLoading(false);
-      setGenreStatus('missing');
-      setGenreFromCache(false);
-      setGenreCachePath(null);
       return;
     }
 
     const currentGenre = song.genre?.trim() || 'Unknown Genre';
     setResolvedGenre(currentGenre);
-    setGenreStatus(isUnknownGenre(currentGenre) ? 'missing' : 'ready');
-    setGenreFromCache(!isUnknownGenre(currentGenre));
-    setGenreCachePath(null);
-    setGenreLoading(false);
-
-    if (!isUnknownGenre(currentGenre)) {
-      setGenreLoading(false);
-      return;
-    }
-
-    let alive = true;
-    const cancel = scheduleDeferredIdle(() => {
-      if (!alive) {
-        return;
-      }
-      setGenreLoading(true);
-      loadSongGenre(song)
-        .then((result) => {
-          if (!alive) {
-            return;
-          }
-
-          setGenreStatus(result.status);
-          setGenreCachePath(result.cachePath);
-
-          if (result.status === 'ready') {
-            setResolvedGenre(result.genre);
-            setGenreFromCache(result.fromCache);
-            if (isUnknownGenre(song.genre)) {
-              void updateSongGenre(song.id, result.genre);
-            }
-          } else {
-            setGenreFromCache(false);
-          }
-        })
-        .finally(() => {
-          if (alive) {
-            setGenreLoading(false);
-          }
-        });
-    });
-
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [song?.id, song?.genre, song?.artist, song?.title, updateSongGenre, gameMode]);
+  }, [song?.id, song?.genre, gameMode]);
 
   useEffect(() => {
     if (gameMode) {
@@ -158,22 +124,24 @@ const NowPlayingPanel = () => {
       setArtistStatus('missing');
       setArtistCachePath(null);
       setArtistFromCache(false);
+      setArtistChecked(false);
       lastArtistRef.current = null;
       return;
     }
 
-    if (!song?.artist) {
+    if (!primaryArtist) {
       setArtistProfile(null);
       setArtistLoading(false);
       setArtistStatus('missing');
       setArtistCachePath(null);
       setArtistFromCache(false);
+      setArtistChecked(false);
       lastArtistRef.current = null;
       return;
     }
 
     let alive = true;
-    const normalizedArtist = song.artist.trim();
+    const normalizedArtist = primaryArtist.trim();
     const isSameArtist = lastArtistRef.current === normalizedArtist;
     lastArtistRef.current = normalizedArtist;
 
@@ -183,6 +151,7 @@ const NowPlayingPanel = () => {
       setArtistProfile(null);
       setArtistCachePath(null);
       setArtistFromCache(false);
+      setArtistChecked(false);
     }
 
     const cancel = scheduleDeferredIdle(() => {
@@ -193,7 +162,7 @@ const NowPlayingPanel = () => {
         return;
       }
       setArtistLoading(true);
-      loadArtistProfile(song.artist)
+      readCachedArtistProfile(primaryArtist)
         .then((result) => {
           if (!alive) {
             return;
@@ -201,6 +170,7 @@ const NowPlayingPanel = () => {
 
           setArtistStatus(result.status);
           setArtistCachePath(result.cachePath);
+          setArtistChecked(true);
 
           if (result.status === 'ready') {
             setArtistProfile(result.profile);
@@ -218,7 +188,178 @@ const NowPlayingPanel = () => {
       alive = false;
       cancel();
     };
-  }, [song?.artist, gameMode, artistProfile]);
+  }, [primaryArtist, gameMode, artistProfile, metadataFetchDone]);
+
+  const openAlbumQueue = useCallback(
+    async (current: NonNullable<typeof song>) => {
+      if (!current.album?.trim()) {
+        return;
+      }
+      const albumKey = getAlbumQueueCacheKey(getPrimaryArtistName(current.artist), current.album);
+      const cached = await getCachedQueue('albums', albumKey, songs);
+      const albumSongs = cached
+        ? cached.songIds
+            .map((id) => songsById.get(id))
+            .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        : songs.filter((entry) => entry.album === current.album);
+      if (!albumSongs.length) {
+        return;
+      }
+      if (!cached) {
+        await setCachedQueue(
+          'albums',
+          albumKey,
+          albumSongs.map((entry) => entry.id),
+          songs,
+        );
+      }
+      const primary = getPrimaryArtistName(current.artist);
+      const key = getAlbumTracklistKey(primary, current.album);
+      const cache = await loadAlbumTracklistCache();
+      let tracklist: AlbumTracklist | null = cache[key] ?? null;
+
+      if (!tracklist && !metadataFetchPaused && tryAcquireMetadata('album_tracklist', key)) {
+        try {
+          tracklist = await loadAlbumTracklist(primary, current.album);
+        } finally {
+          releaseMetadata('album_tracklist', key);
+        }
+      }
+
+      const byTrack = new Map<number, (typeof albumSongs)[number]>();
+      const byTitle = new Map<string, (typeof albumSongs)[number]>();
+      for (const entry of albumSongs) {
+        if (entry.track && entry.track > 0 && !byTrack.has(entry.track)) {
+          byTrack.set(entry.track, entry);
+        }
+        const normalized = normalizeTrackTitle(entry.title);
+        if (normalized && !byTitle.has(normalized)) {
+          byTitle.set(normalized, entry);
+        }
+      }
+
+      const orderedSongs: (typeof albumSongs)[number][] = [];
+      const viewItems: Array<{ id?: string; title: string; position: number; available: boolean }> = [];
+
+      if (tracklist?.tracks?.length) {
+        for (const track of tracklist.tracks) {
+          const normalized = normalizeTrackTitle(track.title);
+          const match = byTrack.get(track.position) ?? (normalized ? byTitle.get(normalized) : undefined);
+          if (match && !orderedSongs.some((songEntry) => songEntry.id === match.id)) {
+            orderedSongs.push(match);
+            viewItems.push({ id: match.id, title: track.title, position: track.position, available: true });
+          } else {
+            viewItems.push({ title: track.title, position: track.position, available: false });
+          }
+        }
+      }
+
+      if (!orderedSongs.length) {
+        const fallback = [...albumSongs].sort((a, b) => a.title.localeCompare(b.title) || a.filename.localeCompare(b.filename));
+        orderedSongs.push(...fallback);
+        if (!viewItems.length) {
+          fallback.forEach((entry, index) => {
+            viewItems.push({ id: entry.id, title: entry.title, position: index + 1, available: true });
+          });
+        }
+      } else {
+        const fallback = [...albumSongs].sort((a, b) => a.title.localeCompare(b.title) || a.filename.localeCompare(b.filename));
+        for (const entry of fallback) {
+          if (!orderedSongs.some((existing) => existing.id === entry.id)) {
+            orderedSongs.push(entry);
+          }
+        }
+      }
+
+      const queue = orderedSongs.map((entry) => entry.id);
+      setQueue(queue, orderedSongs[0]?.id);
+      setAlbumQueueView({
+        album: current.album,
+        artist: primary,
+        items: viewItems,
+      });
+      setNowPlayingTab('queue');
+      navigate('/now-playing');
+      if (orderedSongs[0]) {
+        void playSongById(orderedSongs[0].id, false);
+      }
+    },
+    [songs, songsById, metadataFetchPaused, setQueue, setAlbumQueueView, setNowPlayingTab, navigate, playSongById],
+  );
+
+  const openArtistQueue = useCallback(
+    async (current: NonNullable<typeof song>) => {
+      const primary = getPrimaryArtistName(current.artist);
+      if (!primary) {
+        return;
+      }
+      const artistKey = getArtistQueueCacheKey(primary);
+      const cached = await getCachedQueue('artists', artistKey, songs);
+      const artistSongs = cached
+        ? cached.songIds
+            .map((id) => songsById.get(id))
+            .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        : songs.filter((entry) =>
+            splitArtistNames(entry.artist).some((name) => name.toLowerCase() === primary.toLowerCase()),
+          );
+      if (!artistSongs.length) {
+        return;
+      }
+      if (!cached) {
+        await setCachedQueue(
+          'artists',
+          artistKey,
+          artistSongs.map((entry) => entry.id),
+          songs,
+        );
+      }
+      const ordered = [...artistSongs].sort(
+        (a, b) => b.playCount - a.playCount || (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.title.localeCompare(b.title),
+      );
+      const queue = ordered.map((entry) => entry.id);
+      setQueue(queue, ordered[0].id);
+      setNowPlayingTab('queue');
+      navigate('/now-playing');
+      void playSongById(ordered[0].id, false);
+    },
+    [songs, songsById, setQueue, setNowPlayingTab, navigate, playSongById],
+  );
+
+  const openGenreQueue = useCallback(
+    async (current: NonNullable<typeof song>) => {
+      const genreLabel = current.genre?.trim() || '';
+      if (!genreLabel || genreLabel.toLowerCase() === 'unknown genre') {
+        return;
+      }
+      const genreKey = getGenreQueueCacheKey(genreLabel);
+      const cached = await getCachedQueue('genres', genreKey, songs);
+      const genreSongs = cached
+        ? cached.songIds
+            .map((id) => songsById.get(id))
+            .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        : songs.filter((entry) => (entry.genre?.trim() || '').toLowerCase() === genreLabel.toLowerCase());
+      if (!genreSongs.length) {
+        return;
+      }
+      if (!cached) {
+        await setCachedQueue(
+          'genres',
+          genreKey,
+          genreSongs.map((entry) => entry.id),
+          songs,
+        );
+      }
+      const ordered = [...genreSongs].sort(
+        (a, b) => b.playCount - a.playCount || (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.title.localeCompare(b.title),
+      );
+      const queue = ordered.map((entry) => entry.id);
+      setQueue(queue, ordered[0].id);
+      setNowPlayingTab('queue');
+      navigate('/now-playing');
+      void playSongById(ordered[0].id, false);
+    },
+    [songs, songsById, setQueue, setNowPlayingTab, navigate, playSongById],
+  );
 
   return (
     <aside className="panel-surface flex h-full min-h-0 flex-col border-l border-amply-border/60 p-5">
@@ -238,10 +379,42 @@ const NowPlayingPanel = () => {
             </div>
             <div className="space-y-1">
               <p className="text-[18px] font-semibold text-amply-textPrimary">{song.title}</p>
-              <p className="text-[13px] font-medium text-amply-textSecondary">{song.artist}</p>
-              <p className="text-[12px] text-amply-textMuted">{song.album}</p>
+              <div className="flex flex-col gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void openArtistQueue(song);
+                  }}
+                  className="text-left text-[13px] font-medium text-amply-textSecondary transition-colors hover:text-amply-textPrimary"
+                >
+                  {getPrimaryArtistName(song.artist)}
+                </button>
+                {song.album ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openAlbumQueue(song);
+                    }}
+                    className="text-left text-[12px] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
+                  >
+                    {song.album}
+                  </button>
+                ) : null}
+              </div>
               <div className="flex items-center gap-2 text-[11px] text-amply-textMuted">
-                <span>{resolvedGenre}</span>
+                {isUnknownGenre(resolvedGenre) ? (
+                  <span>{resolvedGenre}</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openGenreQueue(song);
+                    }}
+                    className="text-[11px] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
+                  >
+                    {resolvedGenre}
+                  </button>
+                )}
                 <span className="h-1 w-1 rounded-full bg-amply-border/70" />
                 <span>{formatDuration(song.duration)}</span>
               </div>
@@ -251,15 +424,8 @@ const NowPlayingPanel = () => {
                   {typeof song.loudnessLufs === 'number' ? `${song.loudnessLufs.toFixed(1)} LUFS` : 'Analyzing...'}
                 </p>
               ) : null}
-              {genreLoading ? <p className="text-[11px] text-amply-textMuted">Fetching genre...</p> : null}
-              {!genreLoading && genreStatus === 'ready' && isUnknownGenre(song.genre) ? (
-                <p className="text-[11px] text-amply-textMuted">
-                  {genreFromCache ? 'Genre loaded from cache' : 'Genre saved to cache'}
-                  {genreCachePath ? ` - ${genreCachePath}` : ''}
-                </p>
-              ) : null}
-              {!genreLoading && genreStatus === 'no-internet' ? (
-                <p className="text-[11px] text-amply-textMuted">No internet connection to fetch genre.</p>
+              {isUnknownGenre(resolvedGenre) ? (
+                <p className="text-[11px] text-amply-textMuted">Genre not cached yet.</p>
               ) : null}
             </div>
           </div>
@@ -310,7 +476,7 @@ const NowPlayingPanel = () => {
               <p className="text-[12px] text-amply-textMuted">No internet connection to load artist details.</p>
             ) : null}
 
-            {!artistLoading && artistStatus === 'missing' ? (
+            {!artistLoading && artistChecked && artistStatus === 'missing' ? (
               <p className="text-[12px] text-amply-textMuted">Artist details not available for this track.</p>
             ) : null}
           </div>

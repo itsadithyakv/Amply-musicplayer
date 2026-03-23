@@ -41,6 +41,7 @@ const NowPlayingPage = () => {
   const removeQueuedSong = usePlayerStore((state) => state.removeQueuedSong);
   const reorderQueue = usePlayerStore((state) => state.reorderQueue);
   const reshuffleQueue = usePlayerStore((state) => state.reshuffleQueue);
+  const albumQueueView = usePlayerStore((state) => state.albumQueueView);
 
   const songs = useLibraryStore((state) => state.songs);
 
@@ -61,7 +62,26 @@ const NowPlayingPage = () => {
     return ids.map((id) => songsById.get(id)).filter((entry): entry is Song => Boolean(entry));
   }, [manualQueueSongIds, queueSongIds, queueCursor, songs]);
 
-  const allowReorder = manualQueueSongIds.length > 0;
+  const allowReorder = manualQueueSongIds.length > 0 && !albumQueueView;
+
+  const queueDisplay = useMemo(() => {
+    if (albumQueueView) {
+      return albumQueueView.items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        subtitle: albumQueueView.artist,
+        available: item.available,
+        position: item.position,
+      }));
+    }
+    return queueSongs.map((queuedSong, index) => ({
+      id: queuedSong.id,
+      title: queuedSong.title,
+      subtitle: queuedSong.artist,
+      available: true,
+      position: index + 1,
+    }));
+  }, [albumQueueView, queueSongs]);
 
   const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
   const isLooping = repeatMode === 'one';
@@ -107,7 +127,10 @@ const NowPlayingPage = () => {
           <div className="flex flex-col justify-center gap-5">
             <div>
               <p className="text-[18px] font-bold text-amply-textPrimary">{song?.title ?? 'No song selected'}</p>
-              <p className="text-[14px] font-medium text-amply-textSecondary">{song?.artist ?? 'Pick a track from Library'}</p>
+              <div className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-amply-textSecondary">
+                <span>{song?.artist ?? 'Pick a track from Library'}</span>
+                {song?.album ? <span className="text-[12px] text-amply-textMuted">{song.album}</span> : null}
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -193,14 +216,14 @@ const NowPlayingPage = () => {
           </div>
         </div>
         <div className="relative flex flex-1 justify-end">
-          <button
-            type="button"
-            onClick={() => setSettingsOpen((prev) => !prev)}
-            className="rounded-full p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
-            title="Tab settings"
-          >
-            <img src={settingsIcon} alt="" className={darkSurfaceIconClass} />
-          </button>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((prev) => !prev)}
+              className="rounded-full p-2 text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              title="Tab settings"
+            >
+              <img src={settingsIcon} alt="" className={darkSurfaceIconClass} />
+            </button>
           {settingsOpen ? (
             <div className="absolute right-0 top-11 z-20 w-48 rounded-xl border border-amply-border/60 bg-amply-card p-2 shadow-card">
               {isLyricsTab ? (
@@ -243,16 +266,20 @@ const NowPlayingPage = () => {
               ) : (
                 <div className="space-y-1 text-[12px] text-amply-textSecondary">
                   <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.2em] text-amply-textMuted">Queue</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      reshuffleQueue();
-                      setSettingsOpen(false);
-                    }}
-                    className="w-full rounded-lg px-2 py-1.5 text-left text-amply-textSecondary transition-colors hover:bg-amply-hover"
-                  >
-                    Re-shuffle queue
-                  </button>
+                  {!albumQueueView ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        reshuffleQueue();
+                        setSettingsOpen(false);
+                      }}
+                      className="w-full rounded-lg px-2 py-1.5 text-left text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                    >
+                      Re-shuffle queue
+                    </button>
+                  ) : (
+                    <p className="px-2 py-1.5 text-[11px] text-amply-textMuted">Album mode active</p>
+                  )}
                 </div>
               )}
             </div>
@@ -277,19 +304,26 @@ const NowPlayingPage = () => {
       {nowPlayingTab === 'queue' ? (
         <div className="rounded-card border border-amply-border bg-amply-card">
           <div className="flex items-center justify-between border-b border-amply-border/60 px-4 py-3">
-            <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Queue</p>
-            <span className="text-[11px] text-amply-textMuted">{queueSongs.length} songs</span>
+            <div className="flex items-center gap-2">
+              <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Queue</p>
+              {albumQueueView ? (
+                <span className="rounded-full border border-amply-border/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-amply-textMuted">
+                  Album Mode
+                </span>
+              ) : null}
+            </div>
+            <span className="text-[11px] text-amply-textMuted">{queueDisplay.length} songs</span>
           </div>
           <div className="max-h-[50vh] overflow-y-auto">
-            {queueSongs.length === 0 ? (
+            {queueDisplay.length === 0 ? (
               <p className="px-4 py-6 text-[13px] text-amply-textMuted">Queue is empty.</p>
             ) : (
               <div className="divide-y divide-amply-border/40">
-                {queueSongs.map((queuedSong, index) => {
+                {queueDisplay.map((queuedSong, index) => {
                   const isCurrent = queuedSong.id === currentSongId;
                   return (
                   <div
-                    key={queuedSong.id}
+                    key={`${queuedSong.id ?? 'missing'}-${queuedSong.position}-${queuedSong.title}`}
                     draggable={allowReorder}
                     onDragStart={(event) => {
                       if (!allowReorder) {
@@ -313,25 +347,36 @@ const NowPlayingPage = () => {
                     className={clsx(
                       'flex items-center justify-between gap-3 px-4 py-3',
                       isCurrent && 'border-l-2 border-amply-accent bg-amply-hover/60',
+                      !queuedSong.available && 'opacity-40',
                     )}
                   >
                     <button
                       type="button"
                       className="min-w-0 text-left"
                       onClick={() => {
-                        void playSongById(queuedSong.id);
+                        if (queuedSong.available && queuedSong.id) {
+                          void playSongById(queuedSong.id);
+                        }
                       }}
                     >
-                      <p className="truncate text-[13px] font-medium text-amply-textPrimary">{queuedSong.title}</p>
-                      <p className="truncate text-[12px] text-amply-textSecondary">{queuedSong.artist}</p>
+                      <p className="truncate text-[13px] font-medium text-amply-textPrimary">
+                        {queuedSong.position}. {queuedSong.title}
+                      </p>
+                      <p className="truncate text-[12px] text-amply-textSecondary">{queuedSong.subtitle}</p>
                     </button>
-                    <button
-                      type="button"
-                      className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
-                      onClick={() => removeQueuedSong(queuedSong.id)}
-                    >
-                      Remove
-                    </button>
+                    {albumQueueView ? (
+                      <span className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted">
+                        {queuedSong.available ? 'Available' : 'Missing'}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
+                        onClick={() => removeQueuedSong(queuedSong.id!)}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                   );
                 })}

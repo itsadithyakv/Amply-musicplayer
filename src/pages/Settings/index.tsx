@@ -68,6 +68,7 @@ const SettingsPage = () => {
   const setOverlayAutoHide = usePlayerStore((state) => state.setOverlayAutoHide);
   const setLyricsVisualsEnabled = usePlayerStore((state) => state.setLyricsVisualsEnabled);
   const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
+  const setMetadataFetchPaused = usePlayerStore((state) => state.setMetadataFetchPaused);
 
   const [localPath, setLocalPath] = useState('');
   const [timeTick, setTimeTick] = useState(Date.now());
@@ -304,9 +305,20 @@ const SettingsPage = () => {
           </button>
         </div>
 
+        <div className="mt-3 grid gap-2">
+          <ToggleRow
+            title="Pause Metadata Lookups"
+            description="Stops all background metadata fetching (lyrics, artist info, genres, loudness, album tracklists)."
+            checked={settings.metadataFetchPaused}
+            onChange={(next) => {
+              void setMetadataFetchPaused(next);
+            }}
+          />
+        </div>
+
         {metadataFetch.running && metadataFetch.total > 0 ? (
           <div className="mt-3 rounded-lg border border-amply-border/60 bg-amply-surface px-3 py-2 text-[12px] text-amply-textMuted">
-            Processed {metadataFetch.done}/{metadataFetch.total} pending songs - Artists {metadataFetch.artists} - Lyrics {metadataFetch.lyrics} - Genres {metadataFetch.genres}
+            Processed {metadataFetch.done}/{metadataFetch.total} pending songs - Artists {metadataFetch.artists} - Lyrics {metadataFetch.lyrics} - Genres {metadataFetch.genres} - Loudness {metadataFetch.loudness} - Album Art {metadataFetch.albumArt}
           </div>
         ) : null}
 

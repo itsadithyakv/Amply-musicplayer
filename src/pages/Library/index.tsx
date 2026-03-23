@@ -1,11 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ComponentType } from 'react';
+import AutoSizer from 'react-virtualized-auto-sizer';
+import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
+import { useNavigate } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { LibraryTab, Song } from '@/types/music';
-import { splitArtistNames } from '@/utils/artists';
+import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
 import { pickMusicFolders } from '@/services/storageService';
+import {
+  getAlbumTracklistKey,
+  loadAlbumTracklist,
+  loadAlbumTracklistCache,
+  normalizeTrackTitle,
+  type AlbumTracklist,
+} from '@/services/albumTracklistService';
+import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptService';
 import addIcon from '@/assets/icons/add.svg';
 
 const tabs: Array<{ label: string; value: LibraryTab }> = [
@@ -19,17 +30,6 @@ interface LibraryPageProps {
   initialTab?: LibraryTab;
 }
 
-const getRepresentativeSongs = (songs: Song[], key: keyof Song): Song[] => {
-  const map = new Map<string, Song>();
-  for (const song of songs) {
-    const group = String(song[key] || 'Unknown');
-    if (!map.has(group)) {
-      map.set(group, song);
-    }
-  }
-  return [...map.values()];
-};
-
 interface GenreGroup {
   label: string;
   songs: Song[];
@@ -42,6 +42,33 @@ interface ArtistGroup {
   artwork?: string;
   totalPlays: number;
 }
+
+type CardGridData<T> = {
+  items: T[];
+  columns: number;
+  renderItem: (item: T) => JSX.Element;
+  getKey: (item: T, index: number) => string;
+};
+
+const CARD_MIN_WIDTH = 190;
+const CARD_GAP = 20;
+const CARD_HEIGHT = 250;
+
+const CardGridRow = <T,>({ index, style, data }: ListChildComponentProps<CardGridData<T>>) => {
+  const { items, columns, renderItem, getKey } = data;
+  const start = index * columns;
+  const slice = items.slice(start, start + columns);
+
+  return (
+    <div style={{ ...style, paddingBottom: CARD_GAP }}>
+      <div className="grid gap-5" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+        {slice.map((item, offset) => (
+          <div key={getKey(item, start + offset)}>{renderItem(item)}</div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const buildGenreGroups = (songs: Song[]): GenreGroup[] => {
   const groups = new Map<string, GenreGroup>();
@@ -112,7 +139,15 @@ type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played';
 type ArtistSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
 type GenreSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
 
-const sortAlbums = (albums: Song[], sortBy: AlbumSort): Song[] => {
+type AlbumEntry = {
+  album: string;
+  artist: string;
+  artwork?: string;
+  songs: Song[];
+  key: string;
+};
+
+const sortAlbums = (albums: AlbumEntry[], sortBy: AlbumSort): AlbumEntry[] => {
   const sorted = [...albums];
   switch (sortBy) {
     case 'title_desc':
@@ -120,11 +155,114 @@ const sortAlbums = (albums: Song[], sortBy: AlbumSort): Song[] => {
     case 'artist_asc':
       return sorted.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
     case 'most_played':
-      return sorted.sort((a, b) => b.playCount - a.playCount || a.album.localeCompare(b.album));
+      return sorted.sort(
+        (a, b) =>
+          b.songs.reduce((sum, song) => sum + song.playCount, 0) -
+            a.songs.reduce((sum, song) => sum + song.playCount, 0) || a.album.localeCompare(b.album),
+      );
     case 'title_asc':
     default:
       return sorted.sort((a, b) => a.album.localeCompare(b.album) || a.artist.localeCompare(b.artist));
   }
+};
+
+const sortAlbumTracksForPlayback = (songs: Song[]): Song[] => {
+  return [...songs].sort((a, b) => {
+    const trackA = a.track ?? 0;
+    const trackB = b.track ?? 0;
+    const hasA = trackA > 0;
+    const hasB = trackB > 0;
+    if (hasA && hasB && trackA !== trackB) {
+      return trackA - trackB;
+    }
+    if (hasA !== hasB) {
+      return hasA ? -1 : 1;
+    }
+    const titleCmp = a.title.localeCompare(b.title);
+    if (titleCmp !== 0) {
+      return titleCmp;
+    }
+    return a.filename.localeCompare(b.filename);
+  });
+};
+
+const buildAlbumTrackMatches = (albumSongs: Song[], tracklist: AlbumTracklist | null) => {
+  if (!tracklist?.tracks?.length) {
+    const orderedSongs = [...albumSongs].sort((a, b) => {
+      const titleCmp = a.title.localeCompare(b.title);
+      if (titleCmp !== 0) {
+        return titleCmp;
+      }
+      return a.filename.localeCompare(b.filename);
+    });
+    return {
+      total: albumSongs.length,
+      available: albumSongs.length,
+      missing: [] as Array<{ position: number; title: string }>,
+      orderedSongs,
+      viewItems: orderedSongs.map((song, index) => ({
+        id: song.id,
+        title: song.title,
+        position: index + 1,
+        available: true,
+      })),
+    };
+  }
+
+  const byTrack = new Map<number, Song>();
+  const byTitle = new Map<string, Song>();
+  for (const song of albumSongs) {
+    if (song.track && song.track > 0 && !byTrack.has(song.track)) {
+      byTrack.set(song.track, song);
+    }
+    const normalized = normalizeTrackTitle(song.title);
+    if (normalized && !byTitle.has(normalized)) {
+      byTitle.set(normalized, song);
+    }
+  }
+
+  const used = new Set<string>();
+  const orderedSongs: Song[] = [];
+  const missing: Array<{ position: number; title: string }> = [];
+
+  const viewItems: Array<{ id?: string; title: string; position: number; available: boolean }> = [];
+  for (const track of tracklist.tracks) {
+    const normalized = normalizeTrackTitle(track.title);
+    const match = byTrack.get(track.position) ?? (normalized ? byTitle.get(normalized) : undefined);
+    if (match && !used.has(match.id)) {
+      used.add(match.id);
+      orderedSongs.push(match);
+      viewItems.push({
+        id: match.id,
+        title: track.title,
+        position: track.position,
+        available: true,
+      });
+    } else {
+      missing.push({ position: track.position, title: track.title });
+      viewItems.push({
+        title: track.title,
+        position: track.position,
+        available: false,
+      });
+    }
+  }
+
+  const fallback = sortAlbumTracksForPlayback(albumSongs);
+  for (const song of fallback) {
+    if (!used.has(song.id)) {
+      used.add(song.id);
+      orderedSongs.push(song);
+    }
+  }
+
+  return {
+    total: tracklist.tracks.length,
+    available: tracklist.tracks.length - missing.length,
+    missing,
+    orderedSongs,
+    viewItems,
+  };
 };
 
 const albumSortOptions: Array<{ label: string; value: AlbumSort }> = [
@@ -158,8 +296,13 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const scanLibrary = useLibraryStore((state) => state.scanLibrary);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
+  const setAlbumQueueView = usePlayerStore((state) => state.setAlbumQueueView);
+  const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
+  const settings = usePlayerStore((state) => state.settings);
+  const albumTrackFetch = useLibraryStore((state) => state.albumTrackFetch);
 
   const [activeTab, setActiveTab] = useState<LibraryTab>(initialTab);
+  const navigate = useNavigate();
   const [albumSort, setAlbumSort] = useState<AlbumSort>('title_asc');
   const [albumQuery, setAlbumQuery] = useState('');
   const [artistSort, setArtistSort] = useState<ArtistSort>('name_asc');
@@ -167,22 +310,96 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const [genreSort, setGenreSort] = useState<GenreSort>('name_asc');
   const [genreQuery, setGenreQuery] = useState('');
   const [localPath, setLocalPath] = useState('');
+  const [albumTracklists, setAlbumTracklists] = useState<Record<string, AlbumTracklist>>({});
+  const [activeAlbum, setActiveAlbum] = useState<{
+    album: string;
+    artist: string;
+    songs: Song[];
+    tracklist: AlbumTracklist | null;
+    total: number;
+    available: number;
+    missing: Array<{ position: number; title: string }>;
+    orderedSongs: Song[];
+    viewItems: Array<{ id?: string; title: string; position: number; available: boolean }>;
+    artwork?: string;
+    isLoading: boolean;
+  } | null>(null);
 
-  const albums = useMemo(() => getRepresentativeSongs(songs, 'album'), [songs]);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const cache = await loadAlbumTracklistCache();
+      if (alive) {
+        setAlbumTracklists(cache);
+      }
+    };
+    void load();
+    return () => {
+      alive = false;
+    };
+  }, [songs.length, albumTrackFetch.done]);
+
+  const albums = useMemo<AlbumEntry[]>(() => {
+    const map = new Map<string, AlbumEntry>();
+    for (const song of songs) {
+      if (!song.album?.trim()) {
+        continue;
+      }
+      const primaryArtist = getPrimaryArtistName(song.artist);
+      const albumKey = getAlbumTracklistKey(primaryArtist, song.album);
+      const existing = map.get(albumKey);
+      if (!existing) {
+        map.set(albumKey, {
+          album: song.album,
+          artist: song.artist,
+          artwork: song.albumArt,
+          songs: [song],
+          key: albumKey,
+        });
+        continue;
+      }
+      existing.songs.push(song);
+      if (!existing.artwork && song.albumArt) {
+        existing.artwork = song.albumArt;
+      }
+    }
+    return [...map.values()];
+  }, [songs]);
+
   const filteredAlbums = useMemo(() => {
     const query = albumQuery.trim().toLowerCase();
     if (!query) {
       return sortAlbums(albums, albumSort);
     }
 
-    const matches = albums.filter((song) => {
-      const album = song.album?.toLowerCase() ?? '';
-      const artist = song.artist?.toLowerCase() ?? '';
-      return album.includes(query) || artist.includes(query);
+    const matches = albums.filter((album) => {
+      const albumName = album.album?.toLowerCase() ?? '';
+      const artist = album.artist?.toLowerCase() ?? '';
+      return albumName.includes(query) || artist.includes(query);
     });
 
     return sortAlbums(matches, albumSort);
   }, [albums, albumQuery, albumSort]);
+
+  const albumSummaries = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        available: number;
+        total: number;
+        tracklist: AlbumTracklist | null;
+        orderedSongs: Song[];
+        viewItems: Array<{ id?: string; title: string; position: number; available: boolean }>;
+        missing: Array<{ position: number; title: string }>;
+      }
+    >();
+    for (const entry of albums) {
+      const tracklist = albumTracklists[entry.key] ?? null;
+      const summary = buildAlbumTrackMatches(entry.songs, tracklist);
+      map.set(entry.key, { ...summary, tracklist });
+    }
+    return map;
+  }, [albums, albumTracklists]);
   const artists = useMemo(() => buildArtistGroups(songs), [songs]);
   const genres = useMemo(() => buildGenreGroups(songs), [songs]);
 
@@ -321,24 +538,144 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             </label>
           </div>
 
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
-            {filteredAlbums.map((song) => (
-            <AlbumCard
-              key={`album-${song.album}`}
-              title={song.album}
-              subtitle={song.artist}
-              artwork={song.albumArt}
-              onClick={() => {
-                const albumSongs = songs.filter((item) => item.album === song.album);
-                if (!albumSongs.length) {
-                  return;
-                }
-                const queue = albumSongs.map((item) => item.id);
-                setQueue(queue, albumSongs[0].id);
-                void playSongById(albumSongs[0].id, false);
+          <div className="h-[70vh]">
+            <AutoSizer>
+              {({ height, width }) => {
+                const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
+                const rowCount = Math.ceil(filteredAlbums.length / columns);
+                const data: CardGridData<AlbumEntry> = {
+                  items: filteredAlbums,
+                  columns,
+                  getKey: (entry) => entry.key,
+                  renderItem: (entry) => {
+                    const summary = albumSummaries.get(entry.key);
+                    const totalLocal = entry.songs.length;
+                    const meta = summary?.tracklist
+                      ? `${summary.available}/${summary.total} tracks`
+                      : `${totalLocal} tracks`;
+                    return (
+                      <AlbumCard
+                        key={`album-${entry.key}`}
+                        title={entry.album}
+                        subtitle={entry.artist}
+                        artwork={entry.artwork}
+                        meta={meta}
+                        onClick={() => {
+                          const cached = albumSummaries.get(entry.key);
+                          const tracklist = cached?.tracklist ?? null;
+                          const { total, available, missing, orderedSongs, viewItems } =
+                            cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
+                          setActiveAlbum({
+                            album: entry.album,
+                            artist: getPrimaryArtistName(entry.artist),
+                            songs: entry.songs,
+                            tracklist,
+                            total,
+                            available,
+                            missing,
+                            orderedSongs,
+                            viewItems,
+                            artwork: entry.artwork,
+                            isLoading: Boolean(!tracklist && !settings.metadataFetchPaused),
+                          });
+                          if (!tracklist && !settings.metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
+                            void (async () => {
+                              try {
+                                const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
+                                const cache = await loadAlbumTracklistCache();
+                                setAlbumTracklists(cache);
+                                if (!result) {
+                                  setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
+                                  return;
+                                }
+                                const matches = buildAlbumTrackMatches(entry.songs, result);
+                                setActiveAlbum((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        tracklist: result,
+                                        total: matches.total,
+                                        available: matches.available,
+                                        missing: matches.missing,
+                                        orderedSongs: matches.orderedSongs,
+                                        viewItems: matches.viewItems,
+                                        isLoading: false,
+                                      }
+                                    : prev,
+                                );
+                              } finally {
+                                releaseMetadata('album_tracklist', entry.key);
+                              }
+                            })();
+                          }
+                        }}
+                        onInfo={() => {
+                          const cached = albumSummaries.get(entry.key);
+                          const tracklist = cached?.tracklist ?? null;
+                          const { total, available, missing, orderedSongs, viewItems } =
+                            cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
+                          setActiveAlbum({
+                            album: entry.album,
+                            artist: getPrimaryArtistName(entry.artist),
+                            songs: entry.songs,
+                            tracklist,
+                            total,
+                            available,
+                            missing,
+                            orderedSongs,
+                            viewItems,
+                            artwork: entry.artwork,
+                            isLoading: Boolean(!tracklist && !settings.metadataFetchPaused),
+                          });
+                          if (!tracklist && !settings.metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
+                            void (async () => {
+                              try {
+                                const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
+                                const cache = await loadAlbumTracklistCache();
+                                setAlbumTracklists(cache);
+                                if (!result) {
+                                  setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
+                                  return;
+                                }
+                                const matches = buildAlbumTrackMatches(entry.songs, result);
+                                setActiveAlbum((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        tracklist: result,
+                                        total: matches.total,
+                                        available: matches.available,
+                                        missing: matches.missing,
+                                        orderedSongs: matches.orderedSongs,
+                                        viewItems: matches.viewItems,
+                                        isLoading: false,
+                                      }
+                                    : prev,
+                                );
+                              } finally {
+                                releaseMetadata('album_tracklist', entry.key);
+                              }
+                            })();
+                          }
+                        }}
+                      />
+                    );
+                  },
+                };
+                return (
+                  <List<CardGridData<AlbumEntry>>
+                    height={height}
+                    width={width}
+                    itemCount={rowCount}
+                    itemSize={CARD_HEIGHT + CARD_GAP}
+                    itemData={data}
+                    overscanCount={3}
+                  >
+                    {CardGridRow as ComponentType<ListChildComponentProps<CardGridData<AlbumEntry>>>}
+                  </List>
+                );
               }}
-            />
-          ))}
+            </AutoSizer>
           </div>
         </div>
       ) : null}
@@ -368,24 +705,47 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             </label>
           </div>
 
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
-            {filteredArtists.map((artistGroup) => (
-            <AlbumCard
-              key={`artist-${artistGroup.label.toLowerCase()}`}
-              title={artistGroup.label}
-              subtitle={`${artistGroup.songs.length} songs`}
-              artwork={artistGroup.artwork}
-              onClick={() => {
-                const artistSongs = artistGroup.songs;
-                if (!artistSongs.length) {
-                  return;
-                }
-                const queue = artistSongs.map((item) => item.id);
-                setQueue(queue, artistSongs[0].id);
-                void playSongById(artistSongs[0].id, false);
+          <div className="h-[70vh]">
+            <AutoSizer>
+              {({ height, width }) => {
+                const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
+                const rowCount = Math.ceil(filteredArtists.length / columns);
+                const data: CardGridData<ArtistGroup> = {
+                  items: filteredArtists,
+                  columns,
+                  getKey: (entry) => entry.label.toLowerCase(),
+                  renderItem: (artistGroup) => (
+                    <AlbumCard
+                      key={`artist-${artistGroup.label.toLowerCase()}`}
+                      title={artistGroup.label}
+                      subtitle={`${artistGroup.songs.length} songs`}
+                      artwork={artistGroup.artwork}
+                      onClick={() => {
+                        const artistSongs = artistGroup.songs;
+                        if (!artistSongs.length) {
+                          return;
+                        }
+                        const queue = artistSongs.map((item) => item.id);
+                        setQueue(queue, artistSongs[0].id);
+                        void playSongById(artistSongs[0].id, false);
+                      }}
+                    />
+                  ),
+                };
+                return (
+                  <List<CardGridData<ArtistGroup>>
+                    height={height}
+                    width={width}
+                    itemCount={rowCount}
+                    itemSize={CARD_HEIGHT + CARD_GAP}
+                    itemData={data}
+                    overscanCount={3}
+                  >
+                    {CardGridRow as ComponentType<ListChildComponentProps<CardGridData<ArtistGroup>>>}
+                  </List>
+                );
               }}
-            />
-          ))}
+            </AutoSizer>
           </div>
         </div>
       ) : null}
@@ -415,24 +775,152 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             </label>
           </div>
 
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
-            {filteredGenres.map((genreGroup) => (
-            <AlbumCard
-              key={`genre-${genreGroup.label.toLowerCase()}`}
-              title={genreGroup.label}
-              subtitle={`${genreGroup.songs.length} songs`}
-              artwork={genreGroup.artwork}
-              onClick={() => {
-                const genreSongs = genreGroup.songs;
-                if (!genreSongs.length) {
-                  return;
-                }
-                const queue = genreSongs.map((item) => item.id);
-                setQueue(queue, genreSongs[0].id);
-                void playSongById(genreSongs[0].id, false);
+          <div className="h-[70vh]">
+            <AutoSizer>
+              {({ height, width }) => {
+                const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
+                const rowCount = Math.ceil(filteredGenres.length / columns);
+                const data: CardGridData<GenreGroup> = {
+                  items: filteredGenres,
+                  columns,
+                  getKey: (entry) => entry.label.toLowerCase(),
+                  renderItem: (genreGroup) => (
+                    <AlbumCard
+                      key={`genre-${genreGroup.label.toLowerCase()}`}
+                      title={genreGroup.label}
+                      subtitle={`${genreGroup.songs.length} songs`}
+                      artwork={genreGroup.artwork}
+                      onClick={() => {
+                        const genreSongs = genreGroup.songs;
+                        if (!genreSongs.length) {
+                          return;
+                        }
+                        const queue = genreSongs.map((item) => item.id);
+                        setQueue(queue, genreSongs[0].id);
+                        void playSongById(genreSongs[0].id, false);
+                      }}
+                    />
+                  ),
+                };
+                return (
+                  <List<CardGridData<GenreGroup>>
+                    height={height}
+                    width={width}
+                    itemCount={rowCount}
+                    itemSize={CARD_HEIGHT + CARD_GAP}
+                    itemData={data}
+                    overscanCount={3}
+                  >
+                    {CardGridRow as ComponentType<ListChildComponentProps<CardGridData<GenreGroup>>>}
+                  </List>
+                );
               }}
-            />
-          ))}
+            </AutoSizer>
+          </div>
+        </div>
+      ) : null}
+
+      {activeAlbum ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="w-full max-w-2xl rounded-2xl border border-amply-border/60 bg-amply-surface/95 p-5 shadow-card">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="h-16 w-16 overflow-hidden rounded-xl bg-amply-bgSecondary">
+                  {activeAlbum.artwork ? (
+                    <img src={activeAlbum.artwork} alt={activeAlbum.album} className="h-full w-full object-cover" loading="lazy" />
+                  ) : null}
+                </div>
+                <div>
+                  <h2 className="text-[18px] font-semibold text-amply-textPrimary">{activeAlbum.album}</h2>
+                  <p className="text-[12px] text-amply-textSecondary">{activeAlbum.artist}</p>
+                  <p className="mt-1 text-[11px] text-amply-textMuted">
+                    {activeAlbum.available}/{activeAlbum.total} tracks available
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveAlbum(null)}
+                className="rounded-full border border-amply-border/60 px-3 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-card border border-amply-border bg-amply-card">
+              <div className="flex items-center justify-between border-b border-amply-border/60 px-4 py-3">
+                <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Tracklist</p>
+                <span className="text-[11px] text-amply-textMuted">{activeAlbum.total} tracks</span>
+              </div>
+              <div className="max-h-[50vh] overflow-y-auto">
+                {activeAlbum.isLoading ? (
+                  <div className="px-4 py-4 text-[12px] text-amply-textMuted">
+                    <div className="flex items-center gap-2 rounded-lg border border-amply-border/60 px-3 py-2">
+                      <div className="h-3 w-3 animate-spin rounded-full border-2 border-amply-border border-t-amply-accent" />
+                      Fetching album tracklist...
+                    </div>
+                  </div>
+                ) : activeAlbum.tracklist?.tracks?.length ? (
+                  <div className="divide-y divide-amply-border/40">
+                    {activeAlbum.viewItems.map((track) => {
+                      const isMissing = !track.available;
+                      return (
+                        <div
+                          key={`${track.position}-${track.title}`}
+                          className={`flex items-center justify-between gap-3 px-4 py-3 text-[12px] ${
+                            isMissing ? 'opacity-40' : ''
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-[13px] font-medium text-amply-textPrimary">
+                              {track.position}. {track.title}
+                            </p>
+                            <p className="truncate text-[12px] text-amply-textSecondary">{activeAlbum.album}</p>
+                          </div>
+                          <span className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted">
+                            {isMissing ? 'Missing' : 'Available'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="px-4 py-6 text-[13px] text-amply-textMuted">No tracklist cached yet for this album.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!activeAlbum.orderedSongs.length) {
+                    return;
+                  }
+                  const queue = activeAlbum.orderedSongs.map((song) => song.id);
+                  setQueue(queue, activeAlbum.orderedSongs[0].id);
+                  setAlbumQueueView({
+                    album: activeAlbum.album,
+                    artist: activeAlbum.artist,
+                    items: activeAlbum.viewItems,
+                  });
+                  setNowPlayingTab('queue');
+                  navigate('/now-playing');
+                  void playSongById(activeAlbum.orderedSongs[0].id, false);
+                  setActiveAlbum(null);
+                }}
+                className="rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
+              >
+                Play Album
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveAlbum(null)}
+                className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, PlaybackMode, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
 import { useLibraryStore } from '@/store/libraryStore';
-import { hasCachedLoudness, loadSongLoudness } from '@/services/loudnessService';
 import { isTauri, readStorageJson, writeStorageJson } from '@/services/storageService';
 
 interface PlayerState {
@@ -19,11 +18,17 @@ interface PlayerState {
   repeatMode: RepeatMode;
   shuffleEnabled: boolean;
   nowPlayingTab: NowPlayingTab;
+  albumQueueView: {
+    album: string;
+    artist: string;
+    items: Array<{ id?: string; title: string; position: number; available: boolean }>;
+  } | null;
   settings: AppSettings;
   sleepTimerEndsAt: number | null;
   sleepTimerDurationMin: number | null;
   initialize: () => Promise<void>;
   setQueue: (songIds: string[], startSongId?: string) => void;
+  setAlbumQueueView: (view: PlayerState['albumQueueView']) => void;
   playSongById: (songId: string, transition?: boolean) => Promise<void>;
   togglePlayPause: () => void;
   pausePlayback: () => void;
@@ -51,6 +56,7 @@ interface PlayerState {
   setOverlayAutoHide: (enabled: boolean) => Promise<void>;
   setLyricsVisualsEnabled: (enabled: boolean) => Promise<void>;
   setLyricsVisualTheme: (theme: AppSettings['lyricsVisualTheme']) => Promise<void>;
+  setMetadataFetchPaused: (paused: boolean) => Promise<void>;
   setSleepTimer: (minutes: number | null) => void;
   enqueueSong: (songId: string) => void;
   removeQueuedSong: (songId: string) => void;
@@ -73,6 +79,7 @@ const defaultSettings: AppSettings = {
   overlayAutoHide: true,
   lyricsVisualsEnabled: true,
   lyricsVisualTheme: 'ember',
+  metadataFetchPaused: false,
 };
 
 let sleepTimerHandle: number | null = null;
@@ -217,6 +224,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   repeatMode: 'off',
   shuffleEnabled: false,
   nowPlayingTab: 'now-playing',
+  albumQueueView: null,
   settings: defaultSettings,
   sleepTimerEndsAt: null,
   sleepTimerDurationMin: null,
@@ -226,11 +234,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
-    const persisted = await readStorageJson<Partial<AppSettings>>('settings.json', {});
+    const persisted = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
     let settings: AppSettings = {
       ...defaultSettings,
       ...persisted,
     };
+    if (typeof persisted.albumTracklistFetchPaused === 'boolean' && typeof persisted.metadataFetchPaused !== 'boolean') {
+      settings = {
+        ...settings,
+        metadataFetchPaused: persisted.albumTracklistFetchPaused,
+      };
+    }
 
     if (isTauri()) {
       try {
@@ -316,6 +330,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({
       queueSongIds: songIds,
       queueCursor: startIndex,
+      albumQueueView: null,
     });
     const nextState = get();
     const preloadIds = buildUpcomingSongIds(nextState);
@@ -354,43 +369,50 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       audioEngine.preloadSongs(preloadSongs);
     }
 
-    set({
+    set((prev) => ({
       currentSongId: songId,
-      queueCursor: queueCursor >= 0 ? queueCursor : state.queueCursor,
+      queueCursor: queueCursor >= 0 ? queueCursor : prev.queueCursor,
       isPlaying: true,
       positionSec: 0,
       durationSec: song.duration,
       historySongIds: updatedHistory,
       manualQueueSongIds:
-        state.manualQueueSongIds[0] === songId ? state.manualQueueSongIds.slice(1) : state.manualQueueSongIds,
-    });
+        prev.manualQueueSongIds[0] === songId ? prev.manualQueueSongIds.slice(1) : prev.manualQueueSongIds,
+      albumQueueView:
+        prev.albumQueueView && !prev.albumQueueView.items.some((item) => item.id === songId)
+          ? null
+          : prev.albumQueueView,
+    }));
 
     void useLibraryStore.getState().recordSongPlay(songId);
     if (!get().settings.gameMode) {
-      void useLibraryStore.getState().refreshSongGenreIfUnknown(songId);
-      const scheduleIdle = (task: () => void) => {
+      window.setTimeout(() => {
+        if (get().currentSongId !== songId) {
+          return;
+        }
         const idle = (globalThis as typeof globalThis & {
           requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
         }).requestIdleCallback;
-        if (typeof idle === 'function') {
-          idle(task, { timeout: 1500 });
-        } else {
-          setTimeout(task, 900);
-        }
-      };
-      scheduleIdle(() => {
-        void hasCachedLoudness(song).then((cached) => {
-          if (cached) {
+        const runFetch = () => {
+          if (get().currentSongId !== songId) {
             return;
           }
-          void loadSongLoudness(song).then((result) => {
-            if (result.status === 'ready' && typeof result.lufs === 'number') {
-              void useLibraryStore.getState().updateSongLoudness(songId, result.lufs);
-            }
-          });
-        });
-      });
+          void useLibraryStore.getState().fetchMissingMetadataForSong(songId);
+        };
+        if (typeof idle === 'function') {
+          idle(runFetch, { timeout: 1500 });
+        } else {
+          runFetch();
+        }
+      }, 2000);
     }
+  },
+
+  setAlbumQueueView: (view) => {
+    set((state) => ({
+      albumQueueView: view,
+      shuffleEnabled: view ? false : state.shuffleEnabled,
+    }));
   },
 
   togglePlayPause: () => {
@@ -501,6 +523,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   toggleShuffle: () => {
     set((state) => ({
       shuffleEnabled: !state.shuffleEnabled,
+      albumQueueView: state.albumQueueView ? null : state.albumQueueView,
     }));
   },
 
@@ -690,6 +713,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     await persistSettings(settings);
   },
 
+  setMetadataFetchPaused: async (paused) => {
+    const settings = {
+      ...get().settings,
+      metadataFetchPaused: paused,
+    };
+
+    set({ settings });
+    await persistSettings(settings);
+  },
+
   setSleepTimer: (minutes) => {
     if (sleepTimerHandle) {
       window.clearTimeout(sleepTimerHandle);
@@ -759,11 +792,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       const nextQueue = hasCurrent && currentId ? [currentId, ...rest] : rest;
       if (usingManual) {
-        return { manualQueueSongIds: nextQueue };
+        return { manualQueueSongIds: nextQueue, albumQueueView: null };
       }
       return {
         queueSongIds: nextQueue,
         queueCursor: hasCurrent ? 0 : state.queueCursor,
+        albumQueueView: null,
       };
     });
   },

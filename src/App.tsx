@@ -26,6 +26,8 @@ const App = () => {
   const libraryScanning = useLibraryStore((state) => state.isScanning);
   const metadataFetch = useLibraryStore((state) => state.metadataFetch);
   const startMetadataFetch = useLibraryStore((state) => state.startMetadataFetch);
+  const albumTrackFetch = useLibraryStore((state) => state.albumTrackFetch);
+  const startAlbumTracklistFetch = useLibraryStore((state) => state.startAlbumTracklistFetch);
   const songsCount = useLibraryStore((state) => state.songs.length);
   const initializePlayer = usePlayerStore((state) => state.initialize);
   const playerInitialized = usePlayerStore((state) => state.initialized);
@@ -34,6 +36,8 @@ const App = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const lastIdleFetchRef = useRef(0);
+  const lastAlbumIdleFetchRef = useRef(0);
+  const lastUserInputRef = useRef(0);
   const { lowPerf } = useFpsMonitor();
 
   const isOverlayRoute =
@@ -109,6 +113,24 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    const markInput = () => {
+      lastUserInputRef.current = Date.now();
+    };
+    window.addEventListener('pointerdown', markInput);
+    window.addEventListener('keydown', markInput);
+    window.addEventListener('wheel', markInput, { passive: true });
+    window.addEventListener('resize', markInput);
+    document.addEventListener('fullscreenchange', markInput);
+    return () => {
+      window.removeEventListener('pointerdown', markInput);
+      window.removeEventListener('keydown', markInput);
+      window.removeEventListener('wheel', markInput);
+      window.removeEventListener('resize', markInput);
+      document.removeEventListener('fullscreenchange', markInput);
+    };
+  }, []);
+
+  useEffect(() => {
     let alive = true;
     let idleHandle: number | null = null;
     let interval: number | null = null;
@@ -130,13 +152,13 @@ const App = () => {
           if (!alive) {
             return;
           }
-          if (deadline.timeRemaining() < 20) {
+          if (deadline.timeRemaining() < 50) {
             return;
           }
           runFetch();
-        }, { timeout: 4000 });
+        }, { timeout: 6000 });
       } else {
-        timeoutHandle = window.setTimeout(runFetch, 2000);
+        timeoutHandle = window.setTimeout(runFetch, 3000);
       }
     };
 
@@ -144,7 +166,15 @@ const App = () => {
       if (!alive) {
         return;
       }
-      if (settings.gameMode || libraryScanning || metadataFetch.running || isPlaying || !songsCount) {
+      if (
+        settings.gameMode ||
+        settings.metadataFetchPaused ||
+        libraryScanning ||
+        metadataFetch.running ||
+        isPlaying ||
+        !songsCount ||
+        !metadataFetch.pending
+      ) {
         return;
       }
       if (lowPerf) {
@@ -153,8 +183,11 @@ const App = () => {
       if (document.hidden) {
         return;
       }
+      if (Date.now() - lastUserInputRef.current < 45_000) {
+        return;
+      }
       const now = Date.now();
-      if (now - lastIdleFetchRef.current < 5 * 60_000) {
+      if (now - lastIdleFetchRef.current < 10 * 60_000) {
         return;
       }
       lastIdleFetchRef.current = now;
@@ -186,6 +219,107 @@ const App = () => {
       }
     };
   }, [settings.gameMode, libraryScanning, metadataFetch.running, isPlaying, songsCount, startMetadataFetch, lowPerf]);
+
+  useEffect(() => {
+    let alive = true;
+    let idleHandle: number | null = null;
+    let interval: number | null = null;
+    let timeoutHandle: number | null = null;
+    const idle = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (cb: (deadline: { timeRemaining: () => number }) => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    }).requestIdleCallback;
+    const cancelIdle = (globalThis as typeof globalThis & {
+      cancelIdleCallback?: (handle: number) => void;
+    }).cancelIdleCallback;
+
+    const scheduleIdleFetch = () => {
+      if (!alive) {
+        return;
+      }
+      if (typeof idle === 'function') {
+        idleHandle = idle((deadline) => {
+          if (!alive) {
+            return;
+          }
+          if (deadline.timeRemaining() < 60) {
+            return;
+          }
+          runFetch();
+        }, { timeout: 8000 });
+      } else {
+        timeoutHandle = window.setTimeout(runFetch, 4000);
+      }
+    };
+
+    const runFetch = () => {
+      if (!alive) {
+        return;
+      }
+      if (
+        settings.gameMode ||
+        settings.metadataFetchPaused ||
+        libraryScanning ||
+        metadataFetch.running ||
+        albumTrackFetch.running ||
+        isPlaying ||
+        !songsCount ||
+        !albumTrackFetch.pending
+      ) {
+        return;
+      }
+      if (lowPerf) {
+        return;
+      }
+      if (document.hidden) {
+        return;
+      }
+      if (Date.now() - lastUserInputRef.current < 60_000) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastAlbumIdleFetchRef.current < 30 * 60_000) {
+        return;
+      }
+      lastAlbumIdleFetchRef.current = now;
+      startAlbumTracklistFetch();
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        return;
+      }
+      scheduleIdleFetch();
+    };
+
+    scheduleIdleFetch();
+    interval = window.setInterval(scheduleIdleFetch, 20_000);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      alive = false;
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (idleHandle !== null && typeof cancelIdle === 'function') {
+        cancelIdle(idleHandle);
+      }
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+      }
+    };
+  }, [
+    settings.gameMode,
+    settings.metadataFetchPaused,
+    libraryScanning,
+    metadataFetch.running,
+    albumTrackFetch.running,
+    isPlaying,
+    songsCount,
+    startAlbumTracklistFetch,
+    lowPerf,
+  ]);
 
   useEffect(() => {
     if (settings.gameMode && location.pathname !== '/game') {

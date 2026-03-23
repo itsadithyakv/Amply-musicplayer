@@ -10,11 +10,38 @@ const normalize = (value: string): string =>
 
 const tokenize = (value: string): string[] => normalize(value).split(' ').filter(Boolean);
 
-const fieldScore = (field: string, queryTokens: string[]): number => {
-  if (!field) {
-    return 0;
+type NormalizedSongFields = {
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  combined: string;
+};
+
+const songFieldCache = new WeakMap<Song, NormalizedSongFields>();
+
+const getNormalizedFields = (song: Song): NormalizedSongFields => {
+  const cached = songFieldCache.get(song);
+  if (cached) {
+    return cached;
   }
-  const normalizedField = normalize(field);
+  const title = normalize(song.title);
+  const artist = normalize(song.artist);
+  const album = normalize(song.album);
+  const genre = normalize(song.genre ?? '');
+  const combined = normalize(`${song.title} ${song.artist} ${song.album} ${song.genre ?? ''}`);
+  const next = {
+    title,
+    artist,
+    album,
+    genre,
+    combined,
+  };
+  songFieldCache.set(song, next);
+  return next;
+};
+
+const fieldScore = (normalizedField: string, queryTokens: string[]): number => {
   if (!normalizedField) {
     return 0;
   }
@@ -41,15 +68,15 @@ const scoreSongForQuery = (song: Song, query: string): number => {
     return 0;
   }
 
+  const normalized = getNormalizedFields(song);
   let score = 0;
-  score += fieldScore(song.title, tokens) * 3;
-  score += fieldScore(song.artist, tokens) * 2;
-  score += fieldScore(song.album, tokens) * 1.5;
-  score += fieldScore(song.genre ?? '', tokens);
+  score += fieldScore(normalized.title, tokens) * 3;
+  score += fieldScore(normalized.artist, tokens) * 2;
+  score += fieldScore(normalized.album, tokens) * 1.5;
+  score += fieldScore(normalized.genre, tokens);
 
-  const combined = normalize(`${song.title} ${song.artist} ${song.album} ${song.genre ?? ''}`);
-  if (combined) {
-    const allTokensMatch = tokens.every((token) => combined.includes(token));
+  if (normalized.combined) {
+    const allTokensMatch = tokens.every((token) => normalized.combined.includes(token));
     if (allTokensMatch) {
       score += 6;
     }

@@ -1,4 +1,5 @@
 import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { markSongCached } from '@/services/metadataCacheIndex';
 import type { Song } from '@/types/music';
 
 const cachePath = 'metadata_cache/song_genre_cache.json';
@@ -189,6 +190,9 @@ export const hydrateSongsWithCachedGenres = async (songs: Song[]): Promise<Song[
 
 export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> => {
   if (!isUnknownGenre(song.genre)) {
+    if (song.id) {
+      void markSongCached(song.id, 'genre');
+    }
     return {
       status: 'ready',
       genre: song.genre,
@@ -201,6 +205,9 @@ export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> =>
   const key = cacheKeyForSong(song);
   const cached = cache[key];
   if (cached?.genre && !isUnknownGenre(cached.genre)) {
+    if (song.id) {
+      void markSongCached(song.id, 'genre');
+    }
     return {
       status: 'ready',
       genre: cached.genre,
@@ -233,6 +240,9 @@ export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> =>
       },
     };
     await writeStorageJsonDebounced(cachePath, nextCache);
+    if (song.id) {
+      void markSongCached(song.id, 'genre');
+    }
 
     return {
       status: 'ready',
@@ -248,12 +258,3 @@ export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> =>
   }
 };
 
-export const hasCachedGenre = async (song: Song): Promise<boolean> => {
-  if (!isUnknownGenre(song.genre)) {
-    return true;
-  }
-
-  const cache = await readStorageJson<SongGenreCache>(cachePath, {});
-  const cachedGenre = cache[cacheKeyForSong(song)]?.genre?.trim();
-  return Boolean(cachedGenre && !isUnknownGenre(cachedGenre));
-};

@@ -1,4 +1,10 @@
 import type { Playlist, Song } from '@/types/music';
+import { getPrimaryArtistName } from '@/utils/artists';
+import {
+  getAlbumTracklistKey,
+  normalizeTrackTitle,
+  type AlbumTracklistCache,
+} from '@/services/albumTracklistService';
 
 const byPlayCount = (a: Song, b: Song) => b.playCount - a.playCount;
 
@@ -25,11 +31,29 @@ const weeklySeed = (): number => {
   return Number(`${year}${String(week).padStart(2, '0')}`);
 };
 
+const dailySeed = (): number => {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  return Number(`${year}${month}${day}`);
+};
+
 const weeklyShuffle = (songs: Song[], seed: number): Song[] => {
   return [...songs].sort((a, b) => {
     const scoreA = hash(`${a.id}:${seed}`);
     const scoreB = hash(`${b.id}:${seed}`);
     return scoreA - scoreB;
+  });
+};
+
+const sortAlbumTracks = (songs: Song[]): Song[] => {
+  return [...songs].sort((a, b) => {
+    const titleCmp = a.title.localeCompare(b.title);
+    if (titleCmp !== 0) {
+      return titleCmp;
+    }
+    return a.filename.localeCompare(b.filename);
   });
 };
 
@@ -310,9 +334,13 @@ export const generateSmartPlaylists = (
   songs: Song[],
   overrides: Record<string, string[]> = {},
   seedOverride?: number,
+  albumTracklistCache?: AlbumTracklistCache,
+  dailyMixOverride?: Song[],
+  dailySeedOverride?: number,
 ): Playlist[] => {
   const now = Math.floor(Date.now() / 1000);
   const seed = seedOverride ?? weeklySeed();
+  const dailySeedValue = dailySeedOverride ?? dailySeed();
   const recentlyAdded = [...songs].sort((a, b) => b.addedAt - a.addedAt).slice(0, 100);
   const mostPlayed = [...songs].sort(byPlayCount).slice(0, 100);
   const rediscoverCutoff = now - 60 * 24 * 60 * 60;
@@ -322,7 +350,7 @@ export const generateSmartPlaylists = (
     .slice(0, 100);
   const favorites = songs.filter((song) => song.favorite).sort(byPlayCount);
   const recentlyPlayed = [...songs].filter((song) => song.lastPlayed).sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0)).slice(0, 100);
-  const dailyMix = pickDailyMix(songs, seed);
+  const dailyMix = dailyMixOverride ?? pickDailyMix(songs, dailySeedValue);
   const onRepeat = pickOnRepeat(songs);
   const genreMixes = buildGenreMixes(songs);
   const moodMixes = buildMoodMixes(songs);
@@ -333,9 +361,10 @@ export const generateSmartPlaylists = (
     .sort((a, b) => (a.lastPlayed ?? 0) - (b.lastPlayed ?? 0))
     .slice(0, 100);
   const lovedAndPlayed = songs.filter((song) => song.favorite && song.playCount > 0).sort(byPlayCount).slice(0, 100);
+  const albumSpotlight = pickAlbumSpotlight(songs, seed, albumTracklistCache);
 
   const playlists: Playlist[] = [
-    mapPlaylist('smart_daily_mix', 'Daily Mix', 'Fresh daily mix with genre balance.', weeklyShuffle(dailyMix, seed)),
+    mapPlaylist('smart_daily_mix', 'Daily Mix', 'Fresh daily mix with genre balance.', dailyMix),
     mapPlaylist('smart_on_repeat', 'On Repeat', 'Songs you have been playing most this week.', weeklyShuffle(onRepeat, seed)),
     ...moodMixes.map((entry) => ({
       ...entry,
@@ -378,6 +407,17 @@ export const generateSmartPlaylists = (
       mapPlaylist('smart_deep_cuts', 'Deep Cuts', 'Less-played gems from your library.', weeklyShuffle(deepCuts, seed)),
     );
   }
+  if (albumSpotlight.length) {
+    playlists.push(
+      mapPlaylist(
+        'smart_album_spotlight',
+        'Album Spotlight',
+        'A full album, front to back.',
+        albumSpotlight,
+        'smart',
+      ),
+    );
+  }
 
   if (!Object.keys(overrides).length) {
     return playlists;
@@ -401,4 +441,69 @@ export const generateSmartPlaylists = (
       songIds: merged,
     };
   });
+};
+
+const pickAlbumSpotlight = (songs: Song[], seed: number, albumTracklistCache?: AlbumTracklistCache): Song[] => {
+  const include = hash(`album-spotlight:${seed}`) % 3 === 0;
+  if (!include) {
+    return [];
+  }
+
+  const albumMap = new Map<string, Song[]>();
+  for (const song of songs) {
+    if (!song.album?.trim()) {
+      continue;
+    }
+    const primaryArtist = getPrimaryArtistName(song.artist);
+    const key = `${primaryArtist.toLowerCase()}::${song.album.trim().toLowerCase()}`;
+    const list = albumMap.get(key) ?? [];
+    list.push(song);
+    albumMap.set(key, list);
+  }
+
+  const albums = [...albumMap.values()]
+    .map((albumSongs) => {
+      const sorted = sortAlbumTracks(albumSongs);
+      if (!albumTracklistCache) {
+        return null;
+      }
+      const primaryArtist = getPrimaryArtistName(sorted[0]?.artist);
+      const albumName = sorted[0]?.album ?? '';
+      const key = getAlbumTracklistKey(primaryArtist, albumName);
+      const tracklist = albumTracklistCache[key];
+      if (!tracklist?.tracks?.length) {
+        return null;
+      }
+      const byTrack = new Map<number, Song>();
+      const byTitle = new Map<string, Song>();
+      for (const song of sorted) {
+        if (song.track && song.track > 0 && !byTrack.has(song.track)) {
+          byTrack.set(song.track, song);
+        }
+        const normalized = normalizeTrackTitle(song.title);
+        if (normalized && !byTitle.has(normalized)) {
+          byTitle.set(normalized, song);
+        }
+      }
+      let available = 0;
+      for (const track of tracklist.tracks) {
+        const normalized = normalizeTrackTitle(track.title);
+        const match = byTrack.get(track.position) ?? (normalized ? byTitle.get(normalized) : undefined);
+        if (match) {
+          available += 1;
+        }
+      }
+      if (available < 6) {
+        return null;
+      }
+      return sorted;
+    })
+    .filter((albumSongs): albumSongs is Song[] => Boolean(albumSongs));
+
+  if (!albums.length) {
+    return [];
+  }
+
+  const index = hash(`album-spotlight-pick:${seed}`) % albums.length;
+  return albums[index] ?? [];
 };

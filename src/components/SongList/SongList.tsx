@@ -143,7 +143,7 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
       <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
 
       <div className="flex min-w-0 items-center gap-3">
-        <div className="h-10 w-10 overflow-hidden rounded-md bg-zinc-800">
+        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-zinc-800">
           {song.albumArt ? <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" /> : null}
         </div>
         <div className="min-w-0">

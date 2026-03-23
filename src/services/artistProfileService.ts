@@ -1,4 +1,5 @@
 import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { markArtistCached } from '@/services/metadataCacheIndex';
 
 const cacheFolder = 'artist_cache';
 
@@ -277,6 +278,29 @@ export const hasCachedArtistProfile = async (artistNameRaw: string): Promise<boo
   return Boolean(cached?.summary?.trim() && isValidCachedSummary(cached.summary));
 };
 
+export const readCachedArtistProfile = async (artistNameRaw: string): Promise<ArtistProfileLoadResult> => {
+  const artistName = artistNameRaw.trim();
+  const cacheKey = cacheKeyForArtist(artistName);
+  const cachePath = `storage/${cacheKey}`;
+
+  if (!artistName || artistName.toLowerCase() === 'unknown artist') {
+    return { status: 'missing', cachePath };
+  }
+
+  const cached = await readStorageJson<ArtistProfile | null>(cacheKey, null);
+  if (cached?.summary?.trim() && isValidCachedSummary(cached.summary)) {
+    void markArtistCached(normalizeText(artistName));
+    return {
+      status: 'ready',
+      profile: cached,
+      fromCache: true,
+      cachePath,
+    };
+  }
+
+  return { status: 'missing', cachePath };
+};
+
 export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistProfileLoadResult> => {
   const artistName = artistNameRaw.trim();
   const cacheKey = cacheKeyForArtist(artistName);
@@ -288,6 +312,7 @@ export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistPr
 
   const cached = await readStorageJson<ArtistProfile | null>(cacheKey, null);
   if (cached?.summary?.trim() && isValidCachedSummary(cached.summary)) {
+    void markArtistCached(normalizeText(artistName));
     return {
       status: 'ready',
       profile: cached,
@@ -307,6 +332,7 @@ export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistPr
     }
 
     await writeStorageJsonDebounced(cacheKey, fetched);
+    void markArtistCached(normalizeText(artistName));
     return {
       status: 'ready',
       profile: fetched,

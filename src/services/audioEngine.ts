@@ -78,6 +78,7 @@ const defaultSettings: AppSettings = {
   overlayAutoHide: true,
   lyricsVisualsEnabled: true,
   lyricsVisualTheme: 'ember',
+  metadataFetchPaused: false,
 };
 
 class NativeAudioEngine {

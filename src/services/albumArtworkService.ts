@@ -1,4 +1,5 @@
 import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { markAlbumCached } from '@/services/metadataCacheIndex';
 
 const cachePath = 'metadata_cache/album_art_cache.json';
 
@@ -18,7 +19,26 @@ const cacheKey = (artist: string, album: string): string => {
   return `${slugify(artist || 'unknown-artist')}--${slugify(album || 'unknown-album')}`;
 };
 
-type AlbumArtworkCache = Record<string, string>;
+export type AlbumArtworkCache = Record<string, string>;
+
+export const getAlbumArtworkCacheKey = (artist: string, album: string): string => cacheKey(artist, album);
+
+export const loadAlbumArtworkCache = async (): Promise<AlbumArtworkCache> => {
+  return readStorageJson<AlbumArtworkCache>(cachePath, {});
+};
+
+export const readCachedAlbumArtwork = async (artist: string, album: string): Promise<string | null> => {
+  if (!artist?.trim() || !album?.trim()) {
+    return null;
+  }
+  const cache = await readStorageJson<AlbumArtworkCache>(cachePath, {});
+  const key = cacheKey(artist, album);
+  const cached = cache[key] ?? null;
+  if (cached) {
+    void markAlbumCached(key);
+  }
+  return cached;
+};
 
 const compressImageToDataUrl = async (url: string): Promise<string | null> => {
   try {
@@ -71,6 +91,7 @@ export const loadAlbumArtwork = async (artist: string, album: string): Promise<s
   const key = cacheKey(artist, album);
   const cached = cache[key];
   if (cached) {
+    void markAlbumCached(key);
     return cached;
   }
 
@@ -87,6 +108,7 @@ export const loadAlbumArtwork = async (artist: string, album: string): Promise<s
       ...cache,
       [key]: stored,
     });
+    void markAlbumCached(key);
 
     return stored;
   } catch {

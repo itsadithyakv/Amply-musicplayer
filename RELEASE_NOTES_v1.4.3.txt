@@ -1,0 +1,11 @@
+Amply v1.4.3
+
+Highlights
+- Daily Mix now uses a daily seed and daily cache (weekly seed remains for other mixes).
+- Album Spotlight keying includes primary artist to avoid album name collisions.
+- Library performance upgrades for large libraries (album/artist/genre virtualization, faster song lookup, cached search normalization).
+- Queue caching for artist/album/genre clicks for instant repeat navigation.
+- Album tracklist background fetch skips mixed-artist albums to avoid redundant work.
+
+Notes
+- Windows installers included: MSI and NSIS.

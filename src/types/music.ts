@@ -52,6 +52,7 @@ export interface AppSettings {
   overlayAutoHide: boolean;
   lyricsVisualsEnabled: boolean;
   lyricsVisualTheme: 'ember' | 'aurora' | 'mono';
+  metadataFetchPaused: boolean;
 }
 
 export type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club';

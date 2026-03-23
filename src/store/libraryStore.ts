@@ -3,10 +3,38 @@ import type { AppSettings, Playlist, Song } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists } from '@/services/playlistGenerator';
-import { hasCachedGenre, hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
-import { hydrateSongsWithCachedLoudness } from '@/services/loudnessService';
-import { hasCachedLyrics, loadLyrics } from '@/services/lyricsFetcher';
+import { hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
+import { hydrateSongsWithCachedLoudness, loadLoudnessCache, loadSongLoudness } from '@/services/loudnessService';
+import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
+import {
+  getAlbumArtworkCacheKey,
+  loadAlbumArtwork,
+  loadAlbumArtworkCache,
+} from '@/services/albumArtworkService';
+import {
+  getAlbumTracklistKey,
+  loadAlbumTracklist,
+  loadAlbumTracklistCache,
+} from '@/services/albumTracklistService';
+import {
+  loadMetadataAttempts,
+  noteMetadataFailure,
+  noteMetadataSuccess,
+  saveMetadataAttempts,
+  shouldSkipMetadata,
+  tryAcquireMetadata,
+  releaseMetadata,
+} from '@/services/metadataAttemptService';
+import { getPrimaryArtistName } from '@/utils/artists';
+import {
+  isAlbumCached,
+  isArtistCached,
+  isSongCached,
+  loadMetadataCacheIndex,
+  markSongCached,
+  primeMetadataIndex,
+} from '@/services/metadataCacheIndex';
 import { filterAndRankSongs } from '@/utils/search';
 
 interface LibraryPersisted {
@@ -38,9 +66,22 @@ interface LibraryState {
     artists: number;
     lyrics: number;
     genres: number;
+    loudness: number;
+    albumArt: number;
+    pending: boolean;
+    message: string | null;
+  };
+  albumTrackFetch: {
+    running: boolean;
+    total: number;
+    done: number;
+    pending: boolean;
     message: string | null;
   };
   startMetadataFetch: () => void;
+  startAlbumTracklistFetch: () => void;
+  fetchMissingMetadataForSong: (songId: string) => Promise<void>;
+  fetchLyricsCandidatesForSong: (songId: string) => Promise<LyricsCandidate[]>;
   regenerateSmartPlaylists: () => Promise<void>;
   initialize: () => Promise<void>;
   scanLibrary: (pathsOverride?: string[]) => Promise<void>;
@@ -51,7 +92,6 @@ interface LibraryState {
   getFilteredSongs: () => Song[];
   getSongById: (songId: string) => Song | undefined;
   updateSongGenre: (songId: string, genre: string) => Promise<void>;
-  refreshSongGenreIfUnknown: (songId: string) => Promise<void>;
   updateSongLoudness: (songId: string, lufs: number) => Promise<void>;
   toggleFavorite: (songId: string) => Promise<void>;
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
@@ -65,6 +105,7 @@ const libraryCachePath = 'playlists/library_cache.json';
 const customPlaylistsPath = 'playlists/custom_playlists.json';
 const smartOverridesPath = 'playlists/smart_overrides.json';
 const smartCachePath = 'playlists/smart_cache.json';
+const dailyMixCachePath = 'playlists/daily_mix_cache.json';
 const playlistUsagePath = 'playlists/playlist_usage.json';
 
 type SmartCache = {
@@ -72,8 +113,26 @@ type SmartCache = {
   playlists: Playlist[];
 };
 
+type DailyMixCache = {
+  dayKey: string;
+  songIds: string[];
+};
+
 let smartPlaylistsCache: Playlist[] = [];
 let smartCacheWeek: string | null = null;
+let cachedSongsRef: Song[] | null = null;
+let cachedSongsById: Map<string, Song> | null = null;
+
+const getSongByIdCached = (songs: Song[], songId: string): Song | undefined => {
+  if (!songs.length) {
+    return undefined;
+  }
+  if (cachedSongsRef !== songs || !cachedSongsById) {
+    cachedSongsRef = songs;
+    cachedSongsById = new Map(songs.map((entry) => [entry.id, entry]));
+  }
+  return cachedSongsById.get(songId);
+};
 
 const seedFromWeekKey = (weekKey: string): number => {
   const [yearPart, weekPart] = weekKey.split('-W');
@@ -92,6 +151,19 @@ const getIsoWeekKey = (date = new Date()): string => {
   const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
   const week = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
   return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+};
+
+const getIsoDayKey = (date = new Date()): string => {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const seedFromDayKey = (dayKey: string): number => {
+  const cleaned = dayKey.replace(/-/g, '');
+  const seed = Number(cleaned);
+  return Number.isFinite(seed) ? seed : Date.now();
 };
 
 const applySmartOverrides = (
@@ -125,6 +197,7 @@ const refreshSmartPlaylists = async (
   seedOverride?: number,
 ): Promise<Playlist[]> => {
   const weekKey = getIsoWeekKey();
+  const dayKey = getIsoDayKey();
   if (!force && smartCacheWeek === weekKey && smartPlaylistsCache.length) {
     return smartPlaylistsCache;
   }
@@ -137,10 +210,31 @@ const refreshSmartPlaylists = async (
   }
 
   const resolvedSeed = seedOverride ?? (force ? Date.now() : undefined);
-  const generated = generateSmartPlaylists(songs, overrides, resolvedSeed);
+  const dailySeed = seedFromDayKey(dayKey);
+  const songsById = new Map(songs.map((song) => [song.id, song]));
+  const dailyCached = force ? null : await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const dailyMixOverride =
+    dailyCached && dailyCached.dayKey === dayKey
+      ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
+      : null;
+  const albumTracklistCache = await loadAlbumTracklistCache();
+  const generated = generateSmartPlaylists(
+    songs,
+    overrides,
+    resolvedSeed,
+    albumTracklistCache,
+    dailyMixOverride ?? undefined,
+    dailySeed,
+  );
   smartCacheWeek = weekKey;
   smartPlaylistsCache = generated;
   await writeStorageJson(smartCachePath, { weekKey, playlists: generated });
+  if (!dailyMixOverride) {
+    const daily = generated.find((playlist) => playlist.id === 'smart_daily_mix');
+    if (daily?.songIds?.length) {
+      await writeStorageJson(dailyMixCachePath, { dayKey, songIds: daily.songIds });
+    }
+  }
   return generated;
 };
 
@@ -159,8 +253,6 @@ const persistLibrary = async (songs: Song[], customPlaylists: Playlist[]): Promi
   await writeStorageJson(libraryCachePath, payload);
   await writeStorageJson(customPlaylistsPath, customPlaylists);
 };
-
-const genreRefreshInFlight = new Set<string>();
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   initialized: false,
@@ -182,6 +274,16 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     artists: 0,
     lyrics: 0,
     genres: 0,
+    loudness: 0,
+    albumArt: 0,
+    pending: false,
+    message: null,
+  },
+  albumTrackFetch: {
+    running: false,
+    total: 0,
+    done: 0,
+    pending: false,
     message: null,
   },
 
@@ -192,8 +294,17 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     void (async () => {
-      const settings = await readStorageJson<Partial<AppSettings>>('settings.json', {});
-      if (settings.gameMode) {
+      const runStart = performance.now();
+      const maxSongsPerRun = 8;
+      const maxMsPerRun = 1400;
+      const shouldPause = (processed: number) =>
+        processed >= maxSongsPerRun || performance.now() - runStart > maxMsPerRun;
+
+      const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+      const metadataPaused =
+        settings.metadataFetchPaused ??
+        (typeof settings.albumTracklistFetchPaused === 'boolean' ? settings.albumTracklistFetchPaused : false);
+      if (settings.gameMode || metadataPaused) {
         set({
           metadataFetch: {
             running: false,
@@ -202,7 +313,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             artists: 0,
             lyrics: 0,
             genres: 0,
-            message: 'Game Mode disables metadata fetching.',
+            loudness: 0,
+            albumArt: 0,
+            pending: false,
+            message: metadataPaused
+              ? 'Metadata lookups are paused.'
+              : 'Game Mode disables metadata fetching.',
           },
         });
         return;
@@ -218,6 +334,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             artists: 0,
             lyrics: 0,
             genres: 0,
+            loudness: 0,
+            albumArt: 0,
+            pending: false,
             message: 'No songs available to scan.',
           },
         });
@@ -232,6 +351,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           artists: 0,
           lyrics: 0,
           genres: 0,
+          loudness: 0,
+          albumArt: 0,
+          pending: true,
           message: 'Checking cache...',
         },
       });
@@ -254,20 +376,59 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       let artistCount = 0;
       let lyricCount = 0;
       let genreCount = 0;
+      let loudnessCount = 0;
+      let albumArtCount = 0;
       let done = 0;
       let lastUpdate = performance.now();
+      const seenAlbums = new Set<string>();
 
       const pendingSongs: Song[] = [];
+      const artistCachedByKey = new Map<string, boolean>();
+      const attemptsCache = await loadMetadataAttempts();
+      const albumCache = await loadAlbumArtworkCache();
+      const loudnessCache = await loadLoudnessCache();
+      const cacheIndex = await loadMetadataCacheIndex();
+      primeMetadataIndex(cacheIndex, (draft) => {
+        for (const [key, entry] of Object.entries(loudnessCache)) {
+          if (typeof entry?.lufs === 'number') {
+            draft.songs[key] = { ...(draft.songs[key] ?? {}), loudness: true };
+          }
+        }
+        for (const key of Object.keys(albumCache)) {
+          draft.albums[key] = true;
+        }
+      });
       let checked = 0;
 
       for (const song of songs) {
-        const [lyricsCached, artistCached, genreCached] = await Promise.all([
-          hasCachedLyrics(song),
-          hasCachedArtistProfile(song.artist),
-          hasCachedGenre(song),
-        ]);
+        const primaryArtist = getPrimaryArtistName(song.artist);
+        const artistKey = primaryArtist?.trim().toLowerCase();
+        const lyricsCached = isSongCached(cacheIndex, song.id, 'lyrics');
+        const genreCached =
+          isSongCached(cacheIndex, song.id, 'genre') ||
+          Boolean(song.genre?.trim() && song.genre.trim().toLowerCase() !== 'unknown genre');
+        const loudnessCached = isSongCached(cacheIndex, song.id, 'loudness') || typeof loudnessCache[song.id]?.lufs === 'number';
+        const artistCached =
+          artistKey ? isArtistCached(cacheIndex, artistKey) : await hasCachedArtistProfile(primaryArtist);
+        const albumKey = song.album && song.artist ? getAlbumArtworkCacheKey(song.artist, song.album) : null;
+        const albumCached = albumKey ? isAlbumCached(cacheIndex, albumKey) || Boolean(albumCache[albumKey]) : true;
+        if (artistKey) {
+          const existing = artistCachedByKey.get(artistKey);
+          if (existing === undefined) {
+            artistCachedByKey.set(artistKey, artistCached);
+          } else if (existing && !artistCached) {
+            artistCachedByKey.set(artistKey, false);
+          }
+        }
+        const needsLyrics = !lyricsCached && !shouldSkipMetadata(attemptsCache, 'lyrics', song.id);
+        const needsGenre = !genreCached && !shouldSkipMetadata(attemptsCache, 'genre', song.id);
+        const needsLoudness = !loudnessCached && !shouldSkipMetadata(attemptsCache, 'loudness', song.id);
+        const needsArtist =
+          !artistCached && artistKey ? !shouldSkipMetadata(attemptsCache, 'artist', artistKey) : false;
+        const needsAlbumArt =
+          albumKey && !albumCached ? !shouldSkipMetadata(attemptsCache, 'album', albumKey) : false;
 
-        if (!lyricsCached || !artistCached || !genreCached) {
+        if (needsLyrics || needsGenre || needsLoudness || needsArtist || needsAlbumArt) {
           pendingSongs.push(song);
         }
 
@@ -286,6 +447,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             artists: 0,
             lyrics: 0,
             genres: 0,
+            loudness: 0,
+            albumArt: 0,
+            pending: false,
             message: 'All metadata already cached.',
           },
         });
@@ -306,6 +470,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             artists: artistCount,
             lyrics: lyricCount,
             genres: genreCount,
+            loudness: loudnessCount,
+            albumArt: albumArtCount,
+            pending: true,
             message: null,
           },
         });
@@ -313,25 +480,88 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
       for (const song of pendingSongs) {
         try {
-          const artistKey = song.artist?.trim().toLowerCase();
-          if (artistKey && !seenArtists.has(artistKey)) {
+          const primaryArtist = getPrimaryArtistName(song.artist);
+          const artistKey = primaryArtist?.trim().toLowerCase();
+          if (
+            artistKey &&
+            artistCachedByKey.get(artistKey) === false &&
+            !seenArtists.has(artistKey) &&
+            !shouldSkipMetadata(attemptsCache, 'artist', artistKey)
+          ) {
             seenArtists.add(artistKey);
-            const artistResult = await loadArtistProfile(song.artist);
-            if (artistResult.status === 'ready') {
-              artistCount += 1;
+            if (tryAcquireMetadata('artist', artistKey)) {
+              const artistResult = await loadArtistProfile(primaryArtist);
+              if (artistResult.status === 'ready') {
+                artistCount += 1;
+                noteMetadataSuccess(attemptsCache, 'artist', artistKey);
+              } else {
+                noteMetadataFailure(attemptsCache, 'artist', artistKey);
+              }
+              releaseMetadata('artist', artistKey);
             }
           }
 
-          const lyricResult = await loadLyrics(song);
-          if (lyricResult.status === 'ready') {
-            lyricCount += 1;
+          if (!shouldSkipMetadata(attemptsCache, 'lyrics', song.id)) {
+            if (tryAcquireMetadata('lyrics', song.id)) {
+              const lyricResult = await loadLyrics(song);
+              if (lyricResult.status === 'ready') {
+                lyricCount += 1;
+                noteMetadataSuccess(attemptsCache, 'lyrics', song.id);
+              } else {
+                noteMetadataFailure(attemptsCache, 'lyrics', song.id);
+              }
+              releaseMetadata('lyrics', song.id);
+            }
           }
 
-          const genreResult = await loadSongGenre(song);
-          if (genreResult.status === 'ready') {
-            genreCount += 1;
-            if (genreResult.genre && genreResult.genre.toLowerCase() !== 'unknown genre') {
-              await get().updateSongGenre(song.id, genreResult.genre);
+          if (!shouldSkipMetadata(attemptsCache, 'genre', song.id)) {
+            if (tryAcquireMetadata('genre', song.id)) {
+              const genreResult = await loadSongGenre(song);
+              if (genreResult.status === 'ready') {
+                genreCount += 1;
+                noteMetadataSuccess(attemptsCache, 'genre', song.id);
+                void markSongCached(song.id, 'genre');
+                if (genreResult.genre && genreResult.genre.toLowerCase() !== 'unknown genre') {
+                  await get().updateSongGenre(song.id, genreResult.genre);
+                }
+              } else {
+                noteMetadataFailure(attemptsCache, 'genre', song.id);
+              }
+              releaseMetadata('genre', song.id);
+            }
+          }
+
+          if (!shouldSkipMetadata(attemptsCache, 'loudness', song.id)) {
+            if (tryAcquireMetadata('loudness', song.id)) {
+              const loudnessResult = await loadSongLoudness(song);
+              if (loudnessResult.status === 'ready') {
+                loudnessCount += 1;
+                noteMetadataSuccess(attemptsCache, 'loudness', song.id);
+                void markSongCached(song.id, 'loudness');
+                if (typeof loudnessResult.lufs === 'number') {
+                  await get().updateSongLoudness(song.id, loudnessResult.lufs);
+                }
+              } else {
+                noteMetadataFailure(attemptsCache, 'loudness', song.id);
+              }
+              releaseMetadata('loudness', song.id);
+            }
+          }
+
+          if (song.album && song.artist) {
+            const albumKey = getAlbumArtworkCacheKey(song.artist, song.album);
+            if (!seenAlbums.has(albumKey) && !shouldSkipMetadata(attemptsCache, 'album', albumKey)) {
+              seenAlbums.add(albumKey);
+              if (tryAcquireMetadata('album', albumKey)) {
+                const art = await loadAlbumArtwork(song.artist, song.album);
+                if (art) {
+                  albumArtCount += 1;
+                  noteMetadataSuccess(attemptsCache, 'album', albumKey);
+                } else {
+                  noteMetadataFailure(attemptsCache, 'album', albumKey);
+                }
+                releaseMetadata('album', albumKey);
+              }
             }
           }
         } catch {
@@ -344,13 +574,36 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         if (done % 5 === 0) {
           await yieldToMain();
         }
+        if (shouldPause(done)) {
+          break;
+        }
       }
 
-      await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, true, seedFromWeekKey(getIsoWeekKey()));
-      const customPlaylists = get().customPlaylists;
+      const completedAll = done >= pendingSongs.length;
+      await saveMetadataAttempts(attemptsCache);
+      if (completedAll) {
+        await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, true, seedFromWeekKey(getIsoWeekKey()));
+        const customPlaylists = get().customPlaylists;
+        set({
+          playlists: buildPlaylists(customPlaylists),
+          smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
+          metadataFetch: {
+            running: false,
+            total: pendingSongs.length,
+            done,
+            artists: artistCount,
+            lyrics: lyricCount,
+            genres: genreCount,
+            loudness: loudnessCount,
+            albumArt: albumArtCount,
+            pending: false,
+            message: 'Bulk fetch completed.',
+          },
+        });
+        return;
+      }
+
       set({
-        playlists: buildPlaylists(customPlaylists),
-        smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
         metadataFetch: {
           running: false,
           total: pendingSongs.length,
@@ -358,10 +611,320 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           artists: artistCount,
           lyrics: lyricCount,
           genres: genreCount,
-          message: 'Bulk fetch completed.',
+          loudness: loudnessCount,
+          albumArt: albumArtCount,
+          pending: true,
+          message: 'Paused to keep things smooth. Will continue when idle.',
         },
       });
     })();
+  },
+
+  startAlbumTracklistFetch: () => {
+    const state = get();
+    if (state.albumTrackFetch.running) {
+      return;
+    }
+
+    void (async () => {
+      const runStart = performance.now();
+      const maxAlbumsPerRun = 2;
+      const maxMsPerRun = 1400;
+      const shouldPause = (processed: number) =>
+        processed >= maxAlbumsPerRun || performance.now() - runStart > maxMsPerRun;
+
+      const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+      const metadataPaused =
+        settings.metadataFetchPaused ??
+        (typeof settings.albumTracklistFetchPaused === 'boolean' ? settings.albumTracklistFetchPaused : false);
+      if (settings.gameMode || metadataPaused) {
+        set({
+          albumTrackFetch: {
+            running: false,
+            total: 0,
+            done: 0,
+            pending: state.albumTrackFetch.pending,
+            message: metadataPaused
+              ? 'Metadata lookups are paused.'
+              : 'Game Mode disables album tracklist lookup.',
+          },
+        });
+        return;
+      }
+
+      const songs = get().songs;
+      if (!songs.length) {
+        set({
+          albumTrackFetch: {
+            running: false,
+            total: 0,
+            done: 0,
+            pending: false,
+            message: 'No albums available to scan.',
+          },
+        });
+        return;
+      }
+
+      set({
+        albumTrackFetch: {
+          running: true,
+          total: 0,
+          done: 0,
+          pending: true,
+          message: 'Checking cached album tracklists...',
+        },
+      });
+
+      const yieldToMain = () =>
+        new Promise<void>((resolve) => {
+          const idle = (globalThis as typeof globalThis & {
+            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+          }).requestIdleCallback;
+
+          if (typeof idle === 'function') {
+            idle(() => resolve(), { timeout: 300 });
+            return;
+          }
+
+          setTimeout(() => resolve(), 0);
+        });
+
+      const albumCache = await loadAlbumTracklistCache();
+      const attemptsCache = await loadMetadataAttempts();
+      const pendingAlbums: Array<{ artist: string; album: string; key: string }> = [];
+
+      const albumCandidates = new Map<
+        string,
+        {
+          album: string;
+          artists: Set<string>;
+        }
+      >();
+
+      for (const song of songs) {
+        if (!song.album?.trim()) {
+          continue;
+        }
+        const primaryArtist = getPrimaryArtistName(song.artist);
+        if (!primaryArtist?.trim()) {
+          continue;
+        }
+        const albumKey = song.album.trim().toLowerCase();
+        const existing = albumCandidates.get(albumKey);
+        if (existing) {
+          existing.artists.add(primaryArtist);
+        } else {
+          albumCandidates.set(albumKey, { album: song.album, artists: new Set([primaryArtist]) });
+        }
+      }
+
+      for (const entry of albumCandidates.values()) {
+        if (entry.artists.size !== 1) {
+          continue;
+        }
+        const primaryArtist = [...entry.artists][0];
+        const key = getAlbumTracklistKey(primaryArtist, entry.album);
+        if (albumCache[key]?.tracks?.length) {
+          continue;
+        }
+        if (shouldSkipMetadata(attemptsCache, 'album_tracklist', key)) {
+          continue;
+        }
+        pendingAlbums.push({ artist: primaryArtist, album: entry.album, key });
+      }
+
+      if (!pendingAlbums.length) {
+        set({
+          albumTrackFetch: {
+            running: false,
+            total: 0,
+            done: 0,
+            pending: false,
+            message: 'All album tracklists already cached.',
+          },
+        });
+        return;
+      }
+
+      let done = 0;
+      let lastUpdate = performance.now();
+      const updateProgress = (force = false) => {
+        const now = performance.now();
+        if (!force && now - lastUpdate < 300) {
+          return;
+        }
+        lastUpdate = now;
+        set({
+          albumTrackFetch: {
+            running: true,
+            total: pendingAlbums.length,
+            done,
+            pending: true,
+            message: null,
+          },
+        });
+      };
+
+      for (const entry of pendingAlbums) {
+        try {
+          if (!shouldSkipMetadata(attemptsCache, 'album_tracklist', entry.key)) {
+            if (tryAcquireMetadata('album_tracklist', entry.key)) {
+              const tracklist = await loadAlbumTracklist(entry.artist, entry.album);
+              if (tracklist?.tracks?.length) {
+                noteMetadataSuccess(attemptsCache, 'album_tracklist', entry.key);
+              } else {
+                noteMetadataFailure(attemptsCache, 'album_tracklist', entry.key);
+              }
+              releaseMetadata('album_tracklist', entry.key);
+            }
+          }
+        } catch {
+          noteMetadataFailure(attemptsCache, 'album_tracklist', entry.key);
+        } finally {
+          done += 1;
+          updateProgress();
+        }
+
+        if (done % 2 === 0) {
+          await yieldToMain();
+        }
+        if (shouldPause(done)) {
+          break;
+        }
+      }
+
+      await saveMetadataAttempts(attemptsCache);
+      const completedAll = done >= pendingAlbums.length;
+      set({
+        albumTrackFetch: {
+          running: false,
+          total: pendingAlbums.length,
+          done,
+          pending: !completedAll,
+          message: completedAll
+            ? 'Album tracklists cached.'
+            : 'Paused to keep things smooth. Will continue when idle.',
+        },
+      });
+    })();
+  },
+
+  fetchMissingMetadataForSong: async (songId) => {
+    if (get().metadataFetch.running) {
+      return;
+    }
+    const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+    const metadataPaused =
+      settings.metadataFetchPaused ??
+      (typeof settings.albumTracklistFetchPaused === 'boolean' ? settings.albumTracklistFetchPaused : false);
+    if (settings.gameMode || metadataPaused) {
+      return;
+    }
+    const song = get().getSongById(songId);
+    if (!song) {
+      return;
+    }
+    const attemptsCache = await loadMetadataAttempts();
+    const primaryArtist = getPrimaryArtistName(song.artist);
+    const artistKey = primaryArtist?.trim().toLowerCase();
+    const cacheIndex = await loadMetadataCacheIndex();
+    const loudnessCache = await loadLoudnessCache();
+    const lyricsCached = isSongCached(cacheIndex, song.id, 'lyrics');
+    const genreCached =
+      isSongCached(cacheIndex, song.id, 'genre') ||
+      Boolean(song.genre?.trim() && song.genre.trim().toLowerCase() !== 'unknown genre');
+    const loudnessCached = isSongCached(cacheIndex, song.id, 'loudness') || typeof loudnessCache[song.id]?.lufs === 'number';
+    const artistCached =
+      artistKey ? isArtistCached(cacheIndex, artistKey) : await hasCachedArtistProfile(primaryArtist);
+
+    if (artistKey && !artistCached && !shouldSkipMetadata(attemptsCache, 'artist', artistKey)) {
+      if (tryAcquireMetadata('artist', artistKey)) {
+        const artistResult = await loadArtistProfile(primaryArtist);
+        if (artistResult.status === 'ready') {
+          noteMetadataSuccess(attemptsCache, 'artist', artistKey);
+        } else {
+          noteMetadataFailure(attemptsCache, 'artist', artistKey);
+        }
+        releaseMetadata('artist', artistKey);
+      }
+    }
+
+    if (!lyricsCached && !shouldSkipMetadata(attemptsCache, 'lyrics', song.id)) {
+      if (tryAcquireMetadata('lyrics', song.id)) {
+        const lyricResult = await loadLyrics(song);
+        if (lyricResult.status === 'ready') {
+          noteMetadataSuccess(attemptsCache, 'lyrics', song.id);
+        } else {
+          noteMetadataFailure(attemptsCache, 'lyrics', song.id);
+        }
+        releaseMetadata('lyrics', song.id);
+      }
+    }
+
+    if (!genreCached && !shouldSkipMetadata(attemptsCache, 'genre', song.id)) {
+      if (tryAcquireMetadata('genre', song.id)) {
+        const genreResult = await loadSongGenre(song);
+        if (genreResult.status === 'ready') {
+          noteMetadataSuccess(attemptsCache, 'genre', song.id);
+          void markSongCached(song.id, 'genre');
+          if (genreResult.genre && genreResult.genre.toLowerCase() !== 'unknown genre') {
+            await get().updateSongGenre(song.id, genreResult.genre);
+          }
+        } else {
+          noteMetadataFailure(attemptsCache, 'genre', song.id);
+        }
+        releaseMetadata('genre', song.id);
+      }
+    }
+
+    if (!loudnessCached && !shouldSkipMetadata(attemptsCache, 'loudness', song.id)) {
+      if (tryAcquireMetadata('loudness', song.id)) {
+        const loudnessResult = await loadSongLoudness(song);
+        if (loudnessResult.status === 'ready') {
+          noteMetadataSuccess(attemptsCache, 'loudness', song.id);
+          void markSongCached(song.id, 'loudness');
+          if (typeof loudnessResult.lufs === 'number') {
+            await get().updateSongLoudness(song.id, loudnessResult.lufs);
+          }
+        } else {
+          noteMetadataFailure(attemptsCache, 'loudness', song.id);
+        }
+        releaseMetadata('loudness', song.id);
+      }
+    }
+
+    if (song.album && song.artist) {
+      const albumKey = getAlbumArtworkCacheKey(song.artist, song.album);
+      if (!shouldSkipMetadata(attemptsCache, 'album', albumKey)) {
+        if (tryAcquireMetadata('album', albumKey)) {
+          const art = await loadAlbumArtwork(song.artist, song.album);
+          if (art) {
+            noteMetadataSuccess(attemptsCache, 'album', albumKey);
+          } else {
+            noteMetadataFailure(attemptsCache, 'album', albumKey);
+          }
+          releaseMetadata('album', albumKey);
+        }
+      }
+    }
+
+    await saveMetadataAttempts(attemptsCache);
+  },
+
+  fetchLyricsCandidatesForSong: async (songId) => {
+    const song = get().getSongById(songId);
+    if (!song) {
+      return [];
+    }
+    if (!tryAcquireMetadata('lyrics', song.id)) {
+      return [];
+    }
+    try {
+      return await findLyricsCandidates(song);
+    } finally {
+      releaseMetadata('lyrics', song.id);
+    }
   },
 
   regenerateSmartPlaylists: async () => {
@@ -408,6 +971,14 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       smartPlaylistOverrides: smartOverrides,
       playlistUsage,
       smartPlaylistSeed: initialSeed,
+      metadataFetch: {
+        ...get().metadataFetch,
+        pending: cache.songs.length > 0,
+      },
+      albumTrackFetch: {
+        ...get().albumTrackFetch,
+        pending: cache.songs.length > 0,
+      },
     });
 
     await get().scanLibrary(libraryPaths);
@@ -449,7 +1020,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       await refreshSmartPlaylists(loudnessHydrated, get().smartPlaylistOverrides, true, weeklySeed);
       const playlists = buildPlaylists(customPlaylists);
 
-      set({ songs: loudnessHydrated, playlists, isScanning: false, smartPlaylistSeed: weeklySeed });
+      set({
+        songs: loudnessHydrated,
+        playlists,
+        isScanning: false,
+        smartPlaylistSeed: weeklySeed,
+        metadataFetch: {
+          ...get().metadataFetch,
+          pending: true,
+        },
+        albumTrackFetch: {
+          ...get().albumTrackFetch,
+          pending: true,
+        },
+      });
       await persistLibrary(loudnessHydrated, customPlaylists);
     } catch (error) {
       set({
@@ -492,7 +1076,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   getSongById: (songId) => {
-    return get().songs.find((song) => song.id === songId);
+    return getSongByIdCached(get().songs, songId);
   },
 
   updateSongGenre: async (songId, genre) => {
@@ -525,32 +1109,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);
-  },
-
-  refreshSongGenreIfUnknown: async (songId) => {
-    if (genreRefreshInFlight.has(songId)) {
-      return;
-    }
-
-    const song = get().getSongById(songId);
-    if (!song) {
-      return;
-    }
-
-    const normalized = song.genre?.trim().toLowerCase();
-    if (normalized && normalized !== 'unknown genre') {
-      return;
-    }
-
-    genreRefreshInFlight.add(songId);
-    try {
-      const genreResult = await loadSongGenre(song);
-      if (genreResult.status === 'ready' && genreResult.genre) {
-        await get().updateSongGenre(songId, genreResult.genre);
-      }
-    } finally {
-      genreRefreshInFlight.delete(songId);
-    }
   },
 
   toggleFavorite: async (songId) => {
@@ -611,6 +1169,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       };
     });
 
+    void markSongCached(songId, 'genre');
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);
@@ -665,6 +1224,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       };
     });
 
+    void markSongCached(songId, 'loudness');
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);

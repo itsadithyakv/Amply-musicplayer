@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri, readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { markSongCached } from '@/services/metadataCacheIndex';
 import type { Song } from '@/types/music';
 
 const cachePath = 'metadata_cache/loudness_cache.json';
@@ -36,6 +37,9 @@ export const loadSongLoudness = async (song: Song): Promise<LoudnessLoadResult> 
   const cache = await readStorageJson<LoudnessCache>(cachePath, {});
   const cached = cache[song.id]?.lufs;
   if (typeof cached === 'number') {
+    if (song.id) {
+      void markSongCached(song.id, 'loudness');
+    }
     return {
       status: 'ready',
       lufs: cached,
@@ -68,6 +72,9 @@ export const loadSongLoudness = async (song: Song): Promise<LoudnessLoadResult> 
       },
     };
     await writeStorageJsonDebounced(cachePath, next);
+    if (song.id) {
+      void markSongCached(song.id, 'loudness');
+    }
     return {
       status: 'ready',
       lufs,
@@ -82,7 +89,6 @@ export const loadSongLoudness = async (song: Song): Promise<LoudnessLoadResult> 
   }
 };
 
-export const hasCachedLoudness = async (song: Song): Promise<boolean> => {
-  const cache = await readStorageJson<LoudnessCache>(cachePath, {});
-  return typeof cache[song.id]?.lufs === 'number';
+export const loadLoudnessCache = async (): Promise<LoudnessCache> => {
+  return readStorageJson<LoudnessCache>(cachePath, {});
 };

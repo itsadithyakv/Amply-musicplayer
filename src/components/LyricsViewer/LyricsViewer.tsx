@@ -2,14 +2,14 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Song } from '@/types/music';
 import {
-  findLyricsCandidates,
-  loadLyrics,
+  readCachedLyrics,
   saveLyricsSelection,
   type LyricsCandidate,
   type LyricsResult,
 } from '@/services/lyricsFetcher';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
+import { useLibraryStore } from '@/store/libraryStore';
 import { readStorageJson, writeStorageJson } from '@/services/storageService';
 import { useIdleRender } from '@/hooks/useIdleRender';
 
@@ -52,6 +52,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
   const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const fetchLyricsCandidatesForSong = useLibraryStore((state) => state.fetchLyricsCandidatesForSong);
   const idleReady = useIdleRender(300);
   const [artworkTint, setArtworkTint] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricsResult | null>(null);
@@ -81,6 +82,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     }
 
     let alive = true;
+    let retryHandle: number | null = null;
     setLoading(true);
     setSavingChoiceId(null);
     setError(null);
@@ -89,7 +91,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
     setAutoScroll(true);
 
-    loadLyrics(song)
+    readCachedLyrics(song)
       .then((result) => {
         if (!alive) {
           return;
@@ -106,6 +108,20 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
         }
 
         setError('No lyrics found for this track yet.');
+        retryHandle = window.setTimeout(() => {
+          if (!alive) {
+            return;
+          }
+          readCachedLyrics(song).then((retryResult) => {
+            if (!alive) {
+              return;
+            }
+            if (retryResult.status === 'ready') {
+              setLyrics(retryResult.lyrics);
+              setError(null);
+            }
+          });
+        }, 4000);
       })
       .catch(() => {
         if (alive) {
@@ -120,6 +136,9 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
     return () => {
       alive = false;
+      if (retryHandle !== null) {
+        window.clearTimeout(retryHandle);
+      }
     };
   }, [active, song?.id, gameMode]);
 
@@ -174,7 +193,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     setError(null);
     setLoading(true);
     try {
-      const candidates = await findLyricsCandidates(song);
+      const candidates = await fetchLyricsCandidatesForSong(song.id);
       if (!candidates.length) {
         setError('No alternate lyrics found.');
         return;

@@ -67,3 +67,8 @@ export const splitArtistNames = (artist: string | null | undefined): string[] =>
 
   return unique.length ? unique : [raw];
 };
+
+export const getPrimaryArtistName = (artist: string | null | undefined): string => {
+  const parts = splitArtistNames(artist);
+  return parts[0] ?? UNKNOWN_ARTIST;
+};

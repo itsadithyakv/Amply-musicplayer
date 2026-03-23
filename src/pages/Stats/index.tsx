@@ -9,8 +9,8 @@ import {
 import { useLibraryStore } from '@/store/libraryStore';
 import { buildStats } from '@/services/statsService';
 import { formatDuration } from '@/utils/time';
-import { loadArtistProfile } from '@/services/artistProfileService';
-import { loadAlbumArtwork } from '@/services/albumArtworkService';
+import { readCachedArtistProfile } from '@/services/artistProfileService';
+import { readCachedAlbumArtwork } from '@/services/albumArtworkService';
 
 type TopSongItem = {
   id: string;
@@ -132,6 +132,7 @@ const TopAlbumCell = memo(({ columnIndex, rowIndex, style, data }: GridChildComp
 
 const StatsPage = () => {
   const songs = useLibraryStore((state) => state.songs);
+  const metadataFetchDone = useLibraryStore((state) => state.metadataFetch.done);
   const stats = useMemo(() => buildStats(songs), [songs]);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [albumImages, setAlbumImages] = useState<Record<string, string | undefined>>({});
@@ -301,7 +302,7 @@ const StatsPage = () => {
       const next: Record<string, string | undefined> = {};
       let handled = 0;
       for (const artist of stats.topArtists) {
-        const result = await loadArtistProfile(artist.artist);
+        const result = await readCachedArtistProfile(artist.artist);
         if (!alive) {
           return;
         }
@@ -322,7 +323,7 @@ const StatsPage = () => {
     return () => {
       alive = false;
     };
-  }, [stats.topArtists]);
+  }, [stats.topArtists, metadataFetchDone]);
 
   useEffect(() => {
     let alive = true;
@@ -353,7 +354,7 @@ const StatsPage = () => {
         if (!rep?.artist) {
           continue;
         }
-        const remote = await loadAlbumArtwork(rep.artist, album);
+        const remote = await readCachedAlbumArtwork(rep.artist, album);
         if (!alive) {
           return;
         }
