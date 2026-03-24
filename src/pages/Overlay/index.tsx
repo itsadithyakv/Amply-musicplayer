@@ -55,7 +55,10 @@ const OverlayPage = () => {
 
     void (async () => {
       const windows = await getAllWebviewWindows();
-      const target = windows.find((win) => win.label !== 'overlay')?.label ?? 'main';
+      const target =
+        windows.find((win) => win.label === 'main')?.label ??
+        windows.find((win) => win.label !== 'overlay')?.label ??
+        'main';
       targetLabelRef.current = target;
     })();
   }, []);
@@ -151,7 +154,7 @@ const OverlayPage = () => {
           )}
           title="Drag to move"
         >
-          ≡
+          |||
         </button>
 
         <div className="relative h-10 w-10 shrink-0">
@@ -203,7 +206,7 @@ const OverlayPage = () => {
               className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/6 text-[10px] text-amply-textSecondary backdrop-blur-2xl hover:bg-white/12"
               title="Previous"
             >
-              ‹
+              {'<'}
             </button>
             <button
               type="button"
@@ -229,7 +232,7 @@ const OverlayPage = () => {
               className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/6 text-[10px] text-amply-textSecondary backdrop-blur-2xl hover:bg-white/12"
               title="Next"
             >
-              ›
+              {'>'}
             </button>
           </>
         ) : null}
@@ -239,3 +242,4 @@ const OverlayPage = () => {
 };
 
 export default OverlayPage;
+

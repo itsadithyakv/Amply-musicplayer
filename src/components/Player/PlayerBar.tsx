@@ -28,7 +28,8 @@ const PlayerBar = () => {
   const volume = usePlayerStore((state) => state.volume);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
 
-  const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
+  const pausePlayback = usePlayerStore((state) => state.pausePlayback);
+  const resumePlayback = usePlayerStore((state) => state.resumePlayback);
   const playNext = usePlayerStore((state) => state.playNext);
   const playPrevious = usePlayerStore((state) => state.playPrevious);
   const seekTo = usePlayerStore((state) => state.seekTo);
@@ -49,6 +50,8 @@ const PlayerBar = () => {
   const favoriteClickRef = useRef<number | null>(null);
   const favoriteMessageRef = useRef<number | null>(null);
   const playlistMessageRef = useRef<number | null>(null);
+  const suppressFavoriteClickRef = useRef(false);
+  const actionBusyRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -90,6 +93,10 @@ const PlayerBar = () => {
                 if (!song) {
                   return;
                 }
+                if (suppressFavoriteClickRef.current) {
+                  suppressFavoriteClickRef.current = false;
+                  return;
+                }
                 if (favoriteClickRef.current) {
                   window.clearTimeout(favoriteClickRef.current);
                 }
@@ -116,6 +123,7 @@ const PlayerBar = () => {
                 if (favoriteClickRef.current) {
                   window.clearTimeout(favoriteClickRef.current);
                 }
+                suppressFavoriteClickRef.current = true;
                 setShowPlaylistPicker(true);
               }}
               className={`rounded-lg border border-amply-border/60 p-2 transition-colors ${
@@ -284,17 +292,47 @@ const PlayerBar = () => {
               </button>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <button type="button" onClick={() => void playPrevious()} className={iconButtonClass}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (actionBusyRef.current) {
+                    return;
+                  }
+                  actionBusyRef.current = true;
+                  void playPrevious().finally(() => {
+                    actionBusyRef.current = false;
+                  });
+                }}
+                className={iconButtonClass}
+              >
                 <img src={prevIcon} alt="Previous" className={darkSurfaceIconClass} />
               </button>
               <button
                 type="button"
-                onClick={togglePlayPause}
+                onClick={() => {
+                  if (isPlaying) {
+                    pausePlayback();
+                  } else {
+                    resumePlayback();
+                  }
+                }}
                 className="flex h-11 w-11 items-center justify-center rounded-full bg-amply-accent text-black shadow-glow transition-colors hover:bg-amply-accentHover"
               >
                 <img src={isPlaying ? pauseIcon : playIcon} alt="Play/Pause" className="h-5 w-5" />
               </button>
-              <button type="button" onClick={() => void playNext(true)} className={iconButtonClass}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (actionBusyRef.current) {
+                    return;
+                  }
+                  actionBusyRef.current = true;
+                  void playNext(true).finally(() => {
+                    actionBusyRef.current = false;
+                  });
+                }}
+                className={iconButtonClass}
+              >
                 <img src={nextIcon} alt="Next" className={darkSurfaceIconClass} />
               </button>
             </div>

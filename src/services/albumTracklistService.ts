@@ -29,8 +29,13 @@ const slugify = (value: string): string => {
 export const normalizeTrackTitle = (value: string): string => {
   return value
     .toLowerCase()
+    .replace(/feat\.?[^-()]*$/g, '')
+    .replace(/featuring[^-()]*$/g, '')
+    .replace(/\bft\.?[^-()]*$/g, '')
+    .replace(/\s-\s.*$/g, '')
     .replace(/\(.*?\)/g, '')
     .replace(/\[.*?\]/g, '')
+    .replace(/\b(remaster(ed)?|mono|stereo|bonus track|explicit|clean)\b/g, '')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

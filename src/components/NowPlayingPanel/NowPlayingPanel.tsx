@@ -25,14 +25,7 @@ import {
   getGenreQueueCacheKey,
   setCachedQueue,
 } from '@/services/queueCacheService';
-
-const isUnknownGenre = (value: string | undefined): boolean => {
-  if (!value?.trim()) {
-    return true;
-  }
-
-  return value.trim().toLowerCase() === 'unknown genre';
-};
+import { isUnknownGenre } from '@/services/songMetadataService';
 
 const scheduleIdle = (task: () => void, timeoutMs = 300): (() => void) => {
   const idle = (globalThis as typeof globalThis & {

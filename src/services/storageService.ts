@@ -87,8 +87,16 @@ export const readStorageJson = async <T>(relativePath: string, fallback: T): Pro
   }
 };
 
+const lastWrittenJson = new Map<string, string>();
+
 export const writeStorageJson = async <T>(relativePath: string, value: T): Promise<void> => {
-  await writeStorageText(relativePath, JSON.stringify(value, null, 2));
+  const serialized = JSON.stringify(value, null, 2);
+  const last = lastWrittenJson.get(relativePath);
+  if (last === serialized) {
+    return;
+  }
+  lastWrittenJson.set(relativePath, serialized);
+  await writeStorageText(relativePath, serialized);
 };
 
 const debouncedJsonWrites = new Map<

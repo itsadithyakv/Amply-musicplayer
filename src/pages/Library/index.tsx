@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
@@ -18,6 +18,7 @@ import {
 } from '@/services/albumTracklistService';
 import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptService';
 import addIcon from '@/assets/icons/add.svg';
+import { isUnknownGenre } from '@/services/songMetadataService';
 
 const tabs: Array<{ label: string; value: LibraryTab }> = [
   { label: 'Songs', value: 'songs' },
@@ -74,7 +75,7 @@ const buildGenreGroups = (songs: Song[]): GenreGroup[] => {
   const groups = new Map<string, GenreGroup>();
 
   for (const song of songs) {
-    const label = song.genre?.trim() || 'Unknown Genre';
+    const label = isUnknownGenre(song.genre) ? 'Unknown Genre' : song.genre?.trim() || 'Unknown Genre';
     const key = label.toLowerCase();
     const existing = groups.get(key);
 
@@ -135,7 +136,7 @@ const buildArtistGroups = (songs: Song[]): ArtistGroup[] => {
   return [...groups.values()].sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
 };
 
-type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played';
+type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played' | 'most_songs';
 type ArtistSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
 type GenreSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
 
@@ -160,6 +161,8 @@ const sortAlbums = (albums: AlbumEntry[], sortBy: AlbumSort): AlbumEntry[] => {
           b.songs.reduce((sum, song) => sum + song.playCount, 0) -
             a.songs.reduce((sum, song) => sum + song.playCount, 0) || a.album.localeCompare(b.album),
       );
+    case 'most_songs':
+      return sorted.sort((a, b) => b.songs.length - a.songs.length || a.album.localeCompare(b.album));
     case 'title_asc':
     default:
       return sorted.sort((a, b) => a.album.localeCompare(b.album) || a.artist.localeCompare(b.artist));
@@ -253,6 +256,12 @@ const buildAlbumTrackMatches = (albumSongs: Song[], tracklist: AlbumTracklist | 
     if (!used.has(song.id)) {
       used.add(song.id);
       orderedSongs.push(song);
+      viewItems.push({
+        id: song.id,
+        title: song.title,
+        position: viewItems.length + 1,
+        available: true,
+      });
     }
   }
 
@@ -270,6 +279,7 @@ const albumSortOptions: Array<{ label: string; value: AlbumSort }> = [
   { label: 'Album (Z-A)', value: 'title_desc' },
   { label: 'Artist (A-Z)', value: 'artist_asc' },
   { label: 'Most Played', value: 'most_played' },
+  { label: 'Most Songs', value: 'most_songs' },
 ];
 
 const artistSortOptions: Array<{ label: string; value: ArtistSort }> = [
@@ -324,6 +334,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     artwork?: string;
     isLoading: boolean;
   } | null>(null);
+  const activeAlbumSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -339,18 +350,63 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     };
   }, [songs.length, albumTrackFetch.done]);
 
+  useEffect(() => {
+    if (!activeAlbum) {
+      activeAlbumSignatureRef.current = null;
+      return;
+    }
+    const albumName = activeAlbum.album.trim().toLowerCase();
+    const primaryArtist = getPrimaryArtistName(activeAlbum.artist).trim().toLowerCase();
+    const matchingSongs = songs.filter((song) => {
+      if (!song.album?.trim()) {
+        return false;
+      }
+      const songAlbum = song.album.trim().toLowerCase();
+      if (songAlbum !== albumName) {
+        return false;
+      }
+      const songArtist = getPrimaryArtistName(song.artist).trim().toLowerCase();
+      return songArtist === primaryArtist;
+    });
+    const signature = `${primaryArtist}::${albumName}::${matchingSongs.map((song) => song.id).join('|')}`;
+    if (signature === activeAlbumSignatureRef.current) {
+      return;
+    }
+    activeAlbumSignatureRef.current = signature;
+    const tracklistKey = getAlbumTracklistKey(primaryArtist, activeAlbum.album);
+    const tracklist = albumTracklists[tracklistKey] ?? activeAlbum.tracklist ?? null;
+    const matches = buildAlbumTrackMatches(matchingSongs, tracklist);
+    setActiveAlbum((prev) =>
+      prev
+        ? {
+            ...prev,
+            songs: matchingSongs,
+            tracklist,
+            total: matches.total,
+            available: matches.available,
+            missing: matches.missing,
+            orderedSongs: matches.orderedSongs,
+            viewItems: matches.viewItems,
+          }
+        : prev,
+    );
+  }, [songs, albumTracklists, activeAlbum]);
+
   const albums = useMemo<AlbumEntry[]>(() => {
     const map = new Map<string, AlbumEntry>();
     for (const song of songs) {
-      if (!song.album?.trim()) {
+      const albumName = song.album?.trim() ?? '';
+      const normalizedAlbum = albumName.toLowerCase();
+      const isUnknownAlbum = !albumName || normalizedAlbum === 'unknown album' || normalizedAlbum === 'unknown';
+      if (isUnknownAlbum) {
         continue;
       }
       const primaryArtist = getPrimaryArtistName(song.artist);
-      const albumKey = getAlbumTracklistKey(primaryArtist, song.album);
+      const albumKey = getAlbumTracklistKey(primaryArtist, albumName);
       const existing = map.get(albumKey);
       if (!existing) {
         map.set(albumKey, {
-          album: song.album,
+          album: albumName,
           artist: song.artist,
           artwork: song.albumArt,
           songs: [song],

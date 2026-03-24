@@ -40,12 +40,22 @@ const splitArtists = (value: string): string[] => {
     .filter(Boolean);
 };
 
-const isUnknownGenre = (value: string | undefined): boolean => {
+export const isUnknownGenre = (value: string | undefined): boolean => {
   if (!value?.trim()) {
     return true;
   }
 
-  return normalize(value) === 'unknown genre';
+  const normalized = normalize(value);
+  return (
+    normalized === 'unknown genre' ||
+    normalized === 'unknown' ||
+    normalized === 'n/a' ||
+    normalized === 'na' ||
+    normalized === 'none' ||
+    normalized === 'unspecified' ||
+    normalized === 'various' ||
+    normalized === 'other'
+  );
 };
 
 const cacheKeyForSong = (song: Song): string => {

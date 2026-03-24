@@ -1,8 +1,45 @@
 import { create } from 'zustand';
-import type { AppSettings, NowPlayingTab, PlaybackMode, RepeatMode } from '@/types/music';
+import type { AppSettings, NowPlayingTab, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
 import { useLibraryStore } from '@/store/libraryStore';
 import { isTauri, readStorageJson, writeStorageJson } from '@/services/storageService';
+import { loadSongLoudness } from '@/services/loudnessService';
+import {
+  loadMetadataAttempts,
+  noteMetadataFailure,
+  noteMetadataSuccess,
+  saveMetadataAttempts,
+  shouldSkipMetadata,
+  tryAcquireMetadata,
+  releaseMetadata,
+} from '@/services/metadataAttemptService';
+import { isSongCached, loadMetadataCacheIndex } from '@/services/metadataCacheIndex';
+
+const setGlobalPlayingFlag = (playing: boolean): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ = playing;
+};
+
+const setGlobalPlaybackHints = (currentSongId: string | null, upcoming: string[]): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  (window as unknown as { __AMP_CURRENT_SONG_ID__?: string | null }).__AMP_CURRENT_SONG_ID__ = currentSongId ?? null;
+  (window as unknown as { __AMP_UP_NEXT__?: string[] }).__AMP_UP_NEXT__ = upcoming;
+};
+
+const getPreloadCount = (): number => {
+  if (typeof window === 'undefined') {
+    return 3;
+  }
+  const flags = window as unknown as { __AMP_LOW_PERF__?: boolean; __AMP_GAME_MODE__?: boolean };
+  if (flags.__AMP_GAME_MODE__ === true) {
+    return 2;
+  }
+  return flags.__AMP_LOW_PERF__ === true ? 2 : 4;
+};
 
 interface PlayerState {
   initialized: boolean;
@@ -38,10 +75,7 @@ interface PlayerState {
   seekTo: (positionSec: number) => void;
   setVolume: (volume: number) => void;
   setShuffleEnabled: (enabled: boolean) => void;
-  toggleShuffle: () => void;
   toggleLoopSong: () => void;
-  cycleRepeat: () => void;
-  cyclePlaybackMode: () => void;
   setNowPlayingTab: (tab: NowPlayingTab) => void;
   setPlaybackSpeed: (speed: number) => Promise<void>;
   setOutputDeviceName: (deviceName: string | null) => Promise<void>;
@@ -88,18 +122,6 @@ let lastProgressUpdate = 0;
 let pendingProgress: { position: number; duration: number } | null = null;
 const PROGRESS_UPDATE_MS = 250;
 let lastPreloadSongId: string | null = null;
-
-const resolvePlaybackMode = (state: Pick<PlayerState, 'shuffleEnabled' | 'repeatMode'>): PlaybackMode => {
-  if (state.shuffleEnabled) {
-    return 'shuffle';
-  }
-
-  if (state.repeatMode === 'all' || state.repeatMode === 'one') {
-    return 'repeat';
-  }
-
-  return 'order';
-};
 
 const persistSettings = async (settings: AppSettings): Promise<void> => {
   const current = await readStorageJson<Record<string, unknown>>('settings.json', {});
@@ -239,11 +261,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ...defaultSettings,
       ...persisted,
     };
-    if (typeof persisted.albumTracklistFetchPaused === 'boolean' && typeof persisted.metadataFetchPaused !== 'boolean') {
-      settings = {
-        ...settings,
-        metadataFetchPaused: persisted.albumTracklistFetchPaused,
-      };
+    if ('albumTracklistFetchPaused' in persisted) {
+      const { albumTracklistFetchPaused: _legacy, ...rest } = persisted;
+      await writeStorageJson('settings.json', rest);
     }
 
     if (isTauri()) {
@@ -268,7 +288,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           lastPreloadSongId = currentId;
           const nextState = get();
           if (nextState.settings.gaplessEnabled) {
-            const preloadIds = buildUpcomingSongIds(nextState, 4);
+            const preloadIds = buildUpcomingSongIds(nextState, getPreloadCount());
             if (preloadIds.length) {
               const library = useLibraryStore.getState();
               const preloadSongs = preloadIds
@@ -321,6 +341,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     audioEngine.applySettings(settings);
     audioEngine.setVolume(get().volume);
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ = settings.metadataFetchPaused;
+    }
 
     set({ initialized: true, settings });
   },
@@ -333,7 +356,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       albumQueueView: null,
     });
     const nextState = get();
-    const preloadIds = buildUpcomingSongIds(nextState);
+    const preloadIds = buildUpcomingSongIds(nextState, getPreloadCount());
+    setGlobalPlaybackHints(nextState.currentSongId, preloadIds);
     if (preloadIds.length) {
       const library = useLibraryStore.getState();
       const preloadSongs = preloadIds
@@ -360,7 +384,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const queueCursor = state.queueSongIds.indexOf(songId);
     const updatedHistory = [...state.historySongIds, songId].slice(-100);
-    const preloadIds = buildUpcomingSongIds({ ...state, currentSongId: songId, queueCursor });
+    const preloadIds = buildUpcomingSongIds({ ...state, currentSongId: songId, queueCursor }, getPreloadCount());
+    setGlobalPlaybackHints(songId, preloadIds);
     if (preloadIds.length) {
       const library = useLibraryStore.getState();
       const preloadSongs = preloadIds
@@ -369,6 +394,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       audioEngine.preloadSongs(preloadSongs);
     }
 
+    setGlobalPlayingFlag(true);
     set((prev) => ({
       currentSongId: songId,
       queueCursor: queueCursor >= 0 ? queueCursor : prev.queueCursor,
@@ -376,13 +402,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       positionSec: 0,
       durationSec: song.duration,
       historySongIds: updatedHistory,
-      manualQueueSongIds:
-        prev.manualQueueSongIds[0] === songId ? prev.manualQueueSongIds.slice(1) : prev.manualQueueSongIds,
+      manualQueueSongIds: prev.manualQueueSongIds.includes(songId)
+        ? prev.manualQueueSongIds.filter((id) => id !== songId)
+        : prev.manualQueueSongIds,
       albumQueueView:
         prev.albumQueueView && !prev.albumQueueView.items.some((item) => item.id === songId)
           ? null
           : prev.albumQueueView,
     }));
+    setGlobalPlaybackHints(songId, buildUpcomingSongIds(get(), getPreloadCount()));
 
     void useLibraryStore.getState().recordSongPlay(songId);
     if (!get().settings.gameMode) {
@@ -406,6 +434,70 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         }
       }, 2000);
     }
+
+    if (!get().settings.gameMode) {
+      window.setTimeout(() => {
+        if (get().currentSongId !== songId) {
+          return;
+        }
+        const idle = (globalThis as typeof globalThis & {
+          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        }).requestIdleCallback;
+
+        const runLoudness = async () => {
+          if (get().currentSongId !== songId) {
+            return;
+          }
+          if (get().settings.metadataFetchPaused) {
+            return;
+          }
+          const library = useLibraryStore.getState();
+          const song = library.getSongById(songId);
+          if (!song) {
+            return;
+          }
+          if (typeof song.loudnessLufs === 'number') {
+            return;
+          }
+
+          const cacheIndex = await loadMetadataCacheIndex();
+          if (isSongCached(cacheIndex, song.id, 'loudness')) {
+            return;
+          }
+
+          const attempts = await loadMetadataAttempts();
+          if (shouldSkipMetadata(attempts, 'loudness', song.id)) {
+            return;
+          }
+          if (!tryAcquireMetadata('loudness', song.id)) {
+            return;
+          }
+
+          try {
+            const loudnessResult = await loadSongLoudness(song);
+            if (loudnessResult.status === 'ready') {
+              noteMetadataSuccess(attempts, 'loudness', song.id);
+              await library.updateSongLoudness(song.id, loudnessResult.lufs);
+            } else {
+              noteMetadataFailure(attempts, 'loudness', song.id);
+            }
+          } catch {
+            noteMetadataFailure(attempts, 'loudness', song.id);
+          } finally {
+            releaseMetadata('loudness', song.id);
+            await saveMetadataAttempts(attempts);
+          }
+        };
+
+        if (typeof idle === 'function') {
+          idle(() => {
+            void runLoudness();
+          }, { timeout: 1500 });
+        } else {
+          void runLoudness();
+        }
+      }, 2500);
+    }
   },
 
   setAlbumQueueView: (view) => {
@@ -420,6 +512,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (playing) {
       const position = audioEngine.getPosition();
       audioEngine.pause();
+      setGlobalPlayingFlag(false);
       set({ isPlaying: false, positionSec: position });
       return;
     }
@@ -441,13 +534,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const resumeAt = get().positionSec || 0;
     audioEngine.playFrom(resumeAt);
+    setGlobalPlayingFlag(true);
     set({ isPlaying: true, positionSec: resumeAt });
   },
 
   pausePlayback: () => {
     const position = audioEngine.getPosition();
     audioEngine.pause();
+    setGlobalPlayingFlag(false);
     set({ isPlaying: false, positionSec: position });
+    setGlobalPlaybackHints(get().currentSongId, buildUpcomingSongIds(get()));
   },
 
   resumePlayback: () => {
@@ -467,7 +563,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     const resumeAt = get().positionSec || 0;
     audioEngine.playFrom(resumeAt);
+    setGlobalPlayingFlag(true);
     set({ isPlaying: true, positionSec: resumeAt });
+    setGlobalPlaybackHints(get().currentSongId, buildUpcomingSongIds(get()));
   },
 
   playNext: async (manual = false) => {
@@ -478,6 +576,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         : resolveNextSongId(state);
 
     if (!nextSongId) {
+      setGlobalPlayingFlag(false);
       set({ isPlaying: false, positionSec: 0 });
       return;
     }
@@ -520,13 +619,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }));
   },
 
-  toggleShuffle: () => {
-    set((state) => ({
-      shuffleEnabled: !state.shuffleEnabled,
-      albumQueueView: state.albumQueueView ? null : state.albumQueueView,
-    }));
-  },
-
   toggleLoopSong: () => {
     set((state) => {
       const nextRepeat = state.repeatMode === 'one' ? 'off' : 'one';
@@ -535,31 +627,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         repeatMode: nextRepeat,
         shuffleEnabled: nextRepeat === 'one' ? false : state.shuffleEnabled,
       };
-    });
-  },
-
-  cycleRepeat: () => {
-    set((state) => {
-      const repeatMode: RepeatMode = state.repeatMode === 'one' ? 'off' : 'one';
-      return {
-        repeatMode,
-        shuffleEnabled: state.shuffleEnabled,
-      };
-    });
-  },
-
-  cyclePlaybackMode: () => {
-    set((state) => {
-      const mode = resolvePlaybackMode(state);
-      if (mode === 'order') {
-        return { shuffleEnabled: true, repeatMode: 'off' as RepeatMode };
-      }
-
-      if (mode === 'shuffle') {
-        return { shuffleEnabled: false, repeatMode: 'one' as RepeatMode };
-      }
-
-      return { shuffleEnabled: false, repeatMode: 'off' as RepeatMode };
     });
   },
 
@@ -720,6 +787,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     };
 
     set({ settings });
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ = paused;
+    }
     await persistSettings(settings);
   },
 
@@ -737,6 +807,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const target = Date.now() + minutes * 60_000;
     sleepTimerHandle = window.setTimeout(() => {
       audioEngine.pause();
+      setGlobalPlayingFlag(false);
       set({ isPlaying: false, sleepTimerEndsAt: null });
     }, minutes * 60_000);
 
@@ -752,9 +823,33 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   removeQueuedSong: (songId) => {
-    set((state) => ({
-      manualQueueSongIds: state.manualQueueSongIds.filter((id) => id !== songId),
-    }));
+    set((state) => {
+      if (state.manualQueueSongIds.length > 0) {
+        return {
+          manualQueueSongIds: state.manualQueueSongIds.filter((id) => id !== songId),
+        };
+      }
+
+      const index = state.queueSongIds.indexOf(songId);
+      if (index < 0) {
+        return state;
+      }
+
+      const nextQueue = [...state.queueSongIds];
+      nextQueue.splice(index, 1);
+
+      let nextCursor = state.queueCursor;
+      if (index < state.queueCursor) {
+        nextCursor = Math.max(0, state.queueCursor - 1);
+      } else if (index === state.queueCursor) {
+        nextCursor = Math.min(nextCursor, Math.max(0, nextQueue.length - 1));
+      }
+
+      return {
+        queueSongIds: nextQueue,
+        queueCursor: nextCursor,
+      };
+    });
   },
 
   reorderQueue: (fromIndex, toIndex) => {

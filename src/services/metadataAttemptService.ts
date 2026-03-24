@@ -2,6 +2,12 @@ import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageSe
 
 const cachePath = 'metadata_cache/metadata_attempts.json';
 const MAX_ATTEMPTS = 3;
+const NOT_FOUND_COOLDOWN_DAYS = 30;
+const NOT_FOUND_COOLDOWN_SEC = NOT_FOUND_COOLDOWN_DAYS * 24 * 60 * 60;
+const MIN_DIRTY_BEFORE_FLUSH = 12;
+const MAX_DIRTY_FLUSH_DELAY_MS = 15000;
+let dirtyCount = 0;
+let lastPersistAt = 0;
 
 type AttemptState = {
   attempts: number;
@@ -40,6 +46,12 @@ export const loadMetadataAttempts = async (): Promise<MetadataAttempts> => {
 };
 
 export const saveMetadataAttempts = async (cache: MetadataAttempts): Promise<void> => {
+  const now = Date.now();
+  if (dirtyCount < MIN_DIRTY_BEFORE_FLUSH && now - lastPersistAt < MAX_DIRTY_FLUSH_DELAY_MS) {
+    return;
+  }
+  dirtyCount = 0;
+  lastPersistAt = now;
   await writeStorageJsonDebounced(cachePath, cache);
 };
 
@@ -48,20 +60,31 @@ export const shouldSkipMetadata = (
   type: 'lyrics' | 'genre' | 'loudness' | 'artist' | 'album' | 'album_tracklist',
   id: string,
 ): boolean => {
+  const now = Math.floor(Date.now() / 1000);
+  const shouldSkipEntry = (entry?: AttemptState): boolean => {
+    if (!entry) {
+      return false;
+    }
+    const elapsed = now - entry.lastAttemptAt;
+    const inCooldown = elapsed >= 0 && elapsed < NOT_FOUND_COOLDOWN_SEC;
+    if (entry.status === 'not_found') {
+      return inCooldown;
+    }
+    if ((entry.attempts ?? 0) >= MAX_ATTEMPTS) {
+      return inCooldown;
+    }
+    return false;
+  };
   if (type === 'artist') {
-    const entry = cache.artists[id];
-    return entry?.status === 'not_found' || (entry?.attempts ?? 0) >= MAX_ATTEMPTS;
+    return shouldSkipEntry(cache.artists[id]);
   }
   if (type === 'album') {
-    const entry = cache.albums[id];
-    return entry?.status === 'not_found' || (entry?.attempts ?? 0) >= MAX_ATTEMPTS;
+    return shouldSkipEntry(cache.albums[id]);
   }
   if (type === 'album_tracklist') {
-    const entry = cache.albumTracklists[id];
-    return entry?.status === 'not_found' || (entry?.attempts ?? 0) >= MAX_ATTEMPTS;
+    return shouldSkipEntry(cache.albumTracklists[id]);
   }
-  const entry = cache.songs[id]?.[type];
-  return entry?.status === 'not_found' || (entry?.attempts ?? 0) >= MAX_ATTEMPTS;
+  return shouldSkipEntry(cache.songs[id]?.[type]);
 };
 
 export const noteMetadataSuccess = (
@@ -72,18 +95,21 @@ export const noteMetadataSuccess = (
   if (type === 'artist') {
     if (cache.artists[id]) {
       delete cache.artists[id];
+      dirtyCount += 1;
     }
     return;
   }
   if (type === 'album') {
     if (cache.albums[id]) {
       delete cache.albums[id];
+      dirtyCount += 1;
     }
     return;
   }
   if (type === 'album_tracklist') {
     if (cache.albumTracklists[id]) {
       delete cache.albumTracklists[id];
+      dirtyCount += 1;
     }
     return;
   }
@@ -91,9 +117,13 @@ export const noteMetadataSuccess = (
   if (!songEntry) {
     return;
   }
+  if (songEntry[type]) {
+    dirtyCount += 1;
+  }
   delete songEntry[type];
   if (!songEntry.lyrics && !songEntry.genre && !songEntry.loudness) {
     delete cache.songs[id];
+    dirtyCount += 1;
   }
 };
 
@@ -103,18 +133,22 @@ export const noteMetadataFailure = (
   id: string,
 ): void => {
   if (type === 'artist') {
+    dirtyCount += 1;
     cache.artists[id] = nextFailureState(cache.artists[id]);
     return;
   }
   if (type === 'album') {
+    dirtyCount += 1;
     cache.albums[id] = nextFailureState(cache.albums[id]);
     return;
   }
   if (type === 'album_tracklist') {
+    dirtyCount += 1;
     cache.albumTracklists[id] = nextFailureState(cache.albumTracklists[id]);
     return;
   }
   const songEntry = cache.songs[id] ?? {};
+  dirtyCount += 1;
   songEntry[type] = nextFailureState(songEntry[type]);
   cache.songs[id] = songEntry;
 };

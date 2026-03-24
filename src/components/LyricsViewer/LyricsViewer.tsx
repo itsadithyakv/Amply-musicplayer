@@ -10,7 +10,7 @@ import {
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
-import { readStorageJson, writeStorageJson } from '@/services/storageService';
+import { readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { useIdleRender } from '@/hooks/useIdleRender';
 
 interface LyricsViewerProps {
@@ -63,6 +63,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const [autoScroll, setAutoScroll] = useState(true);
   const [offsetMs, setOffsetMs] = useState(0);
   const offsetRef = useRef(0);
+  const offsetsCacheRef = useRef<Record<string, number>>({});
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
   const autoScrollLockRef = useRef<number | null>(null);
@@ -99,11 +100,6 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
         if (result.status === 'ready') {
           setLyrics(result.lyrics);
-          return;
-        }
-
-        if (result.status === 'choose') {
-          setChoices(result.candidates);
           return;
         }
 
@@ -155,6 +151,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
       if (!alive) {
         return;
       }
+      offsetsCacheRef.current = cache;
       const saved = cache[song.id];
       if (typeof saved === 'number' && Number.isFinite(saved)) {
         setOffsetMs(saved);
@@ -178,11 +175,11 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     }
     const next = Math.max(-8000, Math.min(8000, offsetRef.current + deltaMs));
     setOffsetMs(next);
-    const cache = await readStorageJson<Record<string, number>>('lyrics_offsets.json', {});
-    await writeStorageJson('lyrics_offsets.json', {
-      ...cache,
+    offsetsCacheRef.current = {
+      ...offsetsCacheRef.current,
       [song.id]: next,
-    });
+    };
+    await writeStorageJsonDebounced('lyrics_offsets.json', offsetsCacheRef.current, 600);
   };
 
   const handleManualChoose = async () => {
@@ -307,6 +304,10 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
   const lines = useMemo(() => (Array.isArray(lyrics?.lines) ? lyrics!.lines : []), [lyrics]);
 
+  useEffect(() => {
+    lineRefs.current = [];
+  }, [lyrics?.raw]);
+
   const timedIndex = useMemo(() => {
     if (!lyrics?.isSynced || !lines.length) {
       return [];
@@ -342,7 +343,10 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   }, [lyrics?.isSynced, timedIndex, positionSec]);
 
   const visualsStyle = useMemo(() => {
-    if (!lyricsVisualsEnabled) {
+    const lowPerf =
+      typeof window !== 'undefined' &&
+      (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ === true;
+    if (!lyricsVisualsEnabled || lowPerf) {
       return artworkTint ? ({ '--lyrics-bg-color': artworkTint } as CSSProperties) : undefined;
     }
 
@@ -517,7 +521,8 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
           fullHeight ? 'min-h-0 flex-1' : 'h-[420px]',
         )}
       >
-        {lyricsVisualsEnabled ? (
+        {lyricsVisualsEnabled &&
+        !(typeof window !== 'undefined' && (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ === true) ? (
           <div className={clsx('lyrics-visuals', `lyrics-visuals--${lyricsVisualTheme}`)}>
             <span className="lyrics-blob lyrics-blob--a" />
             <span className="lyrics-blob lyrics-blob--b" />

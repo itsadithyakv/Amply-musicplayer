@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import type { AppSettings, Playlist, Song } from '@/types/music';
-import { ensureStorageDirs, readStorageJson, writeStorageJson } from '@/services/storageService';
+import { ensureStorageDirs, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists } from '@/services/playlistGenerator';
 import { hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
-import { hydrateSongsWithCachedLoudness, loadLoudnessCache, loadSongLoudness } from '@/services/loudnessService';
+import { hydrateSongsWithCachedLoudness } from '@/services/loudnessService';
 import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
 import {
@@ -122,6 +122,44 @@ let smartPlaylistsCache: Playlist[] = [];
 let smartCacheWeek: string | null = null;
 let cachedSongsRef: Song[] | null = null;
 let cachedSongsById: Map<string, Song> | null = null;
+let metadataResumeTimer: number | null = null;
+
+const scheduleMetadataResume = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const paused = (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ === true;
+  if (paused) {
+    return;
+  }
+  const lowPerf = (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ === true;
+  if (lowPerf) {
+    if (metadataResumeTimer !== null) {
+      return;
+    }
+    metadataResumeTimer = window.setTimeout(() => {
+      metadataResumeTimer = null;
+      scheduleMetadataResume();
+    }, 5000);
+    return;
+  }
+  if (metadataResumeTimer !== null) {
+    return;
+  }
+  metadataResumeTimer = window.setTimeout(() => {
+    metadataResumeTimer = null;
+    const state = useLibraryStore.getState();
+    if (state.metadataFetch.running || !state.metadataFetch.pending) {
+      return;
+    }
+    const isPlaying = (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
+    if (isPlaying) {
+      scheduleMetadataResume();
+      return;
+    }
+    state.startMetadataFetch();
+  }, 3000);
+};
 
 const getSongByIdCached = (songs: Song[], songId: string): Song | undefined => {
   if (!songs.length) {
@@ -250,8 +288,8 @@ const normalizeLibraryPaths = (paths: string[]): string[] => {
 
 const persistLibrary = async (songs: Song[], customPlaylists: Playlist[]): Promise<void> => {
   const payload: LibraryPersisted = { songs };
-  await writeStorageJson(libraryCachePath, payload);
-  await writeStorageJson(customPlaylistsPath, customPlaylists);
+  await writeStorageJsonDebounced(libraryCachePath, payload, 1500);
+  await writeStorageJsonDebounced(customPlaylistsPath, customPlaylists, 1500);
 };
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -295,15 +333,19 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     void (async () => {
       const runStart = performance.now();
-      const maxSongsPerRun = 8;
-      const maxMsPerRun = 1400;
-      const shouldPause = (processed: number) =>
-        processed >= maxSongsPerRun || performance.now() - runStart > maxMsPerRun;
+      const maxMsPerRun = 4500;
+      const shouldPause = () => {
+        if (typeof window !== 'undefined') {
+          const isPlaying = (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
+          if (!isPlaying) {
+            return false;
+          }
+        }
+        return performance.now() - runStart > maxMsPerRun;
+      };
 
       const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-      const metadataPaused =
-        settings.metadataFetchPaused ??
-        (typeof settings.albumTracklistFetchPaused === 'boolean' ? settings.albumTracklistFetchPaused : false);
+      const metadataPaused = settings.metadataFetchPaused ?? false;
       if (settings.gameMode || metadataPaused) {
         set({
           metadataFetch: {
@@ -317,7 +359,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             albumArt: 0,
             pending: false,
             message: metadataPaused
-              ? 'Metadata lookups are paused.'
+              ? 'Paused by user. Resume from Settings when ready.'
               : 'Game Mode disables metadata fetching.',
           },
         });
@@ -376,7 +418,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       let artistCount = 0;
       let lyricCount = 0;
       let genreCount = 0;
-      let loudnessCount = 0;
+      const loudnessCount = 0;
       let albumArtCount = 0;
       let done = 0;
       let lastUpdate = performance.now();
@@ -386,14 +428,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const artistCachedByKey = new Map<string, boolean>();
       const attemptsCache = await loadMetadataAttempts();
       const albumCache = await loadAlbumArtworkCache();
-      const loudnessCache = await loadLoudnessCache();
       const cacheIndex = await loadMetadataCacheIndex();
       primeMetadataIndex(cacheIndex, (draft) => {
-        for (const [key, entry] of Object.entries(loudnessCache)) {
-          if (typeof entry?.lufs === 'number') {
-            draft.songs[key] = { ...(draft.songs[key] ?? {}), loudness: true };
-          }
-        }
         for (const key of Object.keys(albumCache)) {
           draft.albums[key] = true;
         }
@@ -407,9 +443,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         const genreCached =
           isSongCached(cacheIndex, song.id, 'genre') ||
           Boolean(song.genre?.trim() && song.genre.trim().toLowerCase() !== 'unknown genre');
-        const loudnessCached = isSongCached(cacheIndex, song.id, 'loudness') || typeof loudnessCache[song.id]?.lufs === 'number';
-        const artistCached =
-          artistKey ? isArtistCached(cacheIndex, artistKey) : await hasCachedArtistProfile(primaryArtist);
+        const artistCached = artistKey ? isArtistCached(cacheIndex, artistKey) : true;
         const albumKey = song.album && song.artist ? getAlbumArtworkCacheKey(song.artist, song.album) : null;
         const albumCached = albumKey ? isAlbumCached(cacheIndex, albumKey) || Boolean(albumCache[albumKey]) : true;
         if (artistKey) {
@@ -422,13 +456,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         }
         const needsLyrics = !lyricsCached && !shouldSkipMetadata(attemptsCache, 'lyrics', song.id);
         const needsGenre = !genreCached && !shouldSkipMetadata(attemptsCache, 'genre', song.id);
-        const needsLoudness = !loudnessCached && !shouldSkipMetadata(attemptsCache, 'loudness', song.id);
         const needsArtist =
           !artistCached && artistKey ? !shouldSkipMetadata(attemptsCache, 'artist', artistKey) : false;
         const needsAlbumArt =
           albumKey && !albumCached ? !shouldSkipMetadata(attemptsCache, 'album', albumKey) : false;
 
-        if (needsLyrics || needsGenre || needsLoudness || needsArtist || needsAlbumArt) {
+        if (needsLyrics || needsGenre || needsArtist || needsAlbumArt) {
           pendingSongs.push(song);
         }
 
@@ -456,9 +489,50 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         return;
       }
 
+      if (typeof window !== 'undefined') {
+        const flags = window as unknown as { __AMP_CURRENT_SONG_ID__?: string | null; __AMP_UP_NEXT__?: string[] };
+        const currentId = flags.__AMP_CURRENT_SONG_ID__ ?? null;
+        const upNext = Array.isArray(flags.__AMP_UP_NEXT__) ? flags.__AMP_UP_NEXT__ : [];
+        const nextIndex = new Map<string, number>(upNext.map((id, index) => [id, index]));
+        pendingSongs.sort((a, b) => {
+          if (currentId) {
+            if (a.id === currentId && b.id !== currentId) {
+              return -1;
+            }
+            if (b.id === currentId && a.id !== currentId) {
+              return 1;
+            }
+          }
+          const aNext = nextIndex.get(a.id);
+          const bNext = nextIndex.get(b.id);
+          if (aNext !== undefined || bNext !== undefined) {
+            if (aNext === undefined) {
+              return 1;
+            }
+            if (bNext === undefined) {
+              return -1;
+            }
+            return aNext - bNext;
+          }
+          const aLast = a.lastPlayed ?? 0;
+          const bLast = b.lastPlayed ?? 0;
+          if (aLast !== bLast) {
+            return bLast - aLast;
+          }
+          if (a.playCount !== b.playCount) {
+            return b.playCount - a.playCount;
+          }
+          return a.title.localeCompare(b.title);
+        });
+      }
+
       const updateProgress = (force = false) => {
         const now = performance.now();
-        if (!force && now - lastUpdate < 300) {
+        const isPlaying =
+          typeof window !== 'undefined' &&
+          (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
+        const minInterval = isPlaying ? 900 : 300;
+        if (!force && now - lastUpdate < minInterval) {
           return;
         }
         lastUpdate = now;
@@ -478,11 +552,30 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         });
       };
 
+      let abortedByUser = false;
       for (const song of pendingSongs) {
         try {
+          if (typeof window !== 'undefined') {
+            const paused =
+              (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ === true;
+            if (paused) {
+              abortedByUser = true;
+              break;
+            }
+          }
           const primaryArtist = getPrimaryArtistName(song.artist);
           const artistKey = primaryArtist?.trim().toLowerCase();
+          const flags =
+            typeof window !== 'undefined'
+              ? (window as unknown as { __AMP_IS_PLAYING__?: boolean; __AMP_LOW_PERF__?: boolean })
+              : {};
+          const isPlaying = flags.__AMP_IS_PLAYING__ === true;
+          const lowPerf = flags.__AMP_LOW_PERF__ === true;
+          const allowHeavy = !lowPerf;
+          const heavyBudgetOk = !isPlaying || done % 6 === 0;
           if (
+            allowHeavy &&
+            heavyBudgetOk &&
             artistKey &&
             artistCachedByKey.get(artistKey) === false &&
             !seenArtists.has(artistKey) &&
@@ -531,24 +624,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             }
           }
 
-          if (!shouldSkipMetadata(attemptsCache, 'loudness', song.id)) {
-            if (tryAcquireMetadata('loudness', song.id)) {
-              const loudnessResult = await loadSongLoudness(song);
-              if (loudnessResult.status === 'ready') {
-                loudnessCount += 1;
-                noteMetadataSuccess(attemptsCache, 'loudness', song.id);
-                void markSongCached(song.id, 'loudness');
-                if (typeof loudnessResult.lufs === 'number') {
-                  await get().updateSongLoudness(song.id, loudnessResult.lufs);
-                }
-              } else {
-                noteMetadataFailure(attemptsCache, 'loudness', song.id);
-              }
-              releaseMetadata('loudness', song.id);
-            }
-          }
-
-          if (song.album && song.artist) {
+          if (allowHeavy && heavyBudgetOk && song.album && song.artist) {
             const albumKey = getAlbumArtworkCacheKey(song.artist, song.album);
             if (!seenAlbums.has(albumKey) && !shouldSkipMetadata(attemptsCache, 'album', albumKey)) {
               seenAlbums.add(albumKey);
@@ -571,12 +647,48 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           updateProgress();
         }
 
-        if (done % 5 === 0) {
+        if (typeof window !== 'undefined') {
+          const flags = window as unknown as { __AMP_LOW_PERF__?: boolean };
+          if (flags.__AMP_LOW_PERF__ === true) {
+            break;
+          }
+        }
+
+        if (typeof window !== 'undefined') {
+          const flags = window as unknown as { __AMP_IS_PLAYING__?: boolean; __AMP_LAST_INTERACTION__?: number };
+          const isPlaying = flags.__AMP_IS_PLAYING__ === true;
+          const lastInteraction = flags.__AMP_LAST_INTERACTION__ ?? 0;
+          const idleForMs = Date.now() - lastInteraction;
+          const isIdle = idleForMs >= 10_000;
+          const yieldEvery = isPlaying ? 5 : isIdle ? 60 : 25;
+          if (done % yieldEvery === 0) {
+            await yieldToMain();
+          }
+        } else if (done % 5 === 0) {
           await yieldToMain();
         }
-        if (shouldPause(done)) {
+        if (shouldPause()) {
           break;
         }
+      }
+
+      if (abortedByUser) {
+        await saveMetadataAttempts(attemptsCache);
+        set({
+          metadataFetch: {
+            running: false,
+            total: pendingSongs.length,
+            done,
+            artists: artistCount,
+            lyrics: lyricCount,
+            genres: genreCount,
+            loudness: loudnessCount,
+            albumArt: albumArtCount,
+            pending: true,
+            message: 'Paused by user. Resume from Settings when ready.',
+          },
+        });
+        return;
       }
 
       const completedAll = done >= pendingSongs.length;
@@ -614,9 +726,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           loudness: loudnessCount,
           albumArt: albumArtCount,
           pending: true,
-          message: 'Paused to keep things smooth. Will continue when idle.',
+          message: 'Paused for performance. Resuming shortly.',
         },
       });
+      scheduleMetadataResume();
     })();
   },
 
@@ -634,9 +747,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         processed >= maxAlbumsPerRun || performance.now() - runStart > maxMsPerRun;
 
       const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-      const metadataPaused =
-        settings.metadataFetchPaused ??
-        (typeof settings.albumTracklistFetchPaused === 'boolean' ? settings.albumTracklistFetchPaused : false);
+      const metadataPaused = settings.metadataFetchPaused ?? false;
       if (settings.gameMode || metadataPaused) {
         set({
           albumTrackFetch: {
@@ -698,7 +809,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         string,
         {
           album: string;
-          artists: Set<string>;
+          artist: string;
+          key: string;
         }
       >();
 
@@ -710,28 +822,24 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         if (!primaryArtist?.trim()) {
           continue;
         }
-        const albumKey = song.album.trim().toLowerCase();
-        const existing = albumCandidates.get(albumKey);
-        if (existing) {
-          existing.artists.add(primaryArtist);
-        } else {
-          albumCandidates.set(albumKey, { album: song.album, artists: new Set([primaryArtist]) });
+        const compositeKey = `${primaryArtist.trim().toLowerCase()}::${song.album.trim().toLowerCase()}`;
+        if (!albumCandidates.has(compositeKey)) {
+          albumCandidates.set(compositeKey, {
+            album: song.album,
+            artist: primaryArtist,
+            key: getAlbumTracklistKey(primaryArtist, song.album),
+          });
         }
       }
 
       for (const entry of albumCandidates.values()) {
-        if (entry.artists.size !== 1) {
+        if (albumCache[entry.key]?.tracks?.length) {
           continue;
         }
-        const primaryArtist = [...entry.artists][0];
-        const key = getAlbumTracklistKey(primaryArtist, entry.album);
-        if (albumCache[key]?.tracks?.length) {
+        if (shouldSkipMetadata(attemptsCache, 'album_tracklist', entry.key)) {
           continue;
         }
-        if (shouldSkipMetadata(attemptsCache, 'album_tracklist', key)) {
-          continue;
-        }
-        pendingAlbums.push({ artist: primaryArtist, album: entry.album, key });
+        pendingAlbums.push({ artist: entry.artist, album: entry.album, key: entry.key });
       }
 
       if (!pendingAlbums.length) {
@@ -815,9 +923,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       return;
     }
     const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-    const metadataPaused =
-      settings.metadataFetchPaused ??
-      (typeof settings.albumTracklistFetchPaused === 'boolean' ? settings.albumTracklistFetchPaused : false);
+    const metadataPaused = settings.metadataFetchPaused ?? false;
     if (settings.gameMode || metadataPaused) {
       return;
     }
@@ -829,12 +935,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const primaryArtist = getPrimaryArtistName(song.artist);
     const artistKey = primaryArtist?.trim().toLowerCase();
     const cacheIndex = await loadMetadataCacheIndex();
-    const loudnessCache = await loadLoudnessCache();
     const lyricsCached = isSongCached(cacheIndex, song.id, 'lyrics');
     const genreCached =
       isSongCached(cacheIndex, song.id, 'genre') ||
       Boolean(song.genre?.trim() && song.genre.trim().toLowerCase() !== 'unknown genre');
-    const loudnessCached = isSongCached(cacheIndex, song.id, 'loudness') || typeof loudnessCache[song.id]?.lufs === 'number';
     const artistCached =
       artistKey ? isArtistCached(cacheIndex, artistKey) : await hasCachedArtistProfile(primaryArtist);
 
@@ -875,22 +979,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           noteMetadataFailure(attemptsCache, 'genre', song.id);
         }
         releaseMetadata('genre', song.id);
-      }
-    }
-
-    if (!loudnessCached && !shouldSkipMetadata(attemptsCache, 'loudness', song.id)) {
-      if (tryAcquireMetadata('loudness', song.id)) {
-        const loudnessResult = await loadSongLoudness(song);
-        if (loudnessResult.status === 'ready') {
-          noteMetadataSuccess(attemptsCache, 'loudness', song.id);
-          void markSongCached(song.id, 'loudness');
-          if (typeof loudnessResult.lufs === 'number') {
-            await get().updateSongLoudness(song.id, loudnessResult.lufs);
-          }
-        } else {
-          noteMetadataFailure(attemptsCache, 'loudness', song.id);
-        }
-        releaseMetadata('loudness', song.id);
       }
     }
 
@@ -1010,6 +1098,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           playCount: previous?.playCount ?? song.playCount,
           lastPlayed: previous?.lastPlayed ?? song.lastPlayed,
           favorite: previous?.favorite ?? song.favorite,
+          genre: previous?.genre?.trim() ? previous.genre : song.genre,
+          albumArt: previous?.albumArt ?? song.albumArt,
         };
       });
       const hydratedSongs = await hydrateSongsWithCachedGenres(mergedSongs);
@@ -1224,7 +1314,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       };
     });
 
-    void markSongCached(songId, 'loudness');
     const customPlaylists = get().customPlaylists;
     set({ songs, playlists: buildPlaylists(customPlaylists) });
     await persistLibrary(songs, customPlaylists);

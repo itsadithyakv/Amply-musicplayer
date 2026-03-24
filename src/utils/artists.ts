@@ -20,8 +20,10 @@ const splitSimpleAnd = (value: string): string[] => {
   const leftWords = parts[0].split(' ').length;
   const rightWords = parts[1].split(' ').length;
   const rightStartsWithThe = parts[1].toLowerCase().startsWith('the ');
+  const leftLower = parts[0].toLowerCase();
+  const rightLower = parts[1].toLowerCase();
 
-  if (leftWords <= 2 && rightWords <= 2 && !rightStartsWithThe) {
+  if (leftWords === 1 && rightWords === 1 && !rightStartsWithThe && leftLower !== 'of' && rightLower !== 'of') {
     return parts;
   }
 
@@ -38,6 +40,8 @@ export const splitArtistNames = (artist: string | null | undefined): string[] =>
     .replace(/\s+feat(?:uring)?\.?\s+/gi, ',')
     .replace(/\s+ft\.?\s+/gi, ',')
     .replace(/\s+with\s+/gi, ',')
+    .replace(/\s*\+\s*/g, ',')
+    .replace(/\s*×\s*/g, ',')
     .replace(/\s+x\s+/gi, ',')
     .replace(/\s*&\s*/g, ',')
     .replace(/[;,/|]+/g, ',');

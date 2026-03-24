@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
 import { useOverlayController } from '@/hooks/useOverlayController';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { useMediaSession } from '@/hooks/useMediaSession';
@@ -12,13 +12,14 @@ import LibraryPage from '@/pages/Library';
 import PlaylistsPage from '@/pages/Playlists';
 import NowPlayingPage from '@/pages/NowPlaying';
 import SearchPage from '@/pages/Search';
-import StatsPage from '@/pages/Stats';
-import SettingsPage from '@/pages/Settings';
+const StatsPage = lazy(() => import('@/pages/Stats'));
+const SettingsPage = lazy(() => import('@/pages/Settings'));
 import OverlayPage from '@/pages/Overlay';
 import GameModePage from '@/pages/GameMode';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { flushDebouncedWrites } from '@/services/storageService';
+import { warmSearchIndex } from '@/utils/search';
 
 const App = () => {
   const initializeLibrary = useLibraryStore((state) => state.initialize);
@@ -38,6 +39,8 @@ const App = () => {
   const lastIdleFetchRef = useRef(0);
   const lastAlbumIdleFetchRef = useRef(0);
   const lastUserInputRef = useRef(0);
+  const searchWarmRef = useRef<string | null>(null);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
   const { lowPerf } = useFpsMonitor();
 
   const isOverlayRoute =
@@ -114,8 +117,11 @@ const App = () => {
 
   useEffect(() => {
     const markInput = () => {
-      lastUserInputRef.current = Date.now();
+      const now = Date.now();
+      lastUserInputRef.current = now;
+      (window as unknown as { __AMP_LAST_INTERACTION__?: number }).__AMP_LAST_INTERACTION__ = now;
     };
+    markInput();
     window.addEventListener('pointerdown', markInput);
     window.addEventListener('keydown', markInput);
     window.addEventListener('wheel', markInput, { passive: true });
@@ -129,6 +135,103 @@ const App = () => {
       document.removeEventListener('fullscreenchange', markInput);
     };
   }, []);
+
+  useEffect(() => {
+    if (settings.gameMode) {
+      return;
+    }
+    const node = mainScrollRef.current;
+    if (!node) {
+      return;
+    }
+
+    const key = `amply-scroll:${location.pathname}`;
+    const saved = sessionStorage.getItem(key);
+    if (saved) {
+      const value = Number(saved);
+      if (Number.isFinite(value)) {
+        node.scrollTop = value;
+      }
+    } else {
+      node.scrollTop = 0;
+    }
+
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) {
+        return;
+      }
+      raf = window.requestAnimationFrame(() => {
+        sessionStorage.setItem(key, String(node.scrollTop));
+        raf = 0;
+      });
+    };
+
+    node.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      node.removeEventListener('scroll', onScroll);
+      if (raf) {
+        window.cancelAnimationFrame(raf);
+      }
+    };
+  }, [location.pathname, settings.gameMode]);
+
+  useEffect(() => {
+    if (!songsCount || libraryScanning) {
+      return;
+    }
+    const library = useLibraryStore.getState().songs;
+    const fingerprint = `${library.length}:${library[0]?.id ?? 'none'}:${library[library.length - 1]?.id ?? 'none'}`;
+    if (searchWarmRef.current === fingerprint) {
+      return;
+    }
+    searchWarmRef.current = fingerprint;
+    let alive = true;
+    let idleHandle: number | null = null;
+    let timeoutHandle: number | null = null;
+    const idle = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    }).requestIdleCallback;
+    const cancelIdle = (globalThis as typeof globalThis & {
+      cancelIdleCallback?: (handle: number) => void;
+    }).cancelIdleCallback;
+    let index = 0;
+
+    const runChunk = () => {
+      if (!alive) {
+        return;
+      }
+      index = warmSearchIndex(library, index, 500);
+      if (index < library.length) {
+        schedule();
+      }
+    };
+
+    const schedule = () => {
+      if (typeof idle === 'function') {
+        idleHandle = idle(() => runChunk(), { timeout: 1200 });
+      } else {
+        timeoutHandle = window.setTimeout(runChunk, 100);
+      }
+    };
+
+    schedule();
+    return () => {
+      alive = false;
+      if (idleHandle !== null && typeof cancelIdle === 'function') {
+        cancelIdle(idleHandle);
+      }
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+      }
+    };
+  }, [songsCount, libraryScanning]);
+
+  useEffect(() => {
+    (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ = lowPerf || settings.gameMode;
+    (window as unknown as { __AMP_GAME_MODE__?: boolean }).__AMP_GAME_MODE__ = settings.gameMode;
+  }, [lowPerf, settings.gameMode]);
 
   useEffect(() => {
     let alive = true;
@@ -359,24 +462,35 @@ const App = () => {
     <div className="app-shell grid h-screen w-full grid-rows-[minmax(0,1fr)_84px] text-amply-textPrimary">
       <div className={`grid min-h-0 ${settings.gameMode ? 'grid-cols-1' : 'grid-cols-[240px_minmax(0,1fr)_320px]'}`}>
         {settings.gameMode ? null : <Sidebar />}
-        <main className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-6 pb-8 pt-6 xl:px-8 xl:pb-10 xl:pt-8">
+        <main
+          ref={mainScrollRef}
+          className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-6 pb-8 pt-6 xl:px-8 xl:pb-10 xl:pt-8"
+        >
           {settings.gameMode ? (
             <Routes>
               <Route path="/game" element={<GameModePage />} />
               <Route path="*" element={<Navigate to="/game" replace />} />
             </Routes>
           ) : (
-            <Routes>
-              <Route path="/" element={<Navigate to="/home" replace />} />
-              <Route path="/home" element={<HomePage />} />
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/library" element={<LibraryPage />} />
-              <Route path="/playlists" element={<PlaylistsPage />} />
-              <Route path="/now-playing" element={<NowPlayingPage />} />
-              <Route path="/stats" element={<StatsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/home" replace />} />
-            </Routes>
+            <Suspense
+              fallback={
+                <div className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 text-[12px] text-amply-textMuted">
+                  Loading view...
+                </div>
+              }
+            >
+              <Routes>
+                <Route path="/" element={<Navigate to="/home" replace />} />
+                <Route path="/home" element={<HomePage />} />
+                <Route path="/search" element={<SearchPage />} />
+                <Route path="/library" element={<LibraryPage />} />
+                <Route path="/playlists" element={<PlaylistsPage />} />
+                <Route path="/now-playing" element={<NowPlayingPage />} />
+                <Route path="/stats" element={<StatsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/home" replace />} />
+              </Routes>
+            </Suspense>
           )}
         </main>
         {settings.gameMode ? null : <NowPlayingPanel />}

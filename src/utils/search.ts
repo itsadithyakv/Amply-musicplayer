@@ -41,6 +41,14 @@ const getNormalizedFields = (song: Song): NormalizedSongFields => {
   return next;
 };
 
+export const warmSearchIndex = (songs: Song[], startIndex = 0, chunkSize = 400): number => {
+  const end = Math.min(songs.length, startIndex + chunkSize);
+  for (let i = startIndex; i < end; i += 1) {
+    getNormalizedFields(songs[i]);
+  }
+  return end;
+};
+
 const fieldScore = (normalizedField: string, queryTokens: string[]): number => {
   if (!normalizedField) {
     return 0;

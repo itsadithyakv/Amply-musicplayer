@@ -5,6 +5,7 @@ import {
   normalizeTrackTitle,
   type AlbumTracklistCache,
 } from '@/services/albumTracklistService';
+import { isUnknownGenre } from '@/services/songMetadataService';
 
 const byPlayCount = (a: Song, b: Song) => b.playCount - a.playCount;
 
@@ -67,7 +68,7 @@ const slugify = (value: string): string => {
 
 const normalizeGenreBucket = (genreRaw: string): string | null => {
   const genre = genreRaw.trim().toLowerCase();
-  if (!genre || genre === 'unknown genre') {
+  if (!genre || isUnknownGenre(genre)) {
     return null;
   }
 

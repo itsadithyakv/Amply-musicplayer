@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import addIcon from '@/assets/icons/add.svg';
+import libraryIcon from '@/assets/icons/library.svg';
+import searchIcon from '@/assets/icons/search.svg';
+import trashIcon from '@/assets/icons/trash.svg';
 import {
   clearStorageCache,
   getStorageStats,
@@ -190,49 +194,60 @@ const SettingsPage = () => {
           </p>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          <input
-            value={localPath}
-            onChange={(event) => setLocalPath(event.target.value)}
-            placeholder="Add folder path manually (optional)"
-            className="min-w-[220px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              const value = localPath.trim();
-              if (!value) {
-                return;
-              }
-              await addLibraryPath(value);
-              setLocalPath('');
-            }}
-            className="rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
-          >
-            Add Path
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              const picked = await pickMusicFolders();
-              if (picked.length) {
-                const merged = Array.from(new Set([...libraryPaths, ...picked]));
-                await setLibraryPaths(merged);
-              }
-            }}
-            className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-          >
-            Browse Folders
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void scanLibrary();
-            }}
-            className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-          >
-            {isScanning ? 'Scanning...' : 'Rescan'}
-          </button>
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <input
+              value={localPath}
+              onChange={(event) => setLocalPath(event.target.value)}
+              placeholder="Add folder path manually (optional)"
+              className="min-w-[220px] flex-1 rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const value = localPath.trim();
+                if (!value) {
+                  return;
+                }
+                await addLibraryPath(value);
+                setLocalPath('');
+              }}
+              className="inline-flex min-w-[120px] items-center justify-center gap-2 rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
+              title="Add path"
+            >
+              <img src={addIcon} alt="" className="h-4 w-4" />
+              Add Path
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await pickMusicFolders();
+                if (picked.length) {
+                  const merged = Array.from(new Set([...libraryPaths, ...picked]));
+                  await setLibraryPaths(merged);
+                }
+              }}
+              className="inline-flex min-w-[150px] items-center justify-center gap-2 rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              title="Browse folders"
+            >
+              <img src={libraryIcon} alt="" className="h-4 w-4 brightness-0 invert opacity-80" />
+              Browse
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void scanLibrary();
+              }}
+              className="inline-flex min-w-[150px] items-center justify-center gap-2 rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              title="Rescan library"
+            >
+              <img src={searchIcon} alt="" className="h-4 w-4 brightness-0 invert opacity-80" />
+              {isScanning ? 'Scanning...' : 'Rescan'}
+            </button>
+          </div>
         </div>
 
         <div className="max-h-44 space-y-1.5 overflow-y-auto pr-1">
@@ -261,7 +276,7 @@ const SettingsPage = () => {
           </p>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-3 grid grid-cols-3 gap-2">
           <button
             type="button"
             disabled={metadataFetch.running}
@@ -269,9 +284,21 @@ const SettingsPage = () => {
               setBulkMessage(null);
               startMetadataFetch();
             }}
-            className="rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-amply-accent px-3 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {metadataFetch.running ? 'Fetching...' : 'Fetch Missing Metadata'}
+            <img src={searchIcon} alt="" className="h-4 w-4" />
+            {metadataFetch.running ? 'Fetching...' : 'Fetch Missing'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              void openStorageDir();
+            }}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-amply-border/60 px-3 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+          >
+            <img src={libraryIcon} alt="" className="h-4 w-4 brightness-0 invert opacity-80" />
+            Storage
           </button>
 
           <button
@@ -290,18 +317,10 @@ const SettingsPage = () => {
                 setClearingCache(false);
               }
             }}
-            className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-amply-border/60 px-3 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {clearingCache ? 'Clearing...' : 'Clear Cache & Stored Data'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void openStorageDir();
-            }}
-            className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-          >
-            Open Storage
+            <img src={trashIcon} alt="" className="h-4 w-4 brightness-0 invert opacity-80" />
+            {clearingCache ? 'Clearing...' : 'Clear Cache'}
           </button>
         </div>
 

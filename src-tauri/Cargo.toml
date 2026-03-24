@@ -1,6 +1,6 @@
 [package]
 name = "amply"
-version = "1.4.3"
+version = "1.4.4"
 edition = "2021"
 description = "Amply Music Player"
 authors = ["Adithya KV <hello@amply.local>"]

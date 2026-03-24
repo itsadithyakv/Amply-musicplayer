@@ -22,62 +22,6 @@ interface ScannedSong {
   replayGain?: number;
 }
 
-const artworkCache = new Map<string, string | null>();
-
-const normalizeArtworkUrl = (url: string): string => {
-  return url.replace(/100x100bb/g, '600x600bb');
-};
-
-const fetchAlbumArt = async (artist: string, album: string): Promise<string | null> => {
-  const key = `${artist.toLowerCase()}::${album.toLowerCase()}`;
-  if (artworkCache.has(key)) {
-    return artworkCache.get(key) ?? null;
-  }
-
-  try {
-    const term = encodeURIComponent(`${artist} ${album}`.trim());
-    const response = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=1`);
-    if (!response.ok) {
-      artworkCache.set(key, null);
-      return null;
-    }
-
-    const payload = (await response.json()) as {
-      results?: Array<{ artworkUrl100?: string }>;
-    };
-
-    const artwork = payload.results?.[0]?.artworkUrl100;
-    const normalized = artwork ? normalizeArtworkUrl(artwork) : null;
-    artworkCache.set(key, normalized);
-    return normalized;
-  } catch {
-    artworkCache.set(key, null);
-    return null;
-  }
-};
-
-const enrichMissingArtwork = async (songs: Song[]): Promise<Song[]> => {
-  const maxArtworkFetches = 120;
-  let fetched = 0;
-
-  const enriched: Song[] = [];
-  for (const song of songs) {
-    if (song.albumArt || fetched >= maxArtworkFetches) {
-      enriched.push(song);
-      continue;
-    }
-
-    const artwork = await fetchAlbumArt(song.artist, song.album);
-    fetched += 1;
-    enriched.push({
-      ...song,
-      albumArt: artwork ?? song.albumArt,
-    });
-  }
-
-  return enriched;
-};
-
 const demoSongs: Song[] = [
   {
     id: 'demo_1',
@@ -138,7 +82,8 @@ export const scanMusicFolder = async (folder?: string): Promise<Song[]> => {
     if (settings.gameMode) {
       return normalized;
     }
-    return enrichMissingArtwork(normalized);
+    // Defer artwork fetching to the idle metadata pipeline to keep scans fast.
+    return normalized;
   } catch {
     return [];
   }

@@ -1,4 +1,5 @@
 import { parseLrc } from '@/utils/lrc';
+import { getPrimaryArtistName } from '@/utils/artists';
 import { readStorageText, writeStorageText } from '@/services/storageService';
 import { markSongCached } from '@/services/metadataCacheIndex';
 import type { Song } from '@/types/music';
@@ -14,7 +15,8 @@ const slugify = (value: string): string => {
 };
 
 const cacheKeyForSong = (song: Song): string => {
-  const artist = slugify(song.artist || 'unknown-artist');
+  const primaryArtist = getPrimaryArtistName(song.artist) ?? song.artist;
+  const artist = slugify(primaryArtist || 'unknown-artist');
   const title = slugify(song.title || 'unknown-title');
   return `${cacheFolder}/${artist}-${title}.lrc`;
 };
@@ -155,7 +157,20 @@ const dedupeCandidates = (candidates: LyricsCandidate[]): LyricsCandidate[] => {
 };
 
 const fetchSearchCandidates = async (song: Song): Promise<LyricsCandidate[]> => {
-  const endpoint = `https://lrclib.net/api/search?artist_name=${encodeURIComponent(song.artist)}&track_name=${encodeURIComponent(song.title)}&album_name=${encodeURIComponent(song.album)}`;
+  const artist = getPrimaryArtistName(song.artist) ?? song.artist;
+  const title = song.title?.trim();
+  if (!artist?.trim() || !title) {
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  params.set('artist_name', artist);
+  params.set('track_name', title);
+  if (song.album?.trim()) {
+    params.set('album_name', song.album);
+  }
+
+  const endpoint = `https://lrclib.net/api/search?${params.toString()}`;
   const response = await fetch(endpoint);
 
   if (!response.ok) {
@@ -175,7 +190,20 @@ const fetchSearchCandidates = async (song: Song): Promise<LyricsCandidate[]> => 
 };
 
 const fetchSingleCandidate = async (song: Song): Promise<LyricsCandidate[]> => {
-  const endpoint = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(song.artist)}&track_name=${encodeURIComponent(song.title)}&album_name=${encodeURIComponent(song.album)}`;
+  const artist = getPrimaryArtistName(song.artist) ?? song.artist;
+  const title = song.title?.trim();
+  if (!artist?.trim() || !title) {
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  params.set('artist_name', artist);
+  params.set('track_name', title);
+  if (song.album?.trim()) {
+    params.set('album_name', song.album);
+  }
+
+  const endpoint = `https://lrclib.net/api/get?${params.toString()}`;
   const response = await fetch(endpoint);
 
   if (!response.ok) {
@@ -237,7 +265,6 @@ export interface LyricsCandidate {
 
 type LyricsLoadResult =
   | { status: 'ready'; lyrics: LyricsResult; cachePath: string }
-  | { status: 'choose'; candidates: LyricsCandidate[]; cachePath: string }
   | { status: 'missing'; cachePath: string };
 
 export const saveLyricsSelection = async (song: Song, candidate: LyricsCandidate): Promise<LyricsResult> => {
@@ -289,17 +316,16 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   }
 
   const ranked = rankCandidatesWithScore(song, candidates);
-
-  if (ranked.length >= 1) {
-    const lyrics = await saveLyricsSelection(song, ranked[0].candidate);
-    return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
+  const best = ranked[0]?.candidate;
+  if (!best) {
+    return {
+      status: 'missing',
+      cachePath: `storage/${key}`,
+    };
   }
 
-  return {
-    status: 'choose',
-    candidates: ranked.map((entry) => entry.candidate),
-    cachePath: `storage/${key}`,
-  };
+  const lyrics = await saveLyricsSelection(song, best);
+  return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
 };
 
 export const readCachedLyrics = async (song: Song): Promise<LyricsLoadResult> => {

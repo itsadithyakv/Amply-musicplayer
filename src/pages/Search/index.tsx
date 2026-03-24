@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useDeferredValue, useMemo } from 'react';
 import SongList from '@/components/SongList/SongList';
 import { useLibraryStore } from '@/store/libraryStore';
 import { splitArtistNames } from '@/utils/artists';
@@ -8,10 +8,18 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const query = useLibraryStore((state) => state.searchQuery);
   const setSearchQuery = useLibraryStore((state) => state.setSearchQuery);
   const songs = useLibraryStore((state) => state.songs);
+  const deferredQuery = useDeferredValue(query);
 
   const filteredSongs = useMemo(() => {
-    return filterAndRankSongs(songs, query);
-  }, [query, songs]);
+    const trimmed = deferredQuery.trim();
+    if (!trimmed) {
+      return [];
+    }
+    if (trimmed.length < 2) {
+      return [];
+    }
+    return filterAndRankSongs(songs, trimmed).slice(0, 10);
+  }, [deferredQuery, songs]);
 
   const suggestions = useMemo(() => {
     if (!query.trim()) {
@@ -32,7 +40,7 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
     }
 
     return [...pool];
-  }, [query, filteredSongs]);
+  }, [deferredQuery, filteredSongs]);
 
   return (
     <div className={embedded ? 'space-y-4' : 'space-y-5 pb-8'}>
@@ -71,9 +79,13 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
 
       {filteredSongs.length ? (
         <SongList songs={filteredSongs} persistKey="search" />
-      ) : (
+      ) : deferredQuery.trim().length >= 2 ? (
         <div className="rounded-card border border-amply-border bg-amply-card p-6 text-[13px] text-amply-textMuted">
           No results found. Try a different search term.
+        </div>
+      ) : (
+        <div className="rounded-card border border-amply-border bg-amply-card p-6 text-[13px] text-amply-textMuted">
+          Start typing to search your library.
         </div>
       )}
     </div>

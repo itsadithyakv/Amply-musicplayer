@@ -1,0 +1,10 @@
+Amply v1.4.4
+
+Highlights
+- Allows the user to play albums based on tracklist sourced online.
+- Bug fixes in the overlay tab
+- Better bulk fetching to avoid lag
+- UX optimisations
+
+Notes
+- Windows installers included: MSI and NSIS.

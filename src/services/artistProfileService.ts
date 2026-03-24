@@ -11,8 +11,18 @@ const slugify = (value: string): string => {
     .replace(/^-+|-+$/g, '');
 };
 
+const hashString = (value: string): string => {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  }
+  return Math.abs(hash).toString(36);
+};
+
 const cacheKeyForArtist = (artistName: string): string => {
-  const artistSlug = slugify(artistName || 'unknown-artist');
+  const base = artistName || 'unknown-artist';
+  const slug = slugify(base);
+  const artistSlug = slug || `artist-${hashString(base)}`;
   return `${cacheFolder}/${artistSlug}.json`;
 };
 

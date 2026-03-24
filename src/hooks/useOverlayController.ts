@@ -110,7 +110,6 @@ export const useOverlayController = (enabled: boolean): void => {
         await overlay.setVisibleOnAllWorkspaces(true);
         await overlay.setBackgroundColor([0, 0, 0, 0]);
         await overlay.show();
-        await overlay.setFocus();
       } catch (error) {
         console.error('[Amply] Overlay window show failed', error);
       }
@@ -127,6 +126,11 @@ export const useOverlayController = (enabled: boolean): void => {
         }
       } catch (error) {
         console.error('[Amply] Overlay window position failed', error);
+      }
+      try {
+        await emitOverlayState();
+      } catch (error) {
+        console.warn('[Amply] Overlay state emit failed', error);
       }
       inFlight = false;
     };

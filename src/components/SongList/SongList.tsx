@@ -7,6 +7,7 @@ import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import addIcon from '@/assets/icons/add.svg';
 import queueIcon from '@/assets/icons/queue.svg';
+import { isUnknownGenre } from '@/services/songMetadataService';
 
 interface SongListProps {
   songs: Song[];
@@ -50,13 +51,6 @@ const genreOptions = [
   'Blues',
   'Other',
 ];
-
-const isUnknownGenre = (value: string | undefined): boolean => {
-  if (!value?.trim()) {
-    return true;
-  }
-  return value.trim().toLowerCase() === 'unknown genre';
-};
 
 const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
   const sorted = [...items];

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { readCachedArtistProfile } from '@/services/artistProfileService';
@@ -150,6 +150,7 @@ const HomePage = () => {
   const [albumTracklistCache, setAlbumTracklistCache] = useState<Record<string, { tracks?: Array<{ position: number; title: string }> }>>({});
   const clickTimerRef = useRef<number | null>(null);
   const clickTargetRef = useRef<string | null>(null);
+  const showMoreMixesCard = !smartPlaylistLoading || smartPlaylistCards.length > 0;
 
   const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
 
@@ -165,7 +166,7 @@ const HomePage = () => {
     return () => {
       alive = false;
     };
-  }, [playlists.length]);
+  }, [songs.length, playlists.length]);
 
   const getAlbumSpotlightSubtitle = useCallback(
     (playlist: Playlist): string => {
@@ -251,14 +252,18 @@ const HomePage = () => {
       }
       const rediscover = playlists.find((playlist) => playlist.id === 'smart_rediscover');
       if (!rediscover) {
-        setRediscoverSongs([]);
+        startTransition(() => {
+          setRediscoverSongs([]);
+        });
         return;
       }
       const next = rediscover.songIds
         .map((songId) => songsById.get(songId))
         .filter((song): song is Song => Boolean(song))
         .slice(0, 16);
-      setRediscoverSongs(next);
+      startTransition(() => {
+        setRediscoverSongs(next);
+      });
     }, 200);
     return () => {
       alive = false;
@@ -272,9 +277,11 @@ const HomePage = () => {
       if (!alive) {
         return;
       }
-      setUserPlaylists(
-        playlists.filter((playlist) => playlist.type === 'custom').filter((playlist) => playlist.songIds.length),
-      );
+      startTransition(() => {
+        setUserPlaylists(
+          playlists.filter((playlist) => playlist.type === 'custom').filter((playlist) => playlist.songIds.length),
+        );
+      });
     }, 200);
     return () => {
       alive = false;
@@ -340,7 +347,9 @@ const HomePage = () => {
         })
         .slice(0, 16);
 
-      setTopArtists(next);
+      startTransition(() => {
+        setTopArtists(next);
+      });
     };
 
     const cancel = scheduleIdleTask(processChunk, 250);
@@ -633,7 +642,7 @@ const HomePage = () => {
             </div>
           ) : null}
           <div className="grid grid-cols-1 gap-5 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
-          {smartPlaylistLoading && !smartPlaylistCards.length
+            {smartPlaylistLoading && !smartPlaylistCards.length
             ? Array.from({ length: 3 }).map((_, index) => (
                 <div
                   key={`smart-skeleton-${index}`}
@@ -734,33 +743,41 @@ const HomePage = () => {
             );
           })}
 
-          <button
-            type="button"
-            onClick={() => setShowMoreMixes((value) => !value)}
-            className={clsx(
-              'playlist-card group relative min-h-[180px] overflow-hidden rounded-card border border-amply-border/60 p-5 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
-              playlistToneClasses[0],
-              playlistGlowClasses[0],
-            )}
-          >
-            <div className="glass-overlay" />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.12),transparent_55%)]" />
-            <div className="relative flex h-full flex-col justify-between">
-              <div className="flex items-start justify-between gap-3">
-                <span className="rounded-full border border-amply-border/60 bg-black/25 px-2 py-1 text-[11px] uppercase tracking-wide text-amply-textSecondary">
-                  More Mixes
-                </span>
-              </div>
-              <div className="space-y-1">
-                <p className="text-[17px] font-semibold text-amply-textPrimary">Explore Mixes</p>
-                <p className="text-[12px] text-amply-textSecondary">
-                    {showMoreMixes ? 'Hide the full mix list' : 'Show genre and mood mixes'}
-                  </p>
+            {showMoreMixesCard ? (
+              <button
+                type="button"
+                onClick={() => setShowMoreMixes((value) => !value)}
+                className={clsx(
+                  'playlist-card group relative min-h-[180px] overflow-hidden rounded-card border border-amply-border/60 p-5 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
+                  playlistToneClasses[0],
+                  playlistGlowClasses[0],
+                )}
+              >
+                <div className="glass-overlay" />
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.12),transparent_55%)]" />
+                <div className="relative flex h-full flex-col justify-between">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="rounded-full border border-amply-border/60 bg-black/25 px-2 py-1 text-[11px] uppercase tracking-wide text-amply-textSecondary">
+                      More Mixes
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[17px] font-semibold text-amply-textPrimary">Explore Mixes</p>
+                    <p className="text-[12px] text-amply-textSecondary">
+                      {showMoreMixes ? 'Hide the full mix list' : 'Show genre and mood mixes'}
+                    </p>
+                  </div>
                 </div>
-              </div>
-          </button>
+              </button>
+            ) : null}
           </div>
         </div>
+
+        {!smartPlaylistLoading && !smartPlaylistCards.length ? (
+          <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 text-[13px] text-amply-textMuted">
+            No smart playlists yet. Add more music or refresh your library to generate mixes.
+          </div>
+        ) : null}
 
         {showMoreMixes ? (
           <div className="space-y-3">
