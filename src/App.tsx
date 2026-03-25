@@ -10,6 +10,7 @@ import NowPlayingPanel from '@/components/NowPlayingPanel/NowPlayingPanel';
 import HomePage from '@/pages/Home';
 import LibraryPage from '@/pages/Library';
 import PlaylistsPage from '@/pages/Playlists';
+import PlaylistDetailPage from '@/pages/PlaylistDetail';
 import NowPlayingPage from '@/pages/NowPlaying';
 import SearchPage from '@/pages/Search';
 const StatsPage = lazy(() => import('@/pages/Stats'));
@@ -485,6 +486,7 @@ const App = () => {
                 <Route path="/search" element={<SearchPage />} />
                 <Route path="/library" element={<LibraryPage />} />
                 <Route path="/playlists" element={<PlaylistsPage />} />
+                <Route path="/playlist/:playlistId" element={<PlaylistDetailPage />} />
                 <Route path="/now-playing" element={<NowPlayingPage />} />
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />

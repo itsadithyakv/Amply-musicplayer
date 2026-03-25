@@ -62,11 +62,14 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const [error, setError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [offsetMs, setOffsetMs] = useState(0);
+
+  // Use refs to avoid triggering re-renders
   const offsetRef = useRef(0);
   const offsetsCacheRef = useRef<Record<string, number>>({});
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
   const autoScrollLockRef = useRef<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (gameMode) {
@@ -82,6 +85,14 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
       return;
     }
 
+    // Cancel any previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     let alive = true;
     let retryHandle: number | null = null;
     setLoading(true);
@@ -94,7 +105,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
     readCachedLyrics(song)
       .then((result) => {
-        if (!alive) {
+        if (abortController.signal.aborted || !alive) {
           return;
         }
 
@@ -105,33 +116,39 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
         setError('No lyrics found for this track yet.');
         retryHandle = window.setTimeout(() => {
-          if (!alive) {
+          if (abortController.signal.aborted || !alive) {
             return;
           }
           readCachedLyrics(song).then((retryResult) => {
-            if (!alive) {
+            if (abortController.signal.aborted || !alive) {
               return;
             }
             if (retryResult.status === 'ready') {
               setLyrics(retryResult.lyrics);
               setError(null);
             }
+          }).catch((error) => {
+            if (!abortController.signal.aborted && alive) {
+              console.warn('[Lyrics] Retry failed:', error);
+            }
           });
         }, 4000);
       })
-      .catch(() => {
-        if (alive) {
-          setError('Lyrics fetch failed.');
+      .catch((error) => {
+        if (!abortController.signal.aborted && alive) {
+          console.warn('[Lyrics] Initial load failed:', error);
+          setError('Failed to load lyrics.');
         }
       })
       .finally(() => {
-        if (alive) {
+        if (!abortController.signal.aborted && alive) {
           setLoading(false);
         }
       });
 
     return () => {
       alive = false;
+      abortController.abort();
       if (retryHandle !== null) {
         window.clearTimeout(retryHandle);
       }
@@ -239,48 +256,68 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
       return;
     }
 
+    // Cancel any previous backdrop loading
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     let alive = true;
     const cachePath = 'lyrics_bg_cache.json';
 
     const loadBackdrop = async () => {
-      const cache = await readStorageJson<Record<string, string | null>>(cachePath, {});
-      const cached = cache[song.id];
-      const cachedIsColor = typeof cached === 'string' && (cached.startsWith('rgb(') || cached.startsWith('#'));
-      if (alive && cached && cachedIsColor) {
-        setArtworkTint(cached);
-        return;
-      }
-
-      const source = song.albumArt ?? null;
-      if (!source) {
-        if (alive) {
-          setArtworkTint(null);
-        }
-        return;
-      }
-
       try {
+        const cache = await readStorageJson<Record<string, string | null>>(cachePath, {});
+        const cached = cache[song.id];
+        const cachedIsColor = typeof cached === 'string' && (cached.startsWith('rgb(') || cached.startsWith('#'));
+        if (alive && !abortController.signal.aborted && cached && cachedIsColor) {
+          setArtworkTint(cached);
+          return;
+        }
+
+        const source = song.albumArt ?? null;
+        if (!source) {
+          if (alive && !abortController.signal.aborted) {
+            setArtworkTint(null);
+          }
+          return;
+        }
+
         const image = new Image();
         image.crossOrigin = 'anonymous';
         image.src = source;
+
         await new Promise<void>((resolve, reject) => {
-          image.onload = () => resolve();
-          image.onerror = () => reject(new Error('image load failed'));
+          const timeout = setTimeout(() => reject(new Error('Image load timeout')), 5000);
+          image.onload = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          image.onerror = () => {
+            clearTimeout(timeout);
+            reject(new Error('Image load failed'));
+          };
         });
+
+        if (abortController.signal.aborted || !alive) {
+          return;
+        }
 
         const canvas = document.createElement('canvas');
         canvas.width = 1;
         canvas.height = 1;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          throw new Error('canvas unavailable');
+          throw new Error('Canvas unavailable');
         }
 
         ctx.drawImage(image, 0, 0, 1, 1);
         const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
         const tint = `rgb(${r}, ${g}, ${b})`;
 
-        if (alive) {
+        if (alive && !abortController.signal.aborted) {
           setArtworkTint(tint);
         }
 
@@ -288,8 +325,9 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
           ...cache,
           [song.id]: tint,
         });
-      } catch {
-        if (alive) {
+      } catch (error) {
+        if (alive && !abortController.signal.aborted) {
+          console.warn('[Lyrics] Backdrop loading failed:', error);
           setArtworkTint(null);
         }
       }
@@ -299,6 +337,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
     return () => {
       alive = false;
+      abortController.abort();
     };
   }, [song?.id, song?.albumArt, gameMode]);
 
@@ -388,9 +427,12 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
   useEffect(() => {
     return () => {
+      // Cleanup on unmount
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
       if (autoScrollLockRef.current) {
         window.clearTimeout(autoScrollLockRef.current);
-        autoScrollLockRef.current = null;
       }
     };
   }, []);

@@ -1,5 +1,4 @@
 export type RepeatMode = 'off' | 'one' | 'all';
-export type PlaybackMode = 'order' | 'shuffle' | 'repeat';
 
 export interface Song {
   id: string;

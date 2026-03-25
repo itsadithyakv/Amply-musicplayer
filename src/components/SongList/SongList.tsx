@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
+import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
 import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
@@ -13,6 +14,7 @@ interface SongListProps {
   songs: Song[];
   persistKey?: string;
   initialSort?: SongSort;
+  hideSort?: boolean;
 }
 
 type SongSort =
@@ -34,7 +36,7 @@ const sortOptions: Array<{ label: string; value: SongSort }> = [
   { label: 'Most Played', value: 'most_played' },
 ];
 
-const genreOptions = [
+const baseGenreOptions = [
   'Pop',
   'Rock',
   'Hip-Hop',
@@ -85,6 +87,10 @@ interface SongRowData {
   customPlaylists: Array<{ id: string; name: string }>;
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void> | void;
   updateSongGenre: (songId: string, genre: string) => Promise<void> | void;
+  genreOptions: string[];
+  genreListId: string;
+  editingSongId: string | null;
+  setEditingSongId: (songId: string | null) => void;
 }
 
 const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowData>) => {
@@ -99,11 +105,17 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
     customPlaylists,
     addSongToCustomPlaylist,
     updateSongGenre,
+    genreOptions,
+    genreListId,
+    editingSongId,
+    setEditingSongId,
   } = data;
   const song = songs[index];
   const isCurrent = song?.id === currentSongId;
   const [favoritePulse, setFavoritePulse] = useState(false);
   const pulseRef = useRef<number | null>(null);
+  const [genreDraft, setGenreDraft] = useState('');
+  const genreInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -113,9 +125,28 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
     };
   }, []);
 
+  useEffect(() => {
+    if (!song) {
+      return;
+    }
+    const currentGenre = song.genre?.trim() ?? '';
+    setGenreDraft(currentGenre);
+  }, [song?.id, song?.genre]);
+
+  useEffect(() => {
+    if (editingSongId === song?.id) {
+      genreInputRef.current?.focus();
+      genreInputRef.current?.select();
+    }
+  }, [editingSongId, song?.id]);
+
+
   if (!song) {
     return null;
   }
+
+  const isUnknown = isUnknownGenre(song.genre);
+  const isEditing = editingSongId === song.id;
 
   return (
     <div
@@ -132,14 +163,17 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
           void playSongById(song.id, false);
         }
       }}
-      className="grid h-14 grid-cols-[48px_1.6fr_1fr_0.9fr_90px_64px_130px_64px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
+      className="grid h-14 grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(56px,0.6fr)_48px_120px_56px] items-center px-4 text-[13px] text-amply-textSecondary transition-colors hover:bg-[#1A1A1A]"
     >
       <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
 
       <div className="flex min-w-0 items-center gap-3">
-        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-zinc-800">
-          {song.albumArt ? <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" /> : null}
-        </div>
+        <OptimizedImage
+          src={song.albumArt}
+          alt={song.album}
+          className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-zinc-800"
+          placeholderContent={null}
+        />
         <div className="min-w-0">
           <p className={`truncate text-[18px] font-bold ${isCurrent ? 'text-amply-accent' : 'text-amply-textPrimary'}`}>
             {song.title}
@@ -150,8 +184,46 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
 
       <p className="truncate text-[13px] text-amply-textSecondary">{song.album}</p>
 
-      <div className="flex items-center">
-        {isUnknownGenre(song.genre) ? (
+      <div className="flex items-center justify-between gap-2 pr-2">
+        {isEditing ? (
+          <input
+            ref={genreInputRef}
+            list={genreListId}
+            value={genreDraft}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => setGenreDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.stopPropagation();
+                const nextGenre = genreDraft.trim();
+                if (nextGenre) {
+                  void updateSongGenre(song.id, nextGenre);
+                }
+                if (editingSongId === song.id) {
+                  setEditingSongId(null);
+                }
+              }
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                setGenreDraft(song.genre?.trim() ?? '');
+                if (editingSongId === song.id) {
+                  setEditingSongId(null);
+                }
+              }
+            }}
+            onBlur={() => {
+              const nextGenre = genreDraft.trim();
+              if (nextGenre) {
+                void updateSongGenre(song.id, nextGenre);
+              }
+              if (editingSongId === song.id) {
+                setEditingSongId(null);
+              }
+            }}
+            placeholder="Set genre..."
+            className="w-full rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+          />
+        ) : isUnknown ? (
           <select
             defaultValue=""
             onClick={(event) => event.stopPropagation()}
@@ -161,10 +233,15 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
               if (!nextGenre) {
                 return;
               }
+              if (nextGenre === '__edit__') {
+                setEditingSongId(song.id);
+                event.currentTarget.value = '';
+                return;
+              }
               void updateSongGenre(song.id, nextGenre);
               event.currentTarget.value = '';
             }}
-            className="w-full rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+            className="h-7 w-full rounded-md border border-amply-border bg-amply-bgSecondary px-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
           >
             <option value="">Set genre...</option>
             {genreOptions.map((genre) => (
@@ -172,13 +249,34 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
                 {genre}
               </option>
             ))}
+            <option value="__edit__">Custom...</option>
           </select>
         ) : (
-          <p className="truncate text-[12px] text-amply-textMuted">{song.genre}</p>
+          <>
+            <p className="flex-1 truncate text-[12px] text-amply-textMuted">{song.genre}</p>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditingSongId(song.id);
+              }}
+              className="rounded-full border border-amply-border/60 p-1 text-amply-textMuted transition-colors hover:bg-amply-hover hover:text-amply-textSecondary"
+              title="Edit genre"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7">
+                <path d="M12 20h9" strokeLinecap="round" />
+                <path
+                  d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </>
         )}
       </div>
 
-      <p className="text-[12px] text-amply-textMuted">{formatDuration(song.duration)}</p>
+      <p className="justify-self-center text-[12px] text-amply-textMuted">{formatDuration(song.duration)}</p>
 
       <button
         type="button"
@@ -262,7 +360,7 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
   );
 });
 
-const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongListProps) => {
+const SongList = ({ songs, persistKey, initialSort = 'recently_added', hideSort = false }: SongListProps) => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
@@ -271,7 +369,9 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
   const customPlaylists = useLibraryStore((state) => state.customPlaylists);
   const addSongToCustomPlaylist = useLibraryStore((state) => state.addSongToCustomPlaylist);
   const updateSongGenre = useLibraryStore((state) => state.updateSongGenre);
-  const storageKey = persistKey ? `amply-songlist-sort:${persistKey}` : null;
+  const [editingSongId, setEditingSongId] = useState<string | null>(null);
+  const genreListId = useMemo(() => `amply-genre-options-${persistKey ?? 'library'}`, [persistKey]);
+  const storageKey = !hideSort && persistKey ? `amply-songlist-sort:${persistKey}` : null;
   const [sortBy, setSortBy] = useState<SongSort>(() => {
     if (!storageKey || typeof window === 'undefined') {
       return initialSort;
@@ -289,7 +389,29 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
     window.localStorage.setItem(storageKey, sortBy);
   }, [storageKey, sortBy]);
 
-  const sortedSongs = useMemo(() => sortSongs(songs, sortBy), [songs, sortBy]);
+  const sortedSongs = useMemo(() => {
+    if (hideSort) {
+      return songs;
+    }
+    return sortSongs(songs, sortBy);
+  }, [songs, sortBy, hideSort]);
+  const genreOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const genre of baseGenreOptions) {
+      map.set(genre.toLowerCase(), genre);
+    }
+    for (const song of songs) {
+      const genre = song.genre?.trim();
+      if (!genre || isUnknownGenre(genre)) {
+        continue;
+      }
+      const key = genre.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, genre);
+      }
+    }
+    return [...map.values()].sort((a, b) => a.localeCompare(b));
+  }, [songs]);
   const queueIds = useMemo(() => sortedSongs.map((song) => song.id), [sortedSongs]);
   const rowData = useMemo<SongRowData>(
     () => ({
@@ -303,6 +425,10 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
       customPlaylists,
       addSongToCustomPlaylist,
       updateSongGenre,
+      genreOptions,
+      genreListId,
+      editingSongId,
+      setEditingSongId,
     }),
     [
       sortedSongs,
@@ -315,6 +441,10 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
       customPlaylists,
       addSongToCustomPlaylist,
       updateSongGenre,
+      genreOptions,
+      genreListId,
+      editingSongId,
+      setEditingSongId,
     ],
   );
 
@@ -322,32 +452,40 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
     <div className="overflow-hidden rounded-card border border-amply-border bg-amply-card">
       <div className="flex items-center justify-between border-b border-amply-border px-4 py-3">
         <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Songs</p>
-        <label className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
-          Sort
-          <select
-            value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as SongSort)}
-            className="rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
-          >
-            {sortOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!hideSort ? (
+          <label className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
+            Sort
+            <select
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value as SongSort)}
+              className="rounded-md border border-amply-border bg-amply-bgSecondary px-2 py-1 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+            >
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
 
-      <div className="grid h-12 grid-cols-[48px_1.6fr_1fr_0.9fr_90px_64px_130px_64px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
+      <div className="grid h-12 grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(56px,0.6fr)_48px_120px_56px] items-center border-b border-amply-border px-4 text-[12px] uppercase tracking-wide text-amply-textMuted">
         <span>#</span>
         <span>Title</span>
         <span>Album</span>
         <span>Genre</span>
-        <span>Time</span>
+        <span className="justify-self-start">Time</span>
         <span>Fav</span>
         <span>Playlist</span>
         <span>Queue</span>
       </div>
+
+      <datalist id={genreListId}>
+        {genreOptions.map((genre) => (
+          <option key={genre} value={genre} />
+        ))}
+      </datalist>
 
       <div className="h-[62vh]">
         <AutoSizer>
@@ -358,6 +496,7 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added' }: SongLis
               itemCount={sortedSongs.length}
               itemSize={56}
               itemData={rowData}
+              itemKey={(index, data) => data.songs[index]?.id ?? index}
               overscanCount={8}
             >
               {SongRow}

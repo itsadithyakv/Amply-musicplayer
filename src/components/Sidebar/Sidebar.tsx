@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { NavLink } from 'react-router-dom';
 import clsx from 'clsx';
 import logoIcon from '@/assets/icons/logo.png';
@@ -95,4 +96,4 @@ const Sidebar = () => {
   );
 };
 
-export default Sidebar;
+export default memo(Sidebar);

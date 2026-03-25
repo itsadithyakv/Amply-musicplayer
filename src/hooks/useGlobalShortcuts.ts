@@ -5,6 +5,9 @@ export const useGlobalShortcuts = (): void => {
   const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
   const playNext = usePlayerStore((state) => state.playNext);
   const playPrevious = usePlayerStore((state) => state.playPrevious);
+  const seekTo = usePlayerStore((state) => state.seekTo);
+  const positionSec = usePlayerStore((state) => state.positionSec);
+  const durationSec = usePlayerStore((state) => state.durationSec);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -38,22 +41,19 @@ export const useGlobalShortcuts = (): void => {
 
       if (event.code === 'ArrowRight') {
         event.preventDefault();
-        const position = usePlayerStore.getState().positionSec;
-        const duration = usePlayerStore.getState().durationSec;
-        const nextPos = Math.min(duration || position + 5, position + 5);
-        usePlayerStore.getState().seekTo(nextPos);
+        const nextPos = Math.min(durationSec || positionSec + 5, positionSec + 5);
+        seekTo(nextPos);
         return;
       }
 
       if (event.code === 'ArrowLeft') {
         event.preventDefault();
-        const position = usePlayerStore.getState().positionSec;
-        const nextPos = Math.max(0, position - 5);
-        usePlayerStore.getState().seekTo(nextPos);
+        const nextPos = Math.max(0, positionSec - 5);
+        seekTo(nextPos);
       }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [togglePlayPause, playNext, playPrevious]);
+  }, [togglePlayPause, playNext, playPrevious, seekTo, positionSec, durationSec]);
 };

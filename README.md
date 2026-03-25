@@ -1,4 +1,4 @@
-# Amply v1.4.4
+# Amply v1.5.0
 
 A modern, offline-first desktop music player built for local libraries. Amply combines fast scanning, smart mixes, and a smooth desktop UI while keeping your music fully local.
 
@@ -15,12 +15,12 @@ A modern, offline-first desktop music player built for local libraries. Amply co
 - Sleep timer with countdown and auto-stop
 - Large-library performance upgrades (virtualized grids, cached lookups)
 
-## New in 1.4.4
+## New in 1.5.0
 
-- Sleep timer controls with live countdown and scheduled stop.
-- Advanced playback panel: EQ presets, playback speed, and output device selection.
-- Lyrics visuals themes (Ember, Aurora, Mono) with a toggle.
-- Pause background metadata fetching and inspect local cache status.
+- Faster startup with deferred scanning and smoother idle processing.
+- More reliable artist + genre matching (primary-artist aware).
+- Metadata retry on play with a manual retry icon in the artist panel.
+- Improved caching and background fetch behavior for missing metadata.
 
 ## Core Concepts
 

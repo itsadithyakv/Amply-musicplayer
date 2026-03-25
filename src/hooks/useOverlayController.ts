@@ -196,10 +196,6 @@ export const useOverlayController = (enabled: boolean): void => {
   }, [enabled, overlayAutoHide]);
 
   useEffect(() => {
-    return;
-  }, []);
-
-  useEffect(() => {
     if (!isTauri()) {
       return;
     }

@@ -1,5 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
+import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
 
 interface AlbumCardProps {
   title: string;
@@ -33,16 +34,12 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
       )}
     >
       <div className="group relative h-[150px] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2233] via-[#171b24] to-[#12151c]">
-        {artwork ? (
-          <>
-            <img src={artwork} alt={title} className="h-full w-full object-cover" loading="lazy" />
-            <div className="pointer-events-none absolute inset-0 bg-black/30 transition-opacity duration-200 ease-smooth group-hover:bg-black/20" />
-          </>
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs uppercase tracking-[0.14em] text-amply-textMuted">
-            Amply
-          </div>
-        )}
+        <OptimizedImage
+          src={artwork}
+          alt={title}
+          className="h-full w-full object-cover"
+          placeholderContent={<span className="text-xs uppercase tracking-[0.14em] text-amply-textMuted">Amply</span>}
+        />
         {onInfo ? (
           <button
             type="button"

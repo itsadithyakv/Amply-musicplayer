@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import retryIcon from '@/assets/icons/repeat.svg';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import {
   readCachedArtistProfile,
+  loadArtistProfile,
   type ArtistProfile,
   type ArtistProfileLoadResult,
 } from '@/services/artistProfileService';
 import { formatDuration } from '@/utils/time';
 import { useIdleRender } from '@/hooks/useIdleRender';
+import { useMetadataPriority } from '@/hooks/useMetadataPriority';
 import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
 import {
   getAlbumTracklistKey,
@@ -73,6 +76,7 @@ const NowPlayingPanel = () => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
+  const fetchMissingMetadataForSong = useLibraryStore((state) => state.fetchMissingMetadataForSong);
   const setQueue = usePlayerStore((state) => state.setQueue);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const setAlbumQueueView = usePlayerStore((state) => state.setAlbumQueueView);
@@ -93,6 +97,7 @@ const NowPlayingPanel = () => {
   const [artistChecked, setArtistChecked] = useState(false);
   const [resolvedGenre, setResolvedGenre] = useState<string>('Unknown Genre');
   const idleReady = useIdleRender(300);
+  const { onSongChange, shouldLoadExpensiveMetadata } = useMetadataPriority();
   const lastArtistRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -108,7 +113,10 @@ const NowPlayingPanel = () => {
 
     const currentGenre = song.genre?.trim() || 'Unknown Genre';
     setResolvedGenre(currentGenre);
-  }, [song?.id, song?.genre, gameMode]);
+
+    // Notify priority system of song change
+    onSongChange();
+  }, [song?.id, song?.genre, gameMode, onSongChange]);
 
   useEffect(() => {
     if (gameMode) {
@@ -147,6 +155,41 @@ const NowPlayingPanel = () => {
       setArtistChecked(false);
     }
 
+    const retryTimers: number[] = [];
+
+    const scheduleRetry = () => {
+      const handle = window.setTimeout(() => {
+        if (!alive) {
+          return;
+        }
+        const artistKey = primaryArtist.trim().toLowerCase();
+        if (!artistKey || !tryAcquireMetadata('artist', artistKey)) {
+          return;
+        }
+        setArtistLoading(true);
+        loadArtistProfile(primaryArtist)
+          .then((fresh) => {
+            if (!alive) {
+              return;
+            }
+            setArtistStatus(fresh.status);
+            setArtistCachePath(fresh.cachePath);
+            setArtistChecked(true);
+            if (fresh.status === 'ready') {
+              setArtistProfile(fresh.profile);
+              setArtistFromCache(fresh.fromCache);
+            }
+          })
+          .finally(() => {
+            releaseMetadata('artist', artistKey);
+            if (alive) {
+              setArtistLoading(false);
+            }
+          });
+      }, 1600);
+      retryTimers.push(handle);
+    };
+
     const cancel = scheduleDeferredIdle(() => {
       if (!alive) {
         return;
@@ -163,12 +206,49 @@ const NowPlayingPanel = () => {
 
           setArtistStatus(result.status);
           setArtistCachePath(result.cachePath);
-          setArtistChecked(true);
+          if (result.status !== 'missing') {
+            setArtistChecked(true);
+          } else {
+            setArtistChecked(false);
+          }
 
           if (result.status === 'ready') {
             setArtistProfile(result.profile);
             setArtistFromCache(result.fromCache);
+            return;
           }
+          if (isOffline) {
+            setArtistChecked(true);
+            return;
+          }
+
+          // Check if we should load expensive metadata (network calls)
+          if (!shouldLoadExpensiveMetadata()) {
+            // User is rapidly changing songs, skip expensive operations
+            scheduleRetry();
+            return;
+          }
+
+          const artistKey = primaryArtist.trim().toLowerCase();
+          if (!artistKey || !tryAcquireMetadata('artist', artistKey)) {
+            return;
+          }
+          loadArtistProfile(primaryArtist)
+            .then((fresh) => {
+              if (!alive) {
+                return;
+              }
+              setArtistStatus(fresh.status);
+              setArtistCachePath(fresh.cachePath);
+              setArtistChecked(true);
+              if (fresh.status === 'ready') {
+                setArtistProfile(fresh.profile);
+                setArtistFromCache(fresh.fromCache);
+              }
+            })
+            .finally(() => {
+              releaseMetadata('artist', artistKey);
+            });
         })
         .finally(() => {
           if (alive) {
@@ -179,9 +259,10 @@ const NowPlayingPanel = () => {
 
     return () => {
       alive = false;
+      retryTimers.forEach((handle) => window.clearTimeout(handle));
       cancel();
     };
-  }, [primaryArtist, gameMode, artistProfile, metadataFetchDone]);
+  }, [primaryArtist, gameMode, artistProfile, metadataFetchDone, metadataFetchPaused, isOffline]);
 
   const openAlbumQueue = useCallback(
     async (current: NonNullable<typeof song>) => {
@@ -472,6 +553,30 @@ const NowPlayingPanel = () => {
             {!artistLoading && artistChecked && artistStatus === 'missing' ? (
               <p className="text-[12px] text-amply-textMuted">Artist details not available for this track.</p>
             ) : null}
+
+            {artistChecked && !artistLoading && artistStatus !== 'ready' ? (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  aria-label="Retry metadata"
+                  title="Retry metadata"
+                  disabled={!song}
+                  onClick={() => {
+                    if (!song) {
+                      return;
+                    }
+                    void fetchMissingMetadataForSong(song.id, {
+                      forceRetry: true,
+                      ignoreCooldown: true,
+                      allowWhenPaused: true,
+                    });
+                  }}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-amply-border/60 text-amply-textSecondary transition-colors hover:text-amply-textPrimary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <img src={retryIcon} alt="" className="h-4 w-4" />
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
@@ -479,4 +584,4 @@ const NowPlayingPanel = () => {
   );
 };
 
-export default NowPlayingPanel;
+export default memo(NowPlayingPanel);

@@ -14,6 +14,7 @@ import {
   releaseMetadata,
 } from '@/services/metadataAttemptService';
 import { isSongCached, loadMetadataCacheIndex } from '@/services/metadataCacheIndex';
+import { notifySongChange, shouldLoadExpensiveMetadata } from '@/services/metadataPriority';
 
 const setGlobalPlayingFlag = (playing: boolean): void => {
   if (typeof window === 'undefined') {
@@ -373,6 +374,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
+    // Notify the priority system of song change
+    notifySongChange();
+
     const state = get();
     audioEngine.setLoop(state.repeatMode === 'one');
 
@@ -425,7 +429,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           if (get().currentSongId !== songId) {
             return;
           }
-          void useLibraryStore.getState().fetchMissingMetadataForSong(songId);
+          void useLibraryStore
+            .getState()
+            .fetchMissingMetadataForSong(songId, { forceRetry: true, ignoreCooldown: true });
         };
         if (typeof idle === 'function') {
           idle(runFetch, { timeout: 1500 });
@@ -438,6 +444,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (!get().settings.gameMode) {
       window.setTimeout(() => {
         if (get().currentSongId !== songId) {
+          return;
+        }
+        // Check if we should load expensive metadata
+        if (!shouldLoadExpensiveMetadata()) {
           return;
         }
         const idle = (globalThis as typeof globalThis & {

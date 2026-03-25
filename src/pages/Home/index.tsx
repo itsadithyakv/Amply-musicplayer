@@ -30,7 +30,10 @@ const SectionRow = ({
       {scrollable ? (
         <div className="flex gap-5 overflow-x-auto pb-3 pr-2">
           {songs.map((song) => (
-            <div key={`${title}-${song.id}`} className="min-w-[200px] max-w-[220px] flex-1">
+            <div
+              key={`${title}-${song.id}`}
+              className="card-sheen group min-w-[200px] max-w-[220px] flex-1 overflow-hidden rounded-card border border-amply-border/60 bg-amply-surface/60 p-1 shadow-card transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:shadow-lift"
+            >
               <AlbumCard title={song.title} subtitle={song.artist} artwork={song.albumArt} onClick={() => onPick(song)} />
             </div>
           ))}
@@ -38,13 +41,12 @@ const SectionRow = ({
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
           {songs.map((song) => (
-            <AlbumCard
+            <div
               key={`${title}-${song.id}`}
-              title={song.title}
-              subtitle={song.artist}
-              artwork={song.albumArt}
-              onClick={() => onPick(song)}
-            />
+              className="card-sheen group overflow-hidden rounded-card border border-amply-border/60 bg-amply-surface/60 p-1 shadow-card transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:shadow-lift"
+            >
+              <AlbumCard title={song.title} subtitle={song.artist} artwork={song.albumArt} onClick={() => onPick(song)} />
+            </div>
           ))}
         </div>
       )}
@@ -136,7 +138,6 @@ const HomePage = () => {
 
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
-  const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
@@ -148,11 +149,19 @@ const HomePage = () => {
   const [smartPlaylistLoading, setSmartPlaylistLoading] = useState(true);
   const [smartMixesAll, setSmartMixesAll] = useState<PlaylistCardItem[]>([]);
   const [albumTracklistCache, setAlbumTracklistCache] = useState<Record<string, { tracks?: Array<{ position: number; title: string }> }>>({});
+  const [smartPlaylistRenderSeed, setSmartPlaylistRenderSeed] = useState(() => smartPlaylistSeed || Date.now());
   const clickTimerRef = useRef<number | null>(null);
   const clickTargetRef = useRef<string | null>(null);
-  const showMoreMixesCard = !smartPlaylistLoading || smartPlaylistCards.length > 0;
+  const albumSubtitleCacheRef = useRef<Map<string, string>>(new Map());
+  const wasRegeneratingRef = useRef(regeneratingSmartPlaylists);
+  const smartMixCount = useMemo(
+    () => playlists.filter((playlist) => playlist.type === 'smart' && playlist.songIds.length).length,
+    [playlists],
+  );
+  const showMoreMixesCard = smartMixCount > 0;
 
   const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
+  const allSongIds = useMemo(() => songs.map((song) => song.id), [songs]);
 
   useEffect(() => {
     let alive = true;
@@ -178,10 +187,11 @@ const HomePage = () => {
       if (!first) {
         return `${playlist.songIds.length} songs`;
       }
+      const cacheKey = `${playlist.id}:${first.id}`;
       const key = getAlbumTracklistKey(getPrimaryArtistName(first.artist), first.album);
       const tracklist = albumTracklistCache[key];
       if (!tracklist?.tracks?.length) {
-        return `${playlist.songIds.length} songs`;
+        return albumSubtitleCacheRef.current.get(cacheKey) ?? `${playlist.songIds.length} songs`;
       }
       const byTrack = new Map<number, Song>();
       const byTitle = new Map<string, Song>();
@@ -202,13 +212,19 @@ const HomePage = () => {
           available += 1;
         }
       }
-      return `${available}/${tracklist.tracks.length} available`;
+      const next = `${available}/${tracklist.tracks.length} available`;
+      albumSubtitleCacheRef.current.set(cacheKey, next);
+      return next;
     },
     [albumTracklistCache, songsById],
   );
 
   const handleSmartCardClick = useCallback(
     (id: string, onClick: () => void, onDoubleClick: () => void) => {
+      if (clickTimerRef.current && clickTargetRef.current !== id) {
+        window.clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
       if (clickTimerRef.current && clickTargetRef.current === id) {
         window.clearTimeout(clickTimerRef.current);
         clickTimerRef.current = null;
@@ -225,6 +241,30 @@ const HomePage = () => {
     },
     [],
   );
+
+  useEffect(() => {
+    if (smartPlaylistSeed) {
+      setSmartPlaylistRenderSeed(smartPlaylistSeed);
+    }
+  }, [smartPlaylistSeed]);
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) {
+        window.clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickTargetRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const wasRegenerating = wasRegeneratingRef.current;
+    if (wasRegenerating && !regeneratingSmartPlaylists) {
+      setSmartPlaylistRenderSeed(Date.now());
+    }
+    wasRegeneratingRef.current = regeneratingSmartPlaylists;
+  }, [regeneratingSmartPlaylists]);
 
   useEffect(() => {
     let alive = true;
@@ -471,7 +511,7 @@ const HomePage = () => {
         }))
         .filter((entry) => entry.songIds.length);
 
-      const seed = smartPlaylistSeed || Date.now();
+      const seed = smartPlaylistRenderSeed || Date.now();
       const now = Date.now() / 1000;
       const scoreFor = (baseId: string) => {
         const usage = playlistUsage[baseId];
@@ -537,13 +577,12 @@ const HomePage = () => {
   }, [playlists, songsById, showMoreMixes, getAlbumSpotlightSubtitle]);
 
   const pickSong = (song: Song) => {
-    const queue = songs.map((item) => item.id);
-    setQueue(queue, song.id);
+    setQueue(allSongIds, song.id);
     void playSongById(song.id, false);
   };
 
   const playPlaylist = (playlistSongIds: string[], startSongId?: string, playlistId?: string) => {
-    const queue = playlistSongIds.filter((songId) => songs.some((song) => song.id === songId));
+    const queue = playlistSongIds.filter((songId) => songsById.has(songId));
     const fallbackSongId = queue[0];
     const targetSongId = startSongId && queue.includes(startSongId) ? startSongId : fallbackSongId;
 
@@ -558,21 +597,11 @@ const HomePage = () => {
     }
   };
 
-  const openPlaylistQueue = (playlistSongIds: string[], startSongId?: string, playlistId?: string) => {
-    const queue = playlistSongIds.filter((songId) => songs.some((song) => song.id === songId));
-    const fallbackSongId = queue[0];
-    const targetSongId = startSongId && queue.includes(startSongId) ? startSongId : fallbackSongId;
-
-    if (!targetSongId) {
+  const openPlaylistDetail = (playlistId?: string) => {
+    if (!playlistId) {
       return;
     }
-
-    setQueue(queue, targetSongId);
-    setNowPlayingTab('queue');
-    navigate('/now-playing');
-    if (playlistId) {
-      void recordPlaylistUse(playlistId);
-    }
+    navigate(`/playlist/${playlistId}`);
   };
 
   return (
@@ -673,7 +702,7 @@ const HomePage = () => {
                   handleSmartCardClick(
                     item.id,
                     () => playPlaylist(item.songIds, item.startSongId, item.baseId),
-                    () => openPlaylistQueue(item.songIds, item.startSongId, item.baseId),
+                    () => openPlaylistDetail(item.baseId),
                   )
                 }
                 className={clsx(
@@ -683,7 +712,7 @@ const HomePage = () => {
                   isFeatured ? 'min-h-[240px] sm:col-span-2 xl:col-span-2' : 'min-h-[180px]',
                 )}
                 style={backgroundStyle}
-                title="Click to play. Double-click to open queue."
+                title="Click to play. Double-click to open playlist."
               >
                 {artworkSet[0] ? (
                   <div className="blur-backdrop playlist-backdrop">
@@ -792,14 +821,14 @@ const HomePage = () => {
                       handleSmartCardClick(
                         item.id,
                         () => playPlaylist(item.songIds, undefined, item.baseId),
-                        () => openPlaylistQueue(item.songIds, undefined, item.baseId),
+                        () => openPlaylistDetail(item.baseId),
                       )
                     }
                     className={clsx(
                       'card-sheen relative min-w-[220px] max-w-[240px] flex-1 overflow-hidden rounded-card border border-amply-border/60 p-5 text-left shadow-card transition-all duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
                       playlistToneClasses[(index + 1) % playlistToneClasses.length],
                     )}
-                    title="Click to play. Double-click to open queue."
+                    title="Click to play. Double-click to open playlist."
                   >
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.08),transparent_55%)]" />
                     <div className="relative flex items-end justify-between gap-3">

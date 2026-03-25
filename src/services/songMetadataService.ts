@@ -1,6 +1,7 @@
 import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { markSongCached } from '@/services/metadataCacheIndex';
 import type { Song } from '@/types/music';
+import { getPrimaryArtistName } from '@/utils/artists';
 
 const cachePath = 'metadata_cache/song_genre_cache.json';
 
@@ -112,9 +113,10 @@ interface ItunesSongHit {
 }
 
 const scoreHit = (song: Song, hit: ItunesSongHit): number => {
+  const artistForMatch = getPrimaryArtistName(song.artist) ?? song.artist;
   let score = 0;
   const trackMatch = hit.trackName ? isCloseMatch(hit.trackName, song.title) : false;
-  const artistMatch = hit.artistName ? isArtistCloseMatch(hit.artistName, song.artist) : false;
+  const artistMatch = hit.artistName ? isArtistCloseMatch(hit.artistName, artistForMatch) : false;
 
   if (!trackMatch || !artistMatch) {
     return 0;
@@ -125,7 +127,7 @@ const scoreHit = (song: Song, hit: ItunesSongHit): number => {
   }
 
   if (hit.artistName) {
-    score += isExactMatch(hit.artistName, song.artist) ? 6 : 4;
+    score += isExactMatch(hit.artistName, artistForMatch) ? 6 : 4;
   }
 
   if (hit.primaryGenreName) {
@@ -136,7 +138,10 @@ const scoreHit = (song: Song, hit: ItunesSongHit): number => {
 };
 
 const fetchGenre = async (song: Song): Promise<string | null> => {
-  const endpoint = `https://itunes.apple.com/search?term=${encodeURIComponent(`${song.artist} ${song.title}`.trim())}&entity=song&limit=8`;
+  const primaryArtist = getPrimaryArtistName(song.artist) ?? song.artist;
+  const endpoint = `https://itunes.apple.com/search?term=${encodeURIComponent(
+    `${primaryArtist} ${song.title}`.trim(),
+  )}&entity=song&limit=8`;
   const response = await fetch(endpoint);
 
   if (!response.ok) {

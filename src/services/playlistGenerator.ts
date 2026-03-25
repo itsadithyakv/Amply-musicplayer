@@ -48,6 +48,75 @@ const weeklyShuffle = (songs: Song[], seed: number): Song[] => {
   });
 };
 
+const spreadByKey = (songs: Song[], keyFor: (song: Song) => string): Song[] => {
+  if (songs.length <= 2) {
+    return songs;
+  }
+  const buckets = new Map<string, Song[]>();
+  const positions = new Map<string, number>();
+  for (const song of songs) {
+    const key = keyFor(song) || 'unknown';
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(song);
+    buckets.set(key, bucket);
+  }
+  for (const key of buckets.keys()) {
+    positions.set(key, 0);
+  }
+  const keys = [...buckets.keys()];
+  const result: Song[] = [];
+  let lastKey: string | null = null;
+
+  const remainingFor = (key: string) => {
+    const bucket = buckets.get(key);
+    const pos = positions.get(key) ?? 0;
+    return bucket ? Math.max(0, bucket.length - pos) : 0;
+  };
+
+  while (result.length < songs.length) {
+    let bestKey: string | null = null;
+    let bestAlt: string | null = null;
+    let bestRemaining = -1;
+    let altRemaining = -1;
+    for (const key of keys) {
+      const remaining = remainingFor(key);
+      if (remaining <= 0) {
+        continue;
+      }
+      if (key !== lastKey) {
+        if (remaining > bestRemaining) {
+          bestRemaining = remaining;
+          bestKey = key;
+        }
+      } else if (remaining > altRemaining) {
+        altRemaining = remaining;
+        bestAlt = key;
+      }
+    }
+    const pickKey: string | null = bestKey ?? bestAlt;
+    if (!pickKey) {
+      break;
+    }
+    const bucket = buckets.get(pickKey)!;
+    const pos = positions.get(pickKey) ?? 0;
+    const song = bucket[pos];
+    if (!song) {
+      positions.set(pickKey, pos + 1);
+      continue;
+    }
+    result.push(song);
+    positions.set(pickKey, pos + 1);
+    lastKey = pickKey;
+  }
+
+  return result.length === songs.length ? result : songs;
+};
+
+const shuffleWithSpacing = (songs: Song[], seed: number): Song[] => {
+  const shuffled = weeklyShuffle(songs, seed);
+  return spreadByKey(shuffled, (song) => getPrimaryArtistName(song.artist).toLowerCase() || song.artist.toLowerCase());
+};
+
 const sortAlbumTracks = (songs: Song[]): Song[] => {
   return [...songs].sort((a, b) => {
     const titleCmp = a.title.localeCompare(b.title);
@@ -95,10 +164,22 @@ const normalizeGenreBucket = (genreRaw: string): string | null => {
   return null;
 };
 
+const getGenreBucketForSong = (song: Song): string => {
+  const raw = song.genre?.trim() ?? '';
+  const normalized = raw ? normalizeGenreBucket(raw) : null;
+  if (normalized) {
+    return normalized;
+  }
+  if (raw && !isUnknownGenre(raw)) {
+    return raw;
+  }
+  return 'Unknown Genre';
+};
+
 const interleaveByGenre = (songs: Song[]): Song[] => {
   const buckets = new Map<string, Song[]>();
   songs.forEach((song) => {
-    const genre = song.genre || 'Unknown Genre';
+    const genre = getGenreBucketForSong(song);
     const list = buckets.get(genre) ?? [];
     list.push(song);
     buckets.set(genre, list);
@@ -132,8 +213,17 @@ const pickDailyMix = (songs: Song[], seed: number): Song[] => {
   const nonRecent = shuffled.filter((song) => !song.lastPlayed || song.lastPlayed < recentThreshold);
   const favorites = nonRecent.filter((song) => song.favorite);
   const mixed = interleaveByGenre(nonRecent);
+  const combined = [...favorites.slice(0, 8), ...mixed];
+  const seen = new Set<string>();
+  const deduped = combined.filter((song) => {
+    if (seen.has(song.id)) {
+      return false;
+    }
+    seen.add(song.id);
+    return true;
+  });
 
-  return [...favorites.slice(0, 8), ...mixed].slice(0, 60);
+  return spreadByKey(deduped.slice(0, 60), (song) => getPrimaryArtistName(song.artist).toLowerCase() || song.artist.toLowerCase());
 };
 
 const pickOnRepeat = (songs: Song[]): Song[] => {
@@ -277,16 +367,18 @@ const buildMoodMixes = (songs: Song[]): Playlist[] => {
   const scoredMixes = moods.map((mood) => {
     const scored = songs
       .map((song) => {
-        const genre = song.genre?.toLowerCase() ?? '';
+        const rawGenre = song.genre?.toLowerCase() ?? '';
+        const bucket = normalizeGenreBucket(song.genre ?? '');
+        const bucketKey = bucket ? bucket.toLowerCase().replace(/-/g, ' ') : '';
         const title = song.title?.toLowerCase() ?? '';
         let score = 0;
 
-        if (mood.genreHints.some((hint) => genre.includes(hint))) {
-          score += 3;
+        if (mood.genreHints.some((hint) => rawGenre.includes(hint) || (bucketKey && bucketKey.includes(hint)))) {
+          score += 5;
         }
 
         if (mood.titleHints.some((hint) => title.includes(hint))) {
-          score += 2;
+          score += 1;
         }
 
         if (song.favorite) {
@@ -366,46 +458,46 @@ export const generateSmartPlaylists = (
 
   const playlists: Playlist[] = [
     mapPlaylist('smart_daily_mix', 'Daily Mix', 'Fresh daily mix with genre balance.', dailyMix),
-    mapPlaylist('smart_on_repeat', 'On Repeat', 'Songs you have been playing most this week.', weeklyShuffle(onRepeat, seed)),
+    mapPlaylist('smart_on_repeat', 'On Repeat', 'Songs you have been playing most this week.', shuffleWithSpacing(onRepeat, seed)),
     ...moodMixes.map((entry) => ({
       ...entry,
-      songIds: weeklyShuffle(
+      songIds: shuffleWithSpacing(
         entry.songIds.map((id) => songs.find((song) => song.id === id)).filter(Boolean) as Song[],
         seed,
       ).map((song) => song.id),
     })),
     ...genreMixes.map((entry) => ({
       ...entry,
-      songIds: weeklyShuffle(
+      songIds: shuffleWithSpacing(
         entry.songIds.map((id) => songs.find((song) => song.id === id)).filter(Boolean) as Song[],
         seed,
       ).map((song) => song.id),
     })),
-    mapPlaylist('smart_recently_played', 'Recently Played', 'Tracks you listened to most recently.', weeklyShuffle(recentlyPlayed, seed)),
-    mapPlaylist('smart_recently_added', 'Recently Added', 'Latest tracks added to your library.', weeklyShuffle(recentlyAdded, seed)),
-    mapPlaylist('smart_most_played', 'Most Played', 'Your most replayed songs.', weeklyShuffle(mostPlayed, seed)),
-    mapPlaylist('smart_rediscover', 'Rediscover', 'Songs you have not played in a while.', weeklyShuffle(rediscover, seed)),
-    mapPlaylist('smart_favorites', 'Favorites', 'Your favorited songs.', weeklyShuffle(favorites, seed)),
+    mapPlaylist('smart_recently_played', 'Recently Played', 'Tracks you listened to most recently.', shuffleWithSpacing(recentlyPlayed, seed)),
+    mapPlaylist('smart_recently_added', 'Recently Added', 'Latest tracks added to your library.', shuffleWithSpacing(recentlyAdded, seed)),
+    mapPlaylist('smart_most_played', 'Most Played', 'Your most replayed songs.', shuffleWithSpacing(mostPlayed, seed)),
+    mapPlaylist('smart_rediscover', 'Rediscover', 'Songs you have not played in a while.', shuffleWithSpacing(rediscover, seed)),
+    mapPlaylist('smart_favorites', 'Favorites', 'Your favorited songs.', shuffleWithSpacing(favorites, seed)),
   ];
 
   if (lovedAndPlayed.length) {
     playlists.push(
-      mapPlaylist('smart_loved_played', 'Loved & Played', 'Favorites you keep coming back to.', weeklyShuffle(lovedAndPlayed, seed)),
+      mapPlaylist('smart_loved_played', 'Loved & Played', 'Favorites you keep coming back to.', shuffleWithSpacing(lovedAndPlayed, seed)),
     );
   }
   if (quickHits.length) {
     playlists.push(
-      mapPlaylist('smart_quick_hits', 'Quick Hits', 'Short, punchy tracks under 3 minutes.', weeklyShuffle(quickHits, seed)),
+      mapPlaylist('smart_quick_hits', 'Quick Hits', 'Short, punchy tracks under 3 minutes.', shuffleWithSpacing(quickHits, seed)),
     );
   }
   if (longSessions.length) {
     playlists.push(
-      mapPlaylist('smart_long_sessions', 'Long Sessions', 'Longer tracks for deep listening.', weeklyShuffle(longSessions, seed)),
+      mapPlaylist('smart_long_sessions', 'Long Sessions', 'Longer tracks for deep listening.', shuffleWithSpacing(longSessions, seed)),
     );
   }
   if (deepCuts.length) {
     playlists.push(
-      mapPlaylist('smart_deep_cuts', 'Deep Cuts', 'Less-played gems from your library.', weeklyShuffle(deepCuts, seed)),
+      mapPlaylist('smart_deep_cuts', 'Deep Cuts', 'Less-played gems from your library.', shuffleWithSpacing(deepCuts, seed)),
     );
   }
   if (albumSpotlight.length) {

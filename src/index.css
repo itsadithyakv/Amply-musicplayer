@@ -223,8 +223,45 @@ button:disabled {
   transform: translate3d(8px, 8px, 0);
 }
 
+.artwork-collage--inline .artwork-tile {
+  transform: none;
+}
+
 .playlist-card:hover .artwork-tile {
   transform: translate3d(0, -2px, 0) scale(1.02);
+}
+
+.playlist-card--stable {
+  transform: none;
+}
+
+.playlist-card--stable:hover {
+  transform: none;
+  filter: brightness(1.05) saturate(1.05);
+}
+
+.playlist-card--stable::after {
+  transform: none;
+}
+
+.playlist-card--stable:hover::after {
+  transform: none;
+}
+
+.playlist-card--stable:hover .artwork-collage {
+  transform: none;
+}
+
+.playlist-card--stable:hover .artwork-tile {
+  transform: none;
+}
+
+.playlist-card--stable::before {
+  transition: opacity 220ms ease;
+}
+
+.playlist-card--stable:hover::before {
+  opacity: 0.8;
 }
 
 .playlist-play {
@@ -401,6 +438,7 @@ button:disabled {
     transform: scale(1);
   }
 }
+
 
 .energy-carousel {
   scroll-behavior: smooth;

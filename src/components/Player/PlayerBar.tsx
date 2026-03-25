@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
 import prevIcon from '@/assets/icons/prev.svg';
 import nextIcon from '@/assets/icons/next.svg';
 import playIcon from '@/assets/icons/play.svg';
@@ -75,11 +76,11 @@ const PlayerBar = () => {
       <div className="grid h-full grid-cols-[1.6fr_2fr_1.2fr] items-center gap-4">
         <div className="relative flex min-w-0 items-center gap-3">
           <Link to="/now-playing" className="flex min-w-0 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-amply-hover">
-            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800">
-              {song?.albumArt ? (
-                <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" decoding="async" />
-              ) : null}
-            </div>
+            <OptimizedImage
+              src={song?.albumArt}
+              alt={song?.album ?? 'Unknown Album'}
+              className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800"
+            />
             <div className="min-w-0">
               <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? 'Select a track'}</p>
               <p className="truncate text-[12px] text-amply-textSecondary">{song ? `${song.artist} - ${song.album}` : 'Your local library'}</p>
@@ -401,4 +402,4 @@ const PlayerBar = () => {
   );
 };
 
-export default PlayerBar;
+export default memo(PlayerBar);

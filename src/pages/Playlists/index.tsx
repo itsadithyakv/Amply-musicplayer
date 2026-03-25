@@ -1,9 +1,10 @@
 import clsx from 'clsx';
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
 import PlaylistComposer from '@/components/Playlists/PlaylistComposer';
+import addIcon from '@/assets/icons/add.svg';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Playlist } from '@/types/music';
@@ -11,16 +12,46 @@ import type { Playlist } from '@/types/music';
 const PlaylistsPage = () => {
   const songs = useLibraryStore((state) => state.songs);
   const playlists = useLibraryStore((state) => state.playlists);
-  const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const upsertCustomPlaylist = useLibraryStore((state) => state.upsertCustomPlaylist);
   const navigate = useNavigate();
 
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
-  const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
 
   const [showComposer, setShowComposer] = useState(false);
   const songById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
+  const clickTimerRef = useRef<number | null>(null);
+  const clickTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) {
+        window.clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      clickTargetRef.current = null;
+    };
+  }, []);
+
+  const handleCardClick = (id: string, onClick: () => void, onDoubleClick: () => void) => {
+    if (clickTimerRef.current && clickTargetRef.current !== id) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    if (clickTimerRef.current && clickTargetRef.current === id) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      clickTargetRef.current = null;
+      onDoubleClick();
+      return;
+    }
+    clickTargetRef.current = id;
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      clickTargetRef.current = null;
+      onClick();
+    }, 220);
+  };
 
   const playlistToneClasses = [
     'bg-gradient-to-br from-[#1f2a45] via-[#151b26] to-[#0f1218]',
@@ -67,22 +98,120 @@ const PlaylistsPage = () => {
     });
   }, [playlists, songById]);
 
-  const openPlaylistQueue = (playlistSongIds: string[], startSongId?: string, playlistId?: string) => {
-    const queue = playlistSongIds.filter((songId) => songs.some((song) => song.id === songId));
-    const fallbackSongId = queue[0];
-    const targetSongId = startSongId && queue.includes(startSongId) ? startSongId : fallbackSongId;
+  const smartPlaylistCards = useMemo(
+    () => playlistCards.filter((card) => card.playlist.type === 'smart' || card.playlist.type === 'daily'),
+    [playlistCards],
+  );
+  const customPlaylistCards = useMemo(
+    () => playlistCards.filter((card) => card.playlist.type === 'custom'),
+    [playlistCards],
+  );
 
-    if (!targetSongId) {
-      return;
-    }
+  const PlaylistCard = ({
+    playlist,
+    artworkSet,
+    firstSongId,
+    index,
+  }: {
+    playlist: Playlist;
+    artworkSet: string[];
+    firstSongId?: string;
+    index: number;
+  }) => {
+    const backgroundStyle = artworkSet[0]
+      ? {
+          backgroundImage: `linear-gradient(140deg, rgba(10, 10, 12, 0.8), rgba(10, 10, 12, 0.5)), url(${artworkSet[0]})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundBlendMode: 'overlay',
+        }
+      : undefined;
 
-    setQueue(queue, targetSongId);
-    setNowPlayingTab('queue');
-    navigate('/now-playing');
-    if (playlistId) {
-      void recordPlaylistUse(playlistId);
-    }
+    return (
+      <div
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest('[data-play-button="true"]')) {
+            return;
+          }
+          handleCardClick(
+            playlist.id,
+            () => {
+              if (!playlist.songIds.length || !firstSongId) {
+                return;
+              }
+              setQueue(playlist.songIds, firstSongId);
+              void playSongById(firstSongId, false);
+            },
+            () => navigate(`/playlist/${playlist.id}`),
+          );
+        }}
+        className={clsx(
+          'playlist-card playlist-card--stable group relative h-full overflow-hidden rounded-card border border-amply-border/60 p-5 transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:shadow-lift',
+          playlistToneClasses[index % playlistToneClasses.length],
+          playlistGlowClasses[index % playlistGlowClasses.length],
+        )}
+        style={backgroundStyle}
+        title="Click to play · Double-click to open"
+      >
+        {artworkSet[0] ? (
+          <div className="blur-backdrop playlist-backdrop">
+            <img src={artworkSet[0]} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+          </div>
+        ) : null}
+
+        <div className="glass-overlay" />
+
+        <div className="relative flex h-full flex-col justify-between gap-4">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="playlist-text-shadow text-[18px] font-semibold text-amply-textPrimary">{playlist.name}</p>
+              <span className="rounded-full border border-amply-border/60 bg-black/35 px-2 py-0.5 text-[11px] text-amply-textSecondary">
+                {playlist.songIds.length} songs
+              </span>
+            </div>
+            <p className="playlist-text-shadow line-clamp-2 text-[12px] text-amply-textSecondary">
+              {playlist.description || 'Curated playlist'}
+            </p>
+          </div>
+
+          <div className="flex items-end justify-between gap-3">
+            <div className="artwork-collage artwork-collage--inline max-w-[220px]">
+              {[0, 1, 2, 3].map((slot) => {
+                const art = artworkSet[slot] ?? artworkSet[0];
+                return (
+                  <div
+                    key={`${playlist.id}-art-${slot}`}
+                    className="artwork-tile h-16 w-16 bg-gradient-to-br from-[#1d1f2a] via-[#12151f] to-[#0c0f17]"
+                  >
+                    {art ? <img src={art} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              data-play-button="true"
+              type="button"
+              onClick={() => {
+                if (!playlist.songIds.length || !firstSongId) {
+                  return;
+                }
+                setQueue(playlist.songIds, firstSongId);
+                void playSongById(firstSongId, false);
+              }}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-amply-accent text-black transition-colors hover:bg-amply-accentHover"
+              aria-label="Play playlist"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5.5v13l11-6.5-11-6.5z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
+
 
   const PlaylistCell = memo(({ columnIndex, rowIndex, style, data }: GridChildComponentProps) => {
     const { items, columnCount } = data as {
@@ -95,87 +224,72 @@ const PlaylistsPage = () => {
       return null;
     }
     const { playlist, artworkSet, firstSongId } = item;
-    const backgroundStyle = artworkSet[0]
-      ? {
-          backgroundImage: `linear-gradient(140deg, rgba(10, 10, 12, 0.8), rgba(10, 10, 12, 0.5)), url(${artworkSet[0]})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          backgroundBlendMode: 'overlay',
-        }
-      : undefined;
 
     return (
       <div style={style} className="p-2">
-        <div
-          onDoubleClick={(event) => {
-            if ((event.target as HTMLElement).closest('[data-play-button="true"]')) {
-              return;
-            }
-            openPlaylistQueue(playlist.songIds, firstSongId, playlist.id);
-          }}
-          className={clsx(
-            'playlist-card group relative h-full overflow-hidden rounded-card border border-amply-border/60 p-5 transition-all duration-300 ease-smooth hover:scale-[1.01] hover:shadow-lift',
-            playlistToneClasses[index % playlistToneClasses.length],
-            playlistGlowClasses[index % playlistGlowClasses.length],
-          )}
-          style={backgroundStyle}
-          title="Double-click to open queue"
-        >
-          {artworkSet[0] ? (
-            <div className="blur-backdrop playlist-backdrop">
-              <img src={artworkSet[0]} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
-            </div>
-          ) : null}
-
-          <div className="glass-overlay" />
-
-          <div className="relative flex h-full flex-col justify-between gap-4">
-            <div className="space-y-1">
-              <p className="playlist-text-shadow text-[18px] font-semibold text-amply-textPrimary">{playlist.name}</p>
-              <p className="playlist-text-shadow text-[12px] text-amply-textSecondary">
-                {playlist.description || 'Curated playlist'}
-              </p>
-              <p className="playlist-text-shadow text-[12px] font-semibold text-amply-textPrimary/90">
-                {playlist.songIds.length} songs
-              </p>
-              <p className="text-[11px] text-amply-textMuted">Double-click to open queue</p>
-            </div>
-
-            <div className="flex items-end justify-between gap-3">
-              <div className="artwork-collage max-w-[220px]">
-                {[0, 1, 2, 3].map((slot) => {
-                  const art = artworkSet[slot] ?? artworkSet[0];
-                  return (
-                    <div
-                      key={`${playlist.id}-art-${slot}`}
-                      className="artwork-tile h-20 w-20 bg-gradient-to-br from-[#1d1f2a] via-[#12151f] to-[#0c0f17]"
-                    >
-                      {art ? <img src={art} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : null}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <button
-                data-play-button="true"
-                type="button"
-                onClick={() => {
-                  if (!playlist.songIds.length || !firstSongId) {
-                    return;
-                  }
-                  setQueue(playlist.songIds, firstSongId);
-                  void playSongById(firstSongId, false);
-                }}
-                className="rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
-              >
-                Play
-              </button>
-            </div>
-          </div>
-        </div>
+        <PlaylistCard playlist={playlist} artworkSet={artworkSet} firstSongId={firstSongId} index={index} />
       </div>
     );
   });
+
+
+
+  const renderPlaylistSection = (
+    title: string,
+    description: string,
+    items: Array<{ playlist: Playlist; artworkSet: string[]; firstSongId?: string }>,
+  ) => {
+    if (!items.length) {
+      return null;
+    }
+
+    return (
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-[20px] font-semibold text-amply-textPrimary">{title}</h2>
+          <p className="text-[12px] text-amply-textSecondary">{description}</p>
+        </div>
+
+        {items.length <= 12 ? (
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            {items.map((item, index) => (
+              <div key={item.playlist.id} className="h-full">
+                <PlaylistCard
+                  playlist={item.playlist}
+                  artworkSet={item.artworkSet}
+                  firstSongId={item.firstSongId}
+                  index={index}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="h-[70vh] overflow-hidden rounded-card border border-amply-border/40">
+            <AutoSizer>
+              {({ height, width }) => {
+                const columnCount = Math.max(1, Math.floor(width / 420));
+                const rowCount = Math.ceil(items.length / columnCount);
+                return (
+                  <Grid
+                    columnCount={columnCount}
+                    columnWidth={Math.floor(width / columnCount)}
+                    height={height}
+                    rowCount={rowCount}
+                    rowHeight={320}
+                    width={width}
+                    itemData={{ items, columnCount }}
+                    overscanRowCount={2}
+                  >
+                    {PlaylistCell}
+                  </Grid>
+                );
+              }}
+            </AutoSizer>
+          </div>
+        )}
+      </section>
+    );
+  };
 
   return (
     <div className="space-y-5 pb-8">
@@ -193,8 +307,9 @@ const PlaylistsPage = () => {
           <button
             type="button"
             onClick={() => setShowComposer((current) => !current)}
-            className="rounded-lg bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover"
+            className="inline-flex items-center gap-2 rounded-lg bg-amply-accent px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-amply-accentHover"
           >
+            <img src={addIcon} alt="" className="h-4 w-4 brightness-0 invert" />
             {showComposer ? 'Close' : 'New Playlist'}
           </button>
         </div>
@@ -237,42 +352,8 @@ const PlaylistsPage = () => {
         ) : null}
       </div>
 
-      {playlistCards.length <= 12 ? (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          {playlistCards.map((item, index) => (
-            <PlaylistCell
-              key={item.playlist.id}
-              columnIndex={index % 2}
-              rowIndex={Math.floor(index / 2)}
-              style={{ height: 260, width: '100%' }}
-              data={{ items: playlistCards, columnCount: 2 }}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="h-[70vh]">
-          <AutoSizer>
-            {({ height, width }) => {
-              const columnCount = width >= 900 ? 2 : 1;
-              const columnWidth = Math.floor(width / columnCount);
-              const rowCount = Math.ceil(playlistCards.length / columnCount);
-              return (
-                <Grid
-                  height={height}
-                  width={width}
-                  columnCount={columnCount}
-                  columnWidth={columnWidth}
-                  rowCount={rowCount}
-                  rowHeight={260}
-                  itemData={{ items: playlistCards, columnCount }}
-                >
-                  {PlaylistCell}
-                </Grid>
-              );
-            }}
-          </AutoSizer>
-        </div>
-      )}
+      {renderPlaylistSection('Smart Playlists', 'Auto-generated mixes and daily rotations.', smartPlaylistCards)}
+      {renderPlaylistSection('Your Playlists', 'Playlists you created or curated manually.', customPlaylistCards)}
     </div>
   );
 };

@@ -26,7 +26,14 @@ const cacheKeyForArtist = (artistName: string): string => {
   return `${cacheFolder}/${artistSlug}.json`;
 };
 
-const normalizeText = (value: string): string => value.trim().toLowerCase();
+const normalizeText = (value: string): string => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
 
 const countWords = (value: string): number => {
   if (!value) {
@@ -159,18 +166,28 @@ const fetchWikipediaSummary = async (pageTitle: string): Promise<WikipediaSummar
 };
 
 const fetchWikipediaSearchTitles = async (artistName: string): Promise<string[]> => {
-  const query = `"${artistName}" musician singer rapper band`;
-  const endpoint = `https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=8&format=json&origin=*&srsearch=${encodeURIComponent(query)}`;
-  const response = await fetch(endpoint);
+  const search = async (query: string): Promise<string[]> => {
+    const endpoint = `https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=8&format=json&origin=*&srsearch=${encodeURIComponent(
+      query,
+    )}`;
+    const response = await fetch(endpoint);
 
-  if (!response.ok) {
-    return [];
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = (await response.json()) as WikipediaSearchPayload;
+    return (payload.query?.search ?? [])
+      .map((entry) => entry.title?.trim())
+      .filter((title): title is string => Boolean(title));
+  };
+
+  const quotedQuery = `"${artistName}" musician singer rapper band`;
+  let titles = await search(quotedQuery);
+  if (!titles.length) {
+    const fallbackQuery = `${artistName} musician singer rapper band`;
+    titles = await search(fallbackQuery);
   }
-
-  const payload = (await response.json()) as WikipediaSearchPayload;
-  const titles = (payload.query?.search ?? [])
-    .map((entry) => entry.title?.trim())
-    .filter((title): title is string => Boolean(title));
 
   return titles.sort((a, b) => {
     const score = (title: string): number => {
@@ -274,7 +291,7 @@ const isValidCachedSummary = (summary: string | undefined): boolean => {
     return false;
   }
 
-  return isMusicRelatedText(summary) || countWords(summary) >= 40;
+  return isMusicRelatedText(summary) || countWords(summary) >= 20;
 };
 
 export const hasCachedArtistProfile = async (artistNameRaw: string): Promise<boolean> => {

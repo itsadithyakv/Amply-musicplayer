@@ -1,0 +1,16 @@
+Amply v1.5.0 Release Notes
+
+Highlights
+- Faster startup with deferred library scanning and more frequent yielding during scans.
+- More reliable artist and genre matching (primary-artist aware matching).
+- Metadata retry on every play with a manual retry icon in the artist panel.
+- Safer caching behavior for missing metadata and improved background fetch reliability.
+
+Changes
+- Deferred initial scan to keep the UI responsive on launch.
+- Added manual metadata retry that works even when background fetching is paused.
+- Updated lyrics and genre matching to use primary artist names.
+- Added icon-only retry control in the artist details panel.
+
+Notes
+- Background metadata still respects the pause toggle; manual retry bypasses it by design.

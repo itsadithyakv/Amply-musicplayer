@@ -1,6 +1,6 @@
 import type { LyricLine } from '@/types/music';
 
-const timeRegex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,2}))?\]/g;
+const timeRegex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
 
 export const parseLrc = (raw: string): LyricLine[] => {
   const lines = raw.split(/\r?\n/);
@@ -20,8 +20,9 @@ export const parseLrc = (raw: string): LyricLine[] => {
     for (const match of matches) {
       const mins = Number(match[1]);
       const secs = Number(match[2]);
-      const hundredths = Number(match[3] ?? '0');
-      const timeMs = mins * 60_000 + secs * 1_000 + hundredths * 10;
+      const centisecs = Number(match[3] ?? '0');
+      // Handle both centiseconds (2 digits) and milliseconds (3 digits)
+      const timeMs = mins * 60_000 + secs * 1_000 + (match[3]?.length === 3 ? centisecs : centisecs * 10);
       parsed.push({ timeMs, text });
     }
   }

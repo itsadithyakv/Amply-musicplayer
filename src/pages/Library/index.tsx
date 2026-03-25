@@ -55,6 +55,12 @@ const CARD_MIN_WIDTH = 190;
 const CARD_GAP = 20;
 const CARD_HEIGHT = 250;
 
+const LibraryCardShell = ({ children }: { children: React.ReactNode }) => (
+  <div className="card-sheen group overflow-hidden rounded-card border border-amply-border/60 bg-amply-surface/60 p-1 shadow-card transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:shadow-lift">
+    {children}
+  </div>
+);
+
 const CardGridRow = <T,>({ index, style, data }: ListChildComponentProps<CardGridData<T>>) => {
   const { items, columns, renderItem, getKey } = data;
   const start = index * columns;
@@ -311,13 +317,37 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const settings = usePlayerStore((state) => state.settings);
   const albumTrackFetch = useLibraryStore((state) => state.albumTrackFetch);
 
-  const [activeTab, setActiveTab] = useState<LibraryTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<LibraryTab>(() => {
+    if (typeof window === 'undefined') {
+      return initialTab;
+    }
+    const stored = window.localStorage.getItem('amply-library-tab') as LibraryTab | null;
+    return stored ?? initialTab;
+  });
   const navigate = useNavigate();
-  const [albumSort, setAlbumSort] = useState<AlbumSort>('title_asc');
+  const [albumSort, setAlbumSort] = useState<AlbumSort>(() => {
+    if (typeof window === 'undefined') {
+      return 'title_asc';
+    }
+    const stored = window.localStorage.getItem('amply-library-sort:albums') as AlbumSort | null;
+    return stored ?? 'title_asc';
+  });
   const [albumQuery, setAlbumQuery] = useState('');
-  const [artistSort, setArtistSort] = useState<ArtistSort>('name_asc');
+  const [artistSort, setArtistSort] = useState<ArtistSort>(() => {
+    if (typeof window === 'undefined') {
+      return 'name_asc';
+    }
+    const stored = window.localStorage.getItem('amply-library-sort:artists') as ArtistSort | null;
+    return stored ?? 'name_asc';
+  });
   const [artistQuery, setArtistQuery] = useState('');
-  const [genreSort, setGenreSort] = useState<GenreSort>('name_asc');
+  const [genreSort, setGenreSort] = useState<GenreSort>(() => {
+    if (typeof window === 'undefined') {
+      return 'name_asc';
+    }
+    const stored = window.localStorage.getItem('amply-library-sort:genres') as GenreSort | null;
+    return stored ?? 'name_asc';
+  });
   const [genreQuery, setGenreQuery] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [albumTracklists, setAlbumTracklists] = useState<Record<string, AlbumTracklist>>({});
@@ -349,6 +379,34 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       alive = false;
     };
   }, [songs.length, albumTrackFetch.done]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('amply-library-tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('amply-library-sort:albums', albumSort);
+  }, [albumSort]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('amply-library-sort:artists', artistSort);
+  }, [artistSort]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('amply-library-sort:genres', genreSort);
+  }, [genreSort]);
 
   useEffect(() => {
     if (!activeAlbum) {
@@ -610,111 +668,113 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                       ? `${summary.available}/${summary.total} tracks`
                       : `${totalLocal} tracks`;
                     return (
-                      <AlbumCard
-                        key={`album-${entry.key}`}
-                        title={entry.album}
-                        subtitle={entry.artist}
-                        artwork={entry.artwork}
-                        meta={meta}
-                        onClick={() => {
-                          const cached = albumSummaries.get(entry.key);
-                          const tracklist = cached?.tracklist ?? null;
-                          const { total, available, missing, orderedSongs, viewItems } =
-                            cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
-                          setActiveAlbum({
-                            album: entry.album,
-                            artist: getPrimaryArtistName(entry.artist),
-                            songs: entry.songs,
-                            tracklist,
-                            total,
-                            available,
-                            missing,
-                            orderedSongs,
-                            viewItems,
-                            artwork: entry.artwork,
-                            isLoading: Boolean(!tracklist && !settings.metadataFetchPaused),
-                          });
-                          if (!tracklist && !settings.metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
-                            void (async () => {
-                              try {
-                                const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
-                                const cache = await loadAlbumTracklistCache();
-                                setAlbumTracklists(cache);
-                                if (!result) {
-                                  setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
-                                  return;
+                      <LibraryCardShell>
+                        <AlbumCard
+                          key={`album-${entry.key}`}
+                          title={entry.album}
+                          subtitle={entry.artist}
+                          artwork={entry.artwork}
+                          meta={meta}
+                          onClick={() => {
+                            const cached = albumSummaries.get(entry.key);
+                            const tracklist = cached?.tracklist ?? null;
+                            const { total, available, missing, orderedSongs, viewItems } =
+                              cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
+                            setActiveAlbum({
+                              album: entry.album,
+                              artist: getPrimaryArtistName(entry.artist),
+                              songs: entry.songs,
+                              tracklist,
+                              total,
+                              available,
+                              missing,
+                              orderedSongs,
+                              viewItems,
+                              artwork: entry.artwork,
+                              isLoading: Boolean(!tracklist && !settings.metadataFetchPaused),
+                            });
+                            if (!tracklist && !settings.metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
+                              void (async () => {
+                                try {
+                                  const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
+                                  const cache = await loadAlbumTracklistCache();
+                                  setAlbumTracklists(cache);
+                                  if (!result) {
+                                    setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
+                                    return;
+                                  }
+                                  const matches = buildAlbumTrackMatches(entry.songs, result);
+                                  setActiveAlbum((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          tracklist: result,
+                                          total: matches.total,
+                                          available: matches.available,
+                                          missing: matches.missing,
+                                          orderedSongs: matches.orderedSongs,
+                                          viewItems: matches.viewItems,
+                                          isLoading: false,
+                                        }
+                                      : prev,
+                                  );
+                                } finally {
+                                  releaseMetadata('album_tracklist', entry.key);
                                 }
-                                const matches = buildAlbumTrackMatches(entry.songs, result);
-                                setActiveAlbum((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        tracklist: result,
-                                        total: matches.total,
-                                        available: matches.available,
-                                        missing: matches.missing,
-                                        orderedSongs: matches.orderedSongs,
-                                        viewItems: matches.viewItems,
-                                        isLoading: false,
-                                      }
-                                    : prev,
-                                );
-                              } finally {
-                                releaseMetadata('album_tracklist', entry.key);
-                              }
-                            })();
-                          }
-                        }}
-                        onInfo={() => {
-                          const cached = albumSummaries.get(entry.key);
-                          const tracklist = cached?.tracklist ?? null;
-                          const { total, available, missing, orderedSongs, viewItems } =
-                            cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
-                          setActiveAlbum({
-                            album: entry.album,
-                            artist: getPrimaryArtistName(entry.artist),
-                            songs: entry.songs,
-                            tracklist,
-                            total,
-                            available,
-                            missing,
-                            orderedSongs,
-                            viewItems,
-                            artwork: entry.artwork,
-                            isLoading: Boolean(!tracklist && !settings.metadataFetchPaused),
-                          });
-                          if (!tracklist && !settings.metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
-                            void (async () => {
-                              try {
-                                const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
-                                const cache = await loadAlbumTracklistCache();
-                                setAlbumTracklists(cache);
-                                if (!result) {
-                                  setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
-                                  return;
+                              })();
+                            }
+                          }}
+                          onInfo={() => {
+                            const cached = albumSummaries.get(entry.key);
+                            const tracklist = cached?.tracklist ?? null;
+                            const { total, available, missing, orderedSongs, viewItems } =
+                              cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
+                            setActiveAlbum({
+                              album: entry.album,
+                              artist: getPrimaryArtistName(entry.artist),
+                              songs: entry.songs,
+                              tracklist,
+                              total,
+                              available,
+                              missing,
+                              orderedSongs,
+                              viewItems,
+                              artwork: entry.artwork,
+                              isLoading: Boolean(!tracklist && !settings.metadataFetchPaused),
+                            });
+                            if (!tracklist && !settings.metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
+                              void (async () => {
+                                try {
+                                  const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
+                                  const cache = await loadAlbumTracklistCache();
+                                  setAlbumTracklists(cache);
+                                  if (!result) {
+                                    setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
+                                    return;
+                                  }
+                                  const matches = buildAlbumTrackMatches(entry.songs, result);
+                                  setActiveAlbum((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          tracklist: result,
+                                          total: matches.total,
+                                          available: matches.available,
+                                          missing: matches.missing,
+                                          orderedSongs: matches.orderedSongs,
+                                          viewItems: matches.viewItems,
+                                          isLoading: false,
+                                        }
+                                      : prev,
+                                  );
+                                } finally {
+                                  releaseMetadata('album_tracklist', entry.key);
                                 }
-                                const matches = buildAlbumTrackMatches(entry.songs, result);
-                                setActiveAlbum((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        tracklist: result,
-                                        total: matches.total,
-                                        available: matches.available,
-                                        missing: matches.missing,
-                                        orderedSongs: matches.orderedSongs,
-                                        viewItems: matches.viewItems,
-                                        isLoading: false,
-                                      }
-                                    : prev,
-                                );
-                              } finally {
-                                releaseMetadata('album_tracklist', entry.key);
-                              }
-                            })();
-                          }
-                        }}
-                      />
+                              })();
+                            }
+                          }}
+                        />
+                      </LibraryCardShell>
                     );
                   },
                 };
@@ -771,21 +831,23 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                   columns,
                   getKey: (entry) => entry.label.toLowerCase(),
                   renderItem: (artistGroup) => (
-                    <AlbumCard
-                      key={`artist-${artistGroup.label.toLowerCase()}`}
-                      title={artistGroup.label}
-                      subtitle={`${artistGroup.songs.length} songs`}
-                      artwork={artistGroup.artwork}
-                      onClick={() => {
-                        const artistSongs = artistGroup.songs;
-                        if (!artistSongs.length) {
-                          return;
-                        }
-                        const queue = artistSongs.map((item) => item.id);
-                        setQueue(queue, artistSongs[0].id);
-                        void playSongById(artistSongs[0].id, false);
-                      }}
-                    />
+                    <LibraryCardShell>
+                      <AlbumCard
+                        key={`artist-${artistGroup.label.toLowerCase()}`}
+                        title={artistGroup.label}
+                        subtitle={`${artistGroup.songs.length} songs`}
+                        artwork={artistGroup.artwork}
+                        onClick={() => {
+                          const artistSongs = artistGroup.songs;
+                          if (!artistSongs.length) {
+                            return;
+                          }
+                          const queue = artistSongs.map((item) => item.id);
+                          setQueue(queue, artistSongs[0].id);
+                          void playSongById(artistSongs[0].id, false);
+                        }}
+                      />
+                    </LibraryCardShell>
                   ),
                 };
                 return (
@@ -841,21 +903,23 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                   columns,
                   getKey: (entry) => entry.label.toLowerCase(),
                   renderItem: (genreGroup) => (
-                    <AlbumCard
-                      key={`genre-${genreGroup.label.toLowerCase()}`}
-                      title={genreGroup.label}
-                      subtitle={`${genreGroup.songs.length} songs`}
-                      artwork={genreGroup.artwork}
-                      onClick={() => {
-                        const genreSongs = genreGroup.songs;
-                        if (!genreSongs.length) {
-                          return;
-                        }
-                        const queue = genreSongs.map((item) => item.id);
-                        setQueue(queue, genreSongs[0].id);
-                        void playSongById(genreSongs[0].id, false);
-                      }}
-                    />
+                    <LibraryCardShell>
+                      <AlbumCard
+                        key={`genre-${genreGroup.label.toLowerCase()}`}
+                        title={genreGroup.label}
+                        subtitle={`${genreGroup.songs.length} songs`}
+                        artwork={genreGroup.artwork}
+                        onClick={() => {
+                          const genreSongs = genreGroup.songs;
+                          if (!genreSongs.length) {
+                            return;
+                          }
+                          const queue = genreSongs.map((item) => item.id);
+                          setQueue(queue, genreSongs[0].id);
+                          void playSongById(genreSongs[0].id, false);
+                        }}
+                      />
+                    </LibraryCardShell>
                   ),
                 };
                 return (
