@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
 import { useLibraryStore } from '@/store/libraryStore';
+import { invoke } from '@tauri-apps/api/core';
+import { listOutputDevices } from '@/services/audioDeviceService';
 import { isTauri, readStorageJson, writeStorageJson } from '@/services/storageService';
 import { loadSongLoudness } from '@/services/loudnessService';
 import {
@@ -123,6 +125,39 @@ let lastProgressUpdate = 0;
 let pendingProgress: { position: number; duration: number } | null = null;
 const PROGRESS_UPDATE_MS = 250;
 let lastPreloadSongId: string | null = null;
+const preloadOnceCache = new Map<string, number>();
+const PRELOAD_CACHE_LIMIT = 200;
+let defaultOutputPollHandle: number | null = null;
+let lastDefaultOutputName: string | null = null;
+
+const startDefaultOutputWatcher = (): void => {
+  if (typeof window === 'undefined' || !isTauri()) {
+    return;
+  }
+  if (defaultOutputPollHandle !== null) {
+    return;
+  }
+
+  const poll = async () => {
+    try {
+      const state = usePlayerStore.getState();
+      if (state.settings.outputDeviceName) {
+        return;
+      }
+      const devices = await listOutputDevices();
+      const currentDefault = devices.find((device) => device.isDefault)?.name ?? null;
+      if (currentDefault && currentDefault !== lastDefaultOutputName) {
+        lastDefaultOutputName = currentDefault;
+        void invoke('audio_set_output_device', { name: null });
+      }
+    } catch {
+      // Ignore polling errors.
+    }
+  };
+
+  void poll();
+  defaultOutputPollHandle = window.setInterval(poll, 8000);
+};
 
 const persistSettings = async (settings: AppSettings): Promise<void> => {
   const current = await readStorageJson<Record<string, unknown>>('settings.json', {});
@@ -280,12 +315,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     audioEngine.setCallbacks({
       onProgress: (position, duration) => {
         const currentId = get().currentSongId;
-        if (
-          currentId &&
-          duration > 0 &&
-          position / duration >= 0.75 &&
-          (lastPreloadSongId !== currentId || position < duration * 0.9)
-        ) {
+        if (currentId && duration > 0 && position / duration >= 0.75 && lastPreloadSongId !== currentId) {
+          if (preloadOnceCache.has(currentId)) {
+            return;
+          }
+          preloadOnceCache.set(currentId, Date.now());
+          if (preloadOnceCache.size > PRELOAD_CACHE_LIMIT) {
+            const oldestKey = preloadOnceCache.keys().next().value as string | undefined;
+            if (oldestKey) {
+              preloadOnceCache.delete(oldestKey);
+            }
+          }
           lastPreloadSongId = currentId;
           const nextState = get();
           if (nextState.settings.gaplessEnabled) {
@@ -340,6 +380,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       },
     });
 
+    if (settings.gaplessEnabled && settings.crossfadeEnabled) {
+      settings = { ...settings, crossfadeEnabled: false };
+    }
+
     audioEngine.applySettings(settings);
     audioEngine.setVolume(get().volume);
     if (typeof window !== 'undefined') {
@@ -347,6 +391,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     set({ initialized: true, settings });
+    startDefaultOutputWatcher();
   },
 
   setQueue: (songIds, startSongId) => {
@@ -680,6 +725,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const settings = {
       ...get().settings,
       crossfadeEnabled: enabled,
+      gaplessEnabled: enabled ? false : get().settings.gaplessEnabled,
     };
     audioEngine.applySettings(settings);
     set({ settings });
@@ -700,6 +746,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const settings = {
       ...get().settings,
       gaplessEnabled: enabled,
+      crossfadeEnabled: enabled ? false : get().settings.crossfadeEnabled,
     };
     audioEngine.applySettings(settings);
     set({ settings });

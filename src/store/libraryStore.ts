@@ -652,7 +652,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
                   await get().updateSongGenre(song.id, genreResult.genre);
                 }
               } else {
-                noteMetadataFailure(attemptsCache, 'genre', song.id);
+                if (genreResult.status === 'missing' && isOnline) {
+                  noteMetadataFailure(attemptsCache, 'genre', song.id);
+                }
               }
               releaseMetadata('genre', song.id);
             }
@@ -1069,7 +1071,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             await get().updateSongGenre(song.id, genreResult.genre);
           }
         } else {
-          noteMetadataFailure(attemptsCache, 'genre', song.id);
+          if (genreResult.status === 'missing' && isOnline) {
+            noteMetadataFailure(attemptsCache, 'genre', song.id);
+          }
         }
         releaseMetadata('genre', song.id);
       }

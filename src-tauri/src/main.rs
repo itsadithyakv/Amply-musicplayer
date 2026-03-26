@@ -289,6 +289,7 @@ enum AudioCommand {
         crossfade_duration_sec: f64,
         crossfade: bool,
         track_volume: f32,
+        gapless_enabled: bool,
         reply: mpsc::Sender<Result<(), String>>,
     },
     Play { reply: mpsc::Sender<Result<(), String>> },
@@ -497,6 +498,7 @@ impl NativeAudio {
         crossfade_duration_sec: f64,
         crossfade: bool,
         track_volume: f32,
+        gapless_enabled: bool,
     ) -> Result<(), String> {
         if self.handle.is_none() {
             return Err("Audio output unavailable".to_string());
@@ -505,7 +507,8 @@ impl NativeAudio {
         let can_crossfade = transition && crossfade && self.sink.is_some();
         let fade_duration = Duration::from_secs_f64(crossfade_duration_sec.max(1.0));
 
-        if !can_crossfade {
+        let gapless_ready = gapless_enabled && self.preloaded.contains_key(&path);
+        if !can_crossfade && !gapless_ready {
             self.stop_all();
         } else if let Some(sink) = self.sink.take() {
             self.fading_sink = Some(sink);
@@ -546,6 +549,11 @@ impl NativeAudio {
         self.is_playing = autoplay;
         self.volume = track_volume;
         self.ended_emitted = false;
+        if gapless_ready && !can_crossfade {
+            if let Some(old) = self.fading_sink.take() {
+                old.stop();
+            }
+        }
         Ok(())
     }
 
@@ -1172,6 +1180,7 @@ fn audio_load_song(
     crossfade_duration_sec: f64,
     crossfade: bool,
     track_volume: f32,
+    gapless_enabled: bool,
 ) -> Result<(), String> {
     let (reply_tx, reply_rx) = mpsc::channel();
     state
@@ -1185,6 +1194,7 @@ fn audio_load_song(
             crossfade_duration_sec,
             crossfade,
             track_volume,
+            gapless_enabled,
             reply: reply_tx,
         })
         .map_err(|_| "Audio thread unavailable".to_string())?;
@@ -1382,7 +1392,19 @@ fn main() {
                 loop {
                     match audio_rx.recv_timeout(Duration::from_millis(200)) {
                         Ok(command) => match command {
-                            AudioCommand::LoadSong {
+                        AudioCommand::LoadSong {
+                            path,
+                            autoplay,
+                            transition,
+                            start_at_sec,
+                            duration_sec,
+                            crossfade_duration_sec,
+                            crossfade,
+                            track_volume,
+                            gapless_enabled,
+                            reply,
+                        } => {
+                            let result = audio.load_song(
                                 path,
                                 autoplay,
                                 transition,
@@ -1391,20 +1413,10 @@ fn main() {
                                 crossfade_duration_sec,
                                 crossfade,
                                 track_volume,
-                                reply,
-                            } => {
-                                let result = audio.load_song(
-                                    path,
-                                    autoplay,
-                                    transition,
-                                    start_at_sec,
-                                    duration_sec,
-                                    crossfade_duration_sec,
-                                    crossfade,
-                                    track_volume,
-                                );
-                                let _ = reply.send(result);
-                            }
+                                gapless_enabled,
+                            );
+                            let _ = reply.send(result);
+                        }
                             AudioCommand::Play { reply } => {
                                 let _ = reply.send(audio.play());
                             }

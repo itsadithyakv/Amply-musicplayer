@@ -1,10 +1,11 @@
 import { parseLrc } from '@/utils/lrc';
 import { getPrimaryArtistName } from '@/utils/artists';
-import { readStorageText, writeStorageText } from '@/services/storageService';
+import { readStorageJson, readStorageText, writeStorageJson, writeStorageText } from '@/services/storageService';
 import { markSongCached } from '@/services/metadataCacheIndex';
 import type { Song } from '@/types/music';
 
 const cacheFolder = 'lyrics_cache';
+const cacheIndexPath = `${cacheFolder}/index.json`;
 
 // Request deduplication cache
 const pendingRequests = new Map<string, Promise<LyricsCandidate[]>>();
@@ -24,6 +25,58 @@ const cacheKeyForSong = (song: Song): string => {
   // Include album in cache key to differentiate different versions
   const album = song.album ? slugify(song.album) : '';
   return `${cacheFolder}/${artist}-${title}${album ? `-${album}` : ''}.lrc`;
+};
+
+const legacyCacheKeysForSong = (song: Song): string[] => {
+  const artistRaw = song.artist || 'unknown-artist';
+  const primaryArtist = getPrimaryArtistName(song.artist) ?? artistRaw;
+  const title = song.title || 'unknown-title';
+  const artist = slugify(artistRaw);
+  const primary = slugify(primaryArtist || artistRaw);
+  const titleKey = slugify(title);
+  const keys = new Set<string>();
+  keys.add(`${cacheFolder}/${artist}-${titleKey}.lrc`);
+  keys.add(`${cacheFolder}/${primary}-${titleKey}.lrc`);
+  return Array.from(keys).filter((key) => key !== cacheKeyForSong(song));
+};
+
+const readLyricsIndex = async (): Promise<Record<string, string>> => {
+  return readStorageJson<Record<string, string>>(cacheIndexPath, {});
+};
+
+const writeLyricsIndex = async (index: Record<string, string>): Promise<void> => {
+  await writeStorageJson(cacheIndexPath, index);
+};
+
+const readCachedLyricsText = async (
+  song: Song,
+): Promise<{ key: string; text: string } | null> => {
+  const key = cacheKeyForSong(song);
+  const cached = await readStorageText(key);
+  if (cached?.trim()) {
+    return { key, text: cached };
+  }
+
+  if (song.id) {
+    const index = await readLyricsIndex();
+    const mapped = index[song.id];
+    if (mapped && mapped !== key) {
+      const mappedText = await readStorageText(mapped);
+      if (mappedText?.trim()) {
+        return { key: mapped, text: mappedText };
+      }
+    }
+  }
+
+  const legacyKeys = legacyCacheKeysForSong(song);
+  for (const legacy of legacyKeys) {
+    const legacyText = await readStorageText(legacy);
+    if (legacyText?.trim()) {
+      return { key: legacy, text: legacyText };
+    }
+  }
+
+  return null;
 };
 
 const asString = (value: unknown): string | null => {
@@ -390,6 +443,11 @@ export const saveLyricsSelection = async (song: Song, candidate: LyricsCandidate
   await writeStorageText(key, candidate.raw);
   if (song.id) {
     void markSongCached(song.id, 'lyrics');
+    const index = await readLyricsIndex();
+    if (index[song.id] !== key) {
+      index[song.id] = key;
+      await writeLyricsIndex(index);
+    }
   }
   return result;
 };
@@ -414,15 +472,23 @@ export const findLyricsCandidates = async (song: Song): Promise<LyricsCandidate[
 
 export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   const key = cacheKeyForSong(song);
-  const cached = await readStorageText(key);
+  const cachedEntry = await readCachedLyricsText(song);
 
-  if (cached?.trim()) {
-    const lyrics = buildLyricsResult(cached, true, key);
+  if (cachedEntry?.text?.trim()) {
+    const lyrics = buildLyricsResult(cachedEntry.text, true, key);
 
     // Validate cached lyrics quality
     if (validateLyricsQuality(lyrics)) {
       if (song.id) {
         void markSongCached(song.id, 'lyrics');
+        const index = await readLyricsIndex();
+        if (index[song.id] !== key) {
+          index[song.id] = key;
+          await writeLyricsIndex(index);
+        }
+      }
+      if (cachedEntry.key !== key) {
+        await writeStorageText(key, cachedEntry.text);
       }
       return {
         status: 'ready',
@@ -433,7 +499,7 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
       // Invalid cached lyrics, remove them
       console.warn('[Lyrics] Removing invalid cached lyrics for:', song.title);
       try {
-        await writeStorageText(key, '');
+        await writeStorageText(cachedEntry.key, '');
       } catch (error) {
         console.warn('[Lyrics] Failed to remove invalid cache:', error);
       }
@@ -472,11 +538,19 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
 
 export const readCachedLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   const key = cacheKeyForSong(song);
-  const cached = await readStorageText(key);
-  if (cached?.trim()) {
-    const lyrics = buildLyricsResult(cached, true, key);
+  const cachedEntry = await readCachedLyricsText(song);
+  if (cachedEntry?.text?.trim()) {
+    const lyrics = buildLyricsResult(cachedEntry.text, true, key);
     if (song.id) {
       void markSongCached(song.id, 'lyrics');
+      const index = await readLyricsIndex();
+      if (index[song.id] !== key) {
+        index[song.id] = key;
+        await writeLyricsIndex(index);
+      }
+    }
+    if (cachedEntry.key !== key) {
+      await writeStorageText(key, cachedEntry.text);
     }
     return { status: 'ready', lyrics, cachePath: lyrics.cachePath };
   }

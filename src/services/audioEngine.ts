@@ -184,7 +184,7 @@ class NativeAudioEngine {
     const volume = this.resolveTrackVolume(song);
     const shouldAutoplay = autoplay || canCrossfade;
 
-    if (!canCrossfade) {
+    if (!canCrossfade && !this.settings.gaplessEnabled) {
       void invoke('audio_stop');
     }
 
@@ -197,6 +197,7 @@ class NativeAudioEngine {
       crossfadeDurationSec: this.settings.crossfadeDurationSec,
       crossfade: canCrossfade,
       trackVolume: volume,
+      gaplessEnabled: this.settings.gaplessEnabled,
     });
 
     this.currentSong = song;
@@ -205,10 +206,6 @@ class NativeAudioEngine {
     this.lastProgressAt = performance.now();
     this.isPlayingFlag = shouldAutoplay;
     this.onProgress?.(this.currentPosition, this.currentDuration);
-  }
-
-  preloadSong(song: Song): void {
-    this.preloadSongs([song]);
   }
 
   preloadSongs(songs: Song[]): void {
@@ -429,10 +426,6 @@ class HowlerAudioEngine {
 
     this.currentHowl = targetHowl;
     this.currentSong = song;
-  }
-
-  preloadSong(song: Song): void {
-    this.preloadSongs([song]);
   }
 
   preloadSongs(songs: Song[]): void {

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { Song } from '@/types/music';
 import {
   readCachedLyrics,
+  loadLyrics,
   saveLyricsSelection,
   type LyricsCandidate,
   type LyricsResult,
@@ -69,7 +70,9 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
   const autoScrollLockRef = useRef<number | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const programmaticScrollRef = useRef<number | null>(null);
+  const lyricsAbortRef = useRef<AbortController | null>(null);
+  const backdropAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (gameMode) {
@@ -86,12 +89,12 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     }
 
     // Cancel any previous request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (lyricsAbortRef.current) {
+      lyricsAbortRef.current.abort();
     }
 
     const abortController = new AbortController();
-    abortControllerRef.current = abortController;
+    lyricsAbortRef.current = abortController;
 
     let alive = true;
     let retryHandle: number | null = null;
@@ -103,48 +106,66 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
 
     setAutoScroll(true);
 
-    readCachedLyrics(song)
-      .then((result) => {
+    const load = async () => {
+      try {
+        const cached = await readCachedLyrics(song);
         if (abortController.signal.aborted || !alive) {
           return;
         }
 
-        if (result.status === 'ready') {
-          setLyrics(result.lyrics);
+        if (cached.status === 'ready') {
+          setLyrics(cached.lyrics);
           return;
         }
 
-        setError('No lyrics found for this track yet.');
+        // No cache yet: attempt a live fetch once.
+        const fetched = await loadLyrics(song);
+        if (abortController.signal.aborted || !alive) {
+          return;
+        }
+
+        if (fetched.status === 'ready') {
+          setLyrics(fetched.lyrics);
+          setError(null);
+          return;
+        }
+
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        setError(offline ? 'Lyrics unavailable (offline).' : 'No lyrics found for this track yet.');
+
         retryHandle = window.setTimeout(() => {
           if (abortController.signal.aborted || !alive) {
             return;
           }
-          readCachedLyrics(song).then((retryResult) => {
-            if (abortController.signal.aborted || !alive) {
-              return;
-            }
-            if (retryResult.status === 'ready') {
-              setLyrics(retryResult.lyrics);
-              setError(null);
-            }
-          }).catch((error) => {
-            if (!abortController.signal.aborted && alive) {
-              console.warn('[Lyrics] Retry failed:', error);
-            }
-          });
+          readCachedLyrics(song)
+            .then((retryResult) => {
+              if (abortController.signal.aborted || !alive) {
+                return;
+              }
+              if (retryResult.status === 'ready') {
+                setLyrics(retryResult.lyrics);
+                setError(null);
+              }
+            })
+            .catch((error) => {
+              if (!abortController.signal.aborted && alive) {
+                console.warn('[Lyrics] Retry failed:', error);
+              }
+            });
         }, 4000);
-      })
-      .catch((error) => {
+      } catch (error) {
         if (!abortController.signal.aborted && alive) {
           console.warn('[Lyrics] Initial load failed:', error);
           setError('Failed to load lyrics.');
         }
-      })
-      .finally(() => {
+      } finally {
         if (!abortController.signal.aborted && alive) {
           setLoading(false);
         }
-      });
+      }
+    };
+
+    void load();
 
     return () => {
       alive = false;
@@ -257,12 +278,12 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     }
 
     // Cancel any previous backdrop loading
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (backdropAbortRef.current) {
+      backdropAbortRef.current.abort();
     }
 
     const abortController = new AbortController();
-    abortControllerRef.current = abortController;
+    backdropAbortRef.current = abortController;
 
     let alive = true;
     const cachePath = 'lyrics_bg_cache.json';
@@ -347,6 +368,12 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
     lineRefs.current = [];
   }, [lyrics?.raw]);
 
+  useEffect(() => {
+    if (lyrics?.raw) {
+      setAutoScroll(true);
+    }
+  }, [lyrics?.raw]);
+
   const timedIndex = useMemo(() => {
     if (!lyrics?.isSynced || !lines.length) {
       return [];
@@ -400,7 +427,7 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
   }, [lyricsVisualsEnabled, positionSec, durationSec, artworkTint]);
 
   useEffect(() => {
-    if (currentIndex < 0 || !lyrics?.isSynced) {
+    if (currentIndex < 0 || !lyrics?.isSynced || !autoScroll) {
       return;
     }
 
@@ -410,29 +437,30 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
       return;
     }
 
-    if (!autoScroll) {
-      return;
+    const targetTop = Math.max(0, node.offsetTop - container.clientHeight * 0.35);
+    if (programmaticScrollRef.current !== null) {
+      window.clearTimeout(programmaticScrollRef.current);
     }
-
-    const containerRect = container.getBoundingClientRect();
-    const nodeRect = node.getBoundingClientRect();
-    const topThreshold = containerRect.top + containerRect.height * 0.25;
-    const bottomThreshold = containerRect.top + containerRect.height * 0.75;
-
-    if (nodeRect.top < topThreshold || nodeRect.bottom > bottomThreshold) {
-      const targetTop = Math.max(0, node.offsetTop - container.clientHeight * 0.35);
-      container.scrollTo({ top: targetTop, behavior: 'smooth' });
-    }
+    programmaticScrollRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = null;
+    }, 350);
+    container.scrollTo({ top: targetTop, behavior: 'smooth' });
   }, [currentIndex, lyrics?.isSynced, autoScroll]);
 
   useEffect(() => {
     return () => {
       // Cleanup on unmount
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      if (lyricsAbortRef.current) {
+        lyricsAbortRef.current.abort();
+      }
+      if (backdropAbortRef.current) {
+        backdropAbortRef.current.abort();
       }
       if (autoScrollLockRef.current) {
         window.clearTimeout(autoScrollLockRef.current);
+      }
+      if (programmaticScrollRef.current !== null) {
+        window.clearTimeout(programmaticScrollRef.current);
       }
     };
   }, []);
@@ -536,6 +564,9 @@ const LyricsViewer = ({ song, active, fullHeight = false }: LyricsViewerProps) =
           }
 
           const container = lyricsContainerRef.current;
+          if (programmaticScrollRef.current !== null) {
+            return;
+          }
           const node = lineRefs.current[currentIndex];
           if (!node) {
             return;
