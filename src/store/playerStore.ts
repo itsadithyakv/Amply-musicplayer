@@ -83,6 +83,7 @@ interface PlayerState {
   setPlaybackSpeed: (speed: number) => Promise<void>;
   setOutputDeviceName: (deviceName: string | null) => Promise<void>;
   setEqPreset: (preset: AppSettings['eqPreset']) => Promise<void>;
+  setEqBands: (bands: number[]) => Promise<void>;
   setCrossfadeEnabled: (enabled: boolean) => Promise<void>;
   setCrossfadeDuration: (durationSec: number) => Promise<void>;
   setGaplessEnabled: (enabled: boolean) => Promise<void>;
@@ -110,6 +111,7 @@ const defaultSettings: AppSettings = {
   playbackSpeed: 1,
   outputDeviceName: undefined,
   eqPreset: 'flat',
+  eqBands: [0, 0, 0, 0, 0],
   launchOnStartup: false,
   gameMode: false,
   miniNowPlayingOverlay: false,
@@ -117,6 +119,33 @@ const defaultSettings: AppSettings = {
   lyricsVisualsEnabled: true,
   lyricsVisualTheme: 'ember',
   metadataFetchPaused: false,
+};
+
+const eqPresetBands: Record<AppSettings['eqPreset'], number[]> = {
+  flat: [0, 0, 0, 0, 0],
+  warm: [2.5, 1.5, 0, -1, -2],
+  bass: [6, 3, -1, -2, -2],
+  treble: [0, 0, 0, 3, 6],
+  vocal: [-1, 0, 2, 3, 1],
+  club: [4.5, 2, 0, 1.5, 3],
+  custom: [0, 0, 0, 0, 0],
+};
+
+const normalizeEqBands = (bands: number[] | undefined, fallbackPreset: AppSettings['eqPreset']): number[] => {
+  const template = [...(eqPresetBands[fallbackPreset] ?? eqPresetBands.flat)];
+  if (!Array.isArray(bands)) {
+    return template;
+  }
+
+  const normalized = bands
+    .slice(0, 5)
+    .map((gain) => (Number.isFinite(gain) ? Math.max(-12, Math.min(12, gain)) : 0));
+
+  while (normalized.length < 5) {
+    normalized.push(template[normalized.length] ?? 0);
+  }
+
+  return normalized;
 };
 
 let sleepTimerHandle: number | null = null;
@@ -129,6 +158,13 @@ const preloadOnceCache = new Map<string, number>();
 const PRELOAD_CACHE_LIMIT = 200;
 let defaultOutputPollHandle: number | null = null;
 let lastDefaultOutputName: string | null = null;
+
+const clearSleepTimerHandle = (): void => {
+  if (sleepTimerHandle !== null) {
+    window.clearTimeout(sleepTimerHandle);
+    sleepTimerHandle = null;
+  }
+};
 
 const startDefaultOutputWatcher = (): void => {
   if (typeof window === 'undefined' || !isTauri()) {
@@ -296,6 +332,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     let settings: AppSettings = {
       ...defaultSettings,
       ...persisted,
+    };
+    settings = {
+      ...settings,
+      eqBands: normalizeEqBands(settings.eqBands, settings.eqPreset),
     };
     if ('albumTracklistFetchPaused' in persisted) {
       const { albumTracklistFetchPaused: _legacy, ...rest } = persisted;
@@ -696,7 +736,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       playbackSpeed: clamped,
     };
     audioEngine.applySettings(settings);
-    audioEngine.setRate(clamped);
     set({ settings });
     await persistSettings(settings);
   },
@@ -712,9 +751,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setEqPreset: async (preset) => {
+    const template = preset === 'custom' ? get().settings.eqBands : (eqPresetBands[preset] ?? eqPresetBands.flat);
     const settings = {
       ...get().settings,
       eqPreset: preset,
+      eqBands: [...template],
+    };
+    audioEngine.applySettings(settings);
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setEqBands: async (bands) => {
+    const normalized = normalizeEqBands(bands, get().settings.eqPreset);
+    const settings = {
+      ...get().settings,
+      eqPreset: 'custom' as const,
+      eqBands: normalized,
     };
     audioEngine.applySettings(settings);
     set({ settings });
@@ -851,10 +904,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setSleepTimer: (minutes) => {
-    if (sleepTimerHandle) {
-      window.clearTimeout(sleepTimerHandle);
-      sleepTimerHandle = null;
-    }
+    clearSleepTimerHandle();
 
     if (!minutes || minutes <= 0) {
       set({ sleepTimerEndsAt: null, sleepTimerDurationMin: null });
@@ -863,9 +913,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const target = Date.now() + minutes * 60_000;
     sleepTimerHandle = window.setTimeout(() => {
+      const state = get();
+      if (state.sleepTimerEndsAt !== target) {
+        return;
+      }
+
+      sleepTimerHandle = null;
       audioEngine.pause();
       setGlobalPlayingFlag(false);
-      set({ isPlaying: false, sleepTimerEndsAt: null });
+      set({ isPlaying: false, sleepTimerEndsAt: null, sleepTimerDurationMin: null });
     }, minutes * 60_000);
 
     set({ sleepTimerEndsAt: target, sleepTimerDurationMin: minutes });

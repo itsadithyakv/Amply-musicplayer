@@ -72,6 +72,7 @@ const defaultSettings: AppSettings = {
   playbackSpeed: 1,
   outputDeviceName: undefined,
   eqPreset: 'flat',
+  eqBands: [0, 0, 0, 0, 0],
   launchOnStartup: false,
   gameMode: false,
   miniNowPlayingOverlay: false,
@@ -132,12 +133,14 @@ class NativeAudioEngine {
   applySettings(settings: AppSettings): void {
     const previous = this.settings;
     this.settings = settings;
-    void invoke('audio_set_rate', { rate: settings.playbackSpeed });
+    if (settings.playbackSpeed !== previous.playbackSpeed) {
+      void invoke('audio_set_rate', { rate: settings.playbackSpeed });
+    }
     if (settings.outputDeviceName !== previous.outputDeviceName) {
       void invoke('audio_set_output_device', { name: settings.outputDeviceName ?? null });
     }
-    if (settings.eqPreset !== previous.eqPreset) {
-      void invoke('audio_set_eq_preset', { preset: settings.eqPreset });
+    if (settings.eqBands.join(',') !== previous.eqBands.join(',')) {
+      void invoke('audio_set_eq_gains', { gains: settings.eqBands });
     }
     this.refreshTrackVolumes();
   }
@@ -388,7 +391,16 @@ class HowlerAudioEngine {
     }
 
     if (!canCrossfade) {
-      this.stopAllSounds();
+      const previousHowl = this.currentHowl;
+      if (previousHowl) {
+        previousHowl.stop();
+        previousHowl.unload();
+      }
+      if (this.fadingHowl) {
+        this.fadingHowl.stop();
+        this.fadingHowl.unload();
+        this.fadingHowl = null;
+      }
       const targetHowl = this.createHowl(song, false, startAtSec);
       this.currentHowl = targetHowl;
       this.currentSong = song;
@@ -644,19 +656,6 @@ class HowlerAudioEngine {
         howl.stop();
       }
     });
-  }
-
-  private stopAllSounds(): void {
-    Howler.stop();
-    if (this.currentHowl) {
-      this.currentHowl.unload();
-    }
-    if (this.fadingHowl) {
-      this.fadingHowl.unload();
-      this.fadingHowl = null;
-    }
-    this.preloadedHowls.forEach((howl) => howl.unload());
-    this.preloadedHowls.clear();
   }
 
   private resolveTrackVolume(song: Song): number {

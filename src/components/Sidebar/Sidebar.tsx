@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { NavLink } from 'react-router-dom';
 import clsx from 'clsx';
-import logoIcon from '@/assets/icons/logo.png';
+import logoIcon from '@/assets/icons/logo-ui.png';
 import homeIcon from '@/assets/icons/home.svg';
 import searchIcon from '@/assets/icons/search.svg';
 import libraryIcon from '@/assets/icons/library.svg';
@@ -36,7 +36,7 @@ const Sidebar = () => {
   return (
     <aside className="panel-surface flex h-full min-h-0 w-[240px] flex-col border-r border-amply-border/60 p-5">
       <div className="mb-10 flex items-center gap-3 px-2">
-        <img src={logoIcon} alt="Amply" className="h-10 w-10 rounded-lg shadow-card" />
+        <img src={logoIcon} alt="Amply" className="h-10 w-10 object-contain drop-shadow-[0_8px_18px_rgba(0,0,0,0.28)]" />
         <div>
           <p className="text-[12px] font-semibold uppercase tracking-[0.24em] text-amply-textMuted">Amply</p>
         </div>

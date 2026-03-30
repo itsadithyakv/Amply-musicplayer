@@ -68,52 +68,7 @@ struct OutputDeviceInfo {
     is_default: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EqPreset {
-    Flat,
-    Warm,
-    Bass,
-    Treble,
-    Vocal,
-    Club,
-}
-
-impl EqPreset {
-    fn from_str(value: &str) -> Self {
-        match value {
-            "warm" => Self::Warm,
-            "bass" => Self::Bass,
-            "treble" => Self::Treble,
-            "vocal" => Self::Vocal,
-            "club" => Self::Club,
-            _ => Self::Flat,
-        }
-    }
-
-    fn filters(self, sample_rate: u32) -> Vec<BiquadCoeffs> {
-        if sample_rate == 0 {
-            return Vec::new();
-        }
-
-        match self {
-            Self::Flat => Vec::new(),
-            Self::Warm => vec![
-                biquad_low_shelf(sample_rate, 120.0, 2.5),
-                biquad_high_shelf(sample_rate, 8000.0, -2.0),
-            ],
-            Self::Bass => vec![
-                biquad_low_shelf(sample_rate, 90.0, 6.0),
-                biquad_peaking(sample_rate, 250.0, 0.8, -2.0),
-            ],
-            Self::Treble => vec![biquad_high_shelf(sample_rate, 9000.0, 6.0)],
-            Self::Vocal => vec![biquad_peaking(sample_rate, 2500.0, 1.1, 3.0)],
-            Self::Club => vec![
-                biquad_low_shelf(sample_rate, 80.0, 4.5),
-                biquad_high_shelf(sample_rate, 10000.0, 3.0),
-            ],
-        }
-    }
-}
+const EQ_BAND_FREQUENCIES: [f32; 5] = [60.0, 250.0, 1000.0, 4000.0, 12000.0];
 
 #[derive(Clone, Copy, Debug)]
 struct BiquadCoeffs {
@@ -231,7 +186,7 @@ struct NativeAudio {
     is_playing: bool,
     loop_current: bool,
     device_name: Option<String>,
-    eq_preset: EqPreset,
+    eq_gains: [f32; 5],
     rate: f32,
     volume: f32,
     ended_emitted: bool,
@@ -254,7 +209,7 @@ impl Default for NativeAudio {
             is_playing: false,
             loop_current: false,
             device_name: None,
-            eq_preset: EqPreset::Flat,
+            eq_gains: [0.0; 5],
             rate: 1.0,
             volume: 0.85,
             ended_emitted: false,
@@ -300,7 +255,7 @@ enum AudioCommand {
     SetVolume { volume: f32, reply: mpsc::Sender<Result<(), String>> },
     SetRate { rate: f32, reply: mpsc::Sender<Result<(), String>> },
     SetLoop { enabled: bool, reply: mpsc::Sender<Result<(), String>> },
-    SetEqPreset { preset: EqPreset, reply: mpsc::Sender<Result<(), String>> },
+    SetEqGains { gains: [f32; 5], reply: mpsc::Sender<Result<(), String>> },
     SetOutputDevice { name: Option<String>, reply: mpsc::Sender<Result<(), String>> },
     Preload { paths: Vec<String>, reply: mpsc::Sender<Result<(), String>> },
 }
@@ -320,9 +275,9 @@ impl NativeAudio {
                 start_instant: None,
                 is_playing: false,
                 loop_current: false,
-                device_name: None,
-                eq_preset: EqPreset::Flat,
-                rate: 1.0,
+                    device_name: None,
+                    eq_gains: [0.0; 5],
+                    rate: 1.0,
                 volume: 0.85,
                 ended_emitted: false,
                 fade_in: None,
@@ -402,15 +357,22 @@ impl NativeAudio {
     where
         S: Source<Item = f32> + Send + 'static,
     {
-        let preset = self.eq_preset;
-        if preset == EqPreset::Flat {
+        if self.eq_gains.iter().all(|gain| gain.abs() < 0.01) {
             return Box::new(source);
         }
 
         let sample_rate = source.sample_rate();
         let mut current: Box<dyn Source<Item = f32> + Send> = Box::new(source);
-        for coeffs in preset.filters(sample_rate) {
-            current = Box::new(BiquadSource::new(current, coeffs));
+        for (index, gain) in self.eq_gains.iter().enumerate() {
+            if gain.abs() < 0.01 {
+                continue;
+            }
+            if let Some(freq) = EQ_BAND_FREQUENCIES.get(index) {
+                current = Box::new(BiquadSource::new(
+                    current,
+                    biquad_peaking(sample_rate, *freq, 1.0, *gain),
+                ));
+            }
         }
         current
     }
@@ -420,6 +382,8 @@ impl NativeAudio {
             Some(path) => path,
             None => return Ok(()),
         };
+
+        self.clear_fading_sink();
 
         if let Some(sink) = self.sink.take() {
             sink.stop();
@@ -437,8 +401,14 @@ impl NativeAudio {
         self.is_playing = was_playing;
         self.ended_emitted = false;
         self.fade_in = None;
-        self.fade_out = None;
         Ok(())
+    }
+
+    fn clear_fading_sink(&mut self) {
+        if let Some(sink) = self.fading_sink.take() {
+            sink.stop();
+        }
+        self.fade_out = None;
     }
 
     fn tick(&mut self) {
@@ -510,7 +480,10 @@ impl NativeAudio {
         let gapless_ready = gapless_enabled && self.preloaded.contains_key(&path);
         if !can_crossfade && !gapless_ready {
             self.stop_all();
+        } else if !can_crossfade {
+            self.clear_fading_sink();
         } else if let Some(sink) = self.sink.take() {
+            self.clear_fading_sink();
             self.fading_sink = Some(sink);
         }
 
@@ -572,6 +545,8 @@ impl NativeAudio {
             .clone()
             .ok_or_else(|| "No song loaded".to_string())?;
 
+        self.clear_fading_sink();
+
         if let Some(sink) = self.sink.take() {
             sink.stop();
         }
@@ -593,11 +568,11 @@ impl NativeAudio {
         if let Some(sink) = &self.sink {
             sink.pause();
         }
+        self.clear_fading_sink();
         self.paused_position = self.current_position();
         self.start_instant = None;
         self.is_playing = false;
         self.fade_in = None;
-        self.fade_out = None;
     }
 
     fn stop(&mut self) {
@@ -610,6 +585,8 @@ impl NativeAudio {
             .clone()
             .ok_or_else(|| "No song loaded".to_string())?;
         let was_playing = self.is_playing;
+
+        self.clear_fading_sink();
 
         if let Some(sink) = self.sink.take() {
             sink.stop();
@@ -627,7 +604,6 @@ impl NativeAudio {
         self.is_playing = was_playing;
         self.ended_emitted = false;
         self.fade_in = None;
-        self.fade_out = None;
         Ok(())
     }
 
@@ -661,11 +637,8 @@ impl NativeAudio {
         Ok(())
     }
 
-    fn set_eq_preset(&mut self, preset: EqPreset) -> Result<(), String> {
-        if self.eq_preset == preset {
-            return Ok(());
-        }
-        self.eq_preset = preset;
+    fn set_eq_gains(&mut self, gains: [f32; 5]) -> Result<(), String> {
+        self.eq_gains = gains.map(|gain| gain.clamp(-12.0, 12.0));
         if self.sink.is_some() {
             let position = self.current_position();
             let was_playing = self.is_playing;
@@ -977,56 +950,6 @@ fn biquad_peaking(sample_rate: u32, freq: f32, q: f32, gain_db: f32) -> BiquadCo
     }
 }
 
-fn biquad_low_shelf(sample_rate: u32, freq: f32, gain_db: f32) -> BiquadCoeffs {
-    let fs = sample_rate as f32;
-    let omega = 2.0 * PI * (freq / fs);
-    let cos_omega = omega.cos();
-    let sin_omega = omega.sin();
-    let a = 10.0_f32.powf(gain_db / 40.0);
-    let alpha = sin_omega * (2.0_f32).sqrt() / 2.0;
-    let sqrt_a = a.sqrt();
-
-    let b0 = a * ((a + 1.0) - (a - 1.0) * cos_omega + 2.0 * sqrt_a * alpha);
-    let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_omega);
-    let b2 = a * ((a + 1.0) - (a - 1.0) * cos_omega - 2.0 * sqrt_a * alpha);
-    let a0 = (a + 1.0) + (a - 1.0) * cos_omega + 2.0 * sqrt_a * alpha;
-    let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_omega);
-    let a2 = (a + 1.0) + (a - 1.0) * cos_omega - 2.0 * sqrt_a * alpha;
-
-    BiquadCoeffs {
-        b0: b0 / a0,
-        b1: b1 / a0,
-        b2: b2 / a0,
-        a1: a1 / a0,
-        a2: a2 / a0,
-    }
-}
-
-fn biquad_high_shelf(sample_rate: u32, freq: f32, gain_db: f32) -> BiquadCoeffs {
-    let fs = sample_rate as f32;
-    let omega = 2.0 * PI * (freq / fs);
-    let cos_omega = omega.cos();
-    let sin_omega = omega.sin();
-    let a = 10.0_f32.powf(gain_db / 40.0);
-    let alpha = sin_omega * (2.0_f32).sqrt() / 2.0;
-    let sqrt_a = a.sqrt();
-
-    let b0 = a * ((a + 1.0) + (a - 1.0) * cos_omega + 2.0 * sqrt_a * alpha);
-    let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_omega);
-    let b2 = a * ((a + 1.0) + (a - 1.0) * cos_omega - 2.0 * sqrt_a * alpha);
-    let a0 = (a + 1.0) - (a - 1.0) * cos_omega + 2.0 * sqrt_a * alpha;
-    let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_omega);
-    let a2 = (a + 1.0) - (a - 1.0) * cos_omega - 2.0 * sqrt_a * alpha;
-
-    BiquadCoeffs {
-        b0: b0 / a0,
-        b1: b1 / a0,
-        b2: b2 / a0,
-        a1: a1 / a0,
-        a2: a2 / a0,
-    }
-}
-
 #[tauri::command]
 fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
   let root = storage_root(&app)?;
@@ -1282,12 +1205,17 @@ fn audio_set_loop(state: tauri::State<AudioState>, enabled: bool) -> Result<(), 
 }
 
 #[tauri::command]
-fn audio_set_eq_preset(state: tauri::State<AudioState>, preset: String) -> Result<(), String> {
+fn audio_set_eq_gains(state: tauri::State<AudioState>, gains: Vec<f32>) -> Result<(), String> {
+    let mut normalized = [0.0_f32; 5];
+    for (index, gain) in gains.into_iter().take(5).enumerate() {
+        normalized[index] = gain.clamp(-12.0, 12.0);
+    }
+
     let (reply_tx, reply_rx) = mpsc::channel();
     state
         .sender
-        .send(AudioCommand::SetEqPreset {
-            preset: EqPreset::from_str(preset.as_str()),
+        .send(AudioCommand::SetEqGains {
+            gains: normalized,
             reply: reply_tx,
         })
         .map_err(|_| "Audio thread unavailable".to_string())?;
@@ -1444,8 +1372,8 @@ fn main() {
                             AudioCommand::SetLoop { enabled, reply } => {
                                 let _ = reply.send(audio.set_loop(enabled));
                             }
-                            AudioCommand::SetEqPreset { preset, reply } => {
-                                let _ = reply.send(audio.set_eq_preset(preset));
+                            AudioCommand::SetEqGains { gains, reply } => {
+                                let _ = reply.send(audio.set_eq_gains(gains));
                             }
                             AudioCommand::SetOutputDevice { name, reply } => {
                                 let _ = reply.send(audio.set_output_device(name));
@@ -1532,7 +1460,7 @@ fn main() {
             audio_set_volume,
             audio_set_rate,
             audio_set_loop,
-            audio_set_eq_preset,
+            audio_set_eq_gains,
             audio_set_output_device,
             audio_list_output_devices,
             audio_analyze_loudness

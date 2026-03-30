@@ -45,6 +45,7 @@ export interface AppSettings {
   playbackSpeed: number;
   outputDeviceName?: string;
   eqPreset: EqPreset;
+  eqBands: number[];
   launchOnStartup: boolean;
   gameMode: boolean;
   miniNowPlayingOverlay: boolean;
@@ -54,7 +55,7 @@ export interface AppSettings {
   metadataFetchPaused: boolean;
 }
 
-export type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club';
+export type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club' | 'custom';
 
 export type LibraryTab = 'songs' | 'albums' | 'artists' | 'genres';
 export type NowPlayingTab = 'now-playing' | 'lyrics' | 'queue';

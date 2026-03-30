@@ -119,6 +119,10 @@ const shuffleWithSpacing = (songs: Song[], seed: number): Song[] => {
 
 const sortAlbumTracks = (songs: Song[]): Song[] => {
   return [...songs].sort((a, b) => {
+    const trackDelta = (a.track || Number.MAX_SAFE_INTEGER) - (b.track || Number.MAX_SAFE_INTEGER);
+    if (trackDelta !== 0) {
+      return trackDelta;
+    }
     const titleCmp = a.title.localeCompare(b.title);
     if (titleCmp !== 0) {
       return titleCmp;
@@ -206,14 +210,48 @@ const interleaveByGenre = (songs: Song[]): Song[] => {
   return result;
 };
 
+const getSongEnergyScore = (song: Song): number => {
+  const genre = song.genre?.toLowerCase() ?? '';
+  const bucket = normalizeGenreBucket(song.genre ?? '')?.toLowerCase() ?? '';
+  const loudness = song.loudnessLufs ?? -14;
+  let score = 0;
+
+  if (['dance', 'edm', 'electronic', 'house', 'disco', 'pop', 'rock', 'hip hop', 'hip-hop', 'rap'].some((hint) => genre.includes(hint) || bucket.includes(hint))) {
+    score += 2.5;
+  }
+  if (song.duration > 0 && song.duration <= 260) {
+    score += 1.2;
+  }
+  score += Math.max(0, Math.min(3, (loudness + 18) / 3));
+
+  return score;
+};
+
 const pickDailyMix = (songs: Song[], seed: number): Song[] => {
   const shuffled = weeklyShuffle(songs, seed);
 
   const recentThreshold = Math.floor(Date.now() / 1000) - 3 * 24 * 60 * 60;
-  const nonRecent = shuffled.filter((song) => !song.lastPlayed || song.lastPlayed < recentThreshold);
-  const favorites = nonRecent.filter((song) => song.favorite);
-  const mixed = interleaveByGenre(nonRecent);
-  const combined = [...favorites.slice(0, 8), ...mixed];
+  const candidatePool = shuffled.filter((song) => !song.lastPlayed || song.lastPlayed < recentThreshold);
+  const pool = candidatePool.length >= 25 ? candidatePool : shuffled;
+
+  const scored = pool
+    .map((song) => {
+      const playsWeight = Math.min(song.playCount, 18) * 0.18;
+      const favoriteBoost = song.favorite ? 3.2 : 0;
+      const recencyPenalty = song.lastPlayed ? Math.max(0, 3 - (Date.now() / 1000 - song.lastPlayed) / 86_400) * 1.1 : 0;
+      const genreBoost = getGenreBucketForSong(song) !== 'Unknown Genre' ? 0.8 : 0;
+      const energyBoost = getSongEnergyScore(song) * 0.35;
+      return {
+        song,
+        score: favoriteBoost + playsWeight + genreBoost + energyBoost - recencyPenalty,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.song);
+
+  const favorites = scored.filter((song) => song.favorite).slice(0, 8);
+  const mixed = interleaveByGenre(scored);
+  const combined = [...favorites, ...mixed];
   const seen = new Set<string>();
   const deduped = combined.filter((song) => {
     if (seen.has(song.id)) {
@@ -228,7 +266,7 @@ const pickDailyMix = (songs: Song[], seed: number): Song[] => {
 
 const pickOnRepeat = (songs: Song[]): Song[] => {
   const now = Math.floor(Date.now() / 1000);
-  const threshold = now - 5 * 24 * 60 * 60;
+  const threshold = now - 7 * 24 * 60 * 60;
 
   return songs
     .filter((song) => (song.lastPlayed ?? 0) >= threshold && song.playCount > 0)
@@ -434,6 +472,7 @@ export const generateSmartPlaylists = (
   const now = Math.floor(Date.now() / 1000);
   const seed = seedOverride ?? weeklySeed();
   const dailySeedValue = dailySeedOverride ?? dailySeed();
+  const songsById = new Map(songs.map((song) => [song.id, song]));
   const recentlyAdded = [...songs].sort((a, b) => b.addedAt - a.addedAt).slice(0, 100);
   const mostPlayed = [...songs].sort(byPlayCount).slice(0, 100);
   const rediscoverCutoff = now - 60 * 24 * 60 * 60;
@@ -462,14 +501,14 @@ export const generateSmartPlaylists = (
     ...moodMixes.map((entry) => ({
       ...entry,
       songIds: shuffleWithSpacing(
-        entry.songIds.map((id) => songs.find((song) => song.id === id)).filter(Boolean) as Song[],
+        entry.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song)),
         seed,
       ).map((song) => song.id),
     })),
     ...genreMixes.map((entry) => ({
       ...entry,
       songIds: shuffleWithSpacing(
-        entry.songIds.map((id) => songs.find((song) => song.id === id)).filter(Boolean) as Song[],
+        entry.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song)),
         seed,
       ).map((song) => song.id),
     })),
@@ -578,18 +617,20 @@ const pickAlbumSpotlight = (songs: Song[], seed: number, albumTracklistCache?: A
           byTitle.set(normalized, song);
         }
       }
-      let available = 0;
+      const orderedMatches: Song[] = [];
+      const matchedIds = new Set<string>();
       for (const track of tracklist.tracks) {
         const normalized = normalizeTrackTitle(track.title);
         const match = byTrack.get(track.position) ?? (normalized ? byTitle.get(normalized) : undefined);
-        if (match) {
-          available += 1;
+        if (match && !matchedIds.has(match.id)) {
+          matchedIds.add(match.id);
+          orderedMatches.push(match);
         }
       }
-      if (available < 6) {
+      if (orderedMatches.length !== tracklist.tracks.length || orderedMatches.length < 6) {
         return null;
       }
-      return sorted;
+      return orderedMatches;
     })
     .filter((albumSongs): albumSongs is Song[] => Boolean(albumSongs));
 
