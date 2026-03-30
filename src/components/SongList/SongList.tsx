@@ -78,7 +78,7 @@ const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
 
 interface SongRowData {
   songs: Song[];
-  queueIds: string[];
+  buildQueueIds: () => string[];
   currentSongId: string | null;
   playSongById: (songId: string, fromQueue?: boolean) => Promise<void>;
   setQueue: (queue: string[], startId: string) => void;
@@ -96,7 +96,7 @@ interface SongRowData {
 const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowData>) => {
   const {
     songs,
-    queueIds,
+    buildQueueIds,
     currentSongId,
     playSongById,
     setQueue,
@@ -154,12 +154,12 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
       role="button"
       tabIndex={0}
       onClick={() => {
-        setQueue(queueIds, song.id);
+        setQueue(buildQueueIds(), song.id);
         void playSongById(song.id, false);
       }}
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
-          setQueue(queueIds, song.id);
+          setQueue(buildQueueIds(), song.id);
           void playSongById(song.id, false);
         }
       }}
@@ -412,11 +412,11 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added', hideSort 
     }
     return [...map.values()].sort((a, b) => a.localeCompare(b));
   }, [songs]);
-  const queueIds = useMemo(() => sortedSongs.map((song) => song.id), [sortedSongs]);
+  const buildQueueIds = useMemo(() => () => sortedSongs.map((song) => song.id), [sortedSongs]);
   const rowData = useMemo<SongRowData>(
     () => ({
       songs: sortedSongs,
-      queueIds,
+      buildQueueIds,
       currentSongId,
       playSongById,
       setQueue,
@@ -432,7 +432,7 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added', hideSort 
     }),
     [
       sortedSongs,
-      queueIds,
+      buildQueueIds,
       currentSongId,
       playSongById,
       setQueue,

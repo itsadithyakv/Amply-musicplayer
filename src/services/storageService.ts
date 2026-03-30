@@ -137,6 +137,8 @@ export const flushDebouncedWrites = async (): Promise<void> => {
   );
 };
 
+export const hasPendingDebouncedWrites = (): boolean => debouncedJsonWrites.size > 0;
+
 export const clearStorageCache = async (): Promise<void> => {
   if (isTauri()) {
     await invoke('clear_storage_cache');

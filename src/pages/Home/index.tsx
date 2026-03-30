@@ -60,18 +60,7 @@ interface TopArtistEntry {
   songIds: string[];
 }
 
-interface PlaylistCardItem {
-  id: string;
-  baseId: string;
-  title: string;
-  subtitle: string;
-  artwork?: string;
-  artworks?: string[];
-  songIds: string[];
-  description?: string;
-  startSongId?: string;
-  kind: 'smart' | 'custom';
-}
+type AlbumTracklistSummary = { tracks?: Array<{ position: number; title: string }> };
 
 const playlistToneClasses = [
   'bg-gradient-to-br from-[#1f2a45] via-[#151b26] to-[#0f1218]',
@@ -141,14 +130,8 @@ const HomePage = () => {
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
-  const [recentlyPlayed, setRecentlyPlayed] = useState<Song[]>([]);
-  const [rediscoverSongs, setRediscoverSongs] = useState<Song[]>([]);
-  const [userPlaylists, setUserPlaylists] = useState<Playlist[]>([]);
   const [topArtists, setTopArtists] = useState<TopArtistEntry[]>([]);
-  const [smartPlaylistCards, setSmartPlaylistCards] = useState<PlaylistCardItem[]>([]);
-  const [smartPlaylistLoading, setSmartPlaylistLoading] = useState(true);
-  const [smartMixesAll, setSmartMixesAll] = useState<PlaylistCardItem[]>([]);
-  const [albumTracklistCache, setAlbumTracklistCache] = useState<Record<string, { tracks?: Array<{ position: number; title: string }> }>>({});
+  const [albumTracklistCache, setAlbumTracklistCache] = useState<Record<string, AlbumTracklistSummary>>({});
   const [smartPlaylistRenderSeed, setSmartPlaylistRenderSeed] = useState(() => smartPlaylistSeed || Date.now());
   const clickTimerRef = useRef<number | null>(null);
   const clickTargetRef = useRef<string | null>(null);
@@ -175,7 +158,7 @@ const HomePage = () => {
     return () => {
       alive = false;
     };
-  }, [songs.length, playlists.length]);
+  }, [metadataFetchDone]);
 
   const getAlbumSpotlightSubtitle = useCallback(
     (playlist: Playlist): string => {
@@ -266,68 +249,30 @@ const HomePage = () => {
     wasRegeneratingRef.current = regeneratingSmartPlaylists;
   }, [regeneratingSmartPlaylists]);
 
-  useEffect(() => {
-    let alive = true;
-    const cancel = scheduleIdleTask(() => {
-      if (!alive) {
-        return;
-      }
-      const next = [...songs]
+  const recentlyPlayed = useMemo(
+    () =>
+      [...songs]
         .filter((song) => song.lastPlayed)
         .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
-        .slice(0, 16);
-      setRecentlyPlayed(next);
-    }, 150);
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [songs]);
+        .slice(0, 16),
+    [songs],
+  );
 
-  useEffect(() => {
-    let alive = true;
-    const cancel = scheduleIdleTask(() => {
-      if (!alive) {
-        return;
-      }
-      const rediscover = playlists.find((playlist) => playlist.id === 'smart_rediscover');
-      if (!rediscover) {
-        startTransition(() => {
-          setRediscoverSongs([]);
-        });
-        return;
-      }
-      const next = rediscover.songIds
-        .map((songId) => songsById.get(songId))
-        .filter((song): song is Song => Boolean(song))
-        .slice(0, 16);
-      startTransition(() => {
-        setRediscoverSongs(next);
-      });
-    }, 200);
-    return () => {
-      alive = false;
-      cancel();
-    };
+  const rediscoverSongs = useMemo(() => {
+    const rediscover = playlists.find((playlist) => playlist.id === 'smart_rediscover');
+    if (!rediscover) {
+      return [];
+    }
+    return rediscover.songIds
+      .map((songId) => songsById.get(songId))
+      .filter((song): song is Song => Boolean(song))
+      .slice(0, 16);
   }, [playlists, songsById]);
 
-  useEffect(() => {
-    let alive = true;
-    const cancel = scheduleIdleTask(() => {
-      if (!alive) {
-        return;
-      }
-      startTransition(() => {
-        setUserPlaylists(
-          playlists.filter((playlist) => playlist.type === 'custom').filter((playlist) => playlist.songIds.length),
-        );
-      });
-    }, 200);
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [playlists]);
+  const userPlaylists = useMemo(
+    () => playlists.filter((playlist) => playlist.type === 'custom' && playlist.songIds.length),
+    [playlists],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -474,107 +419,78 @@ const HomePage = () => {
     return list;
   };
 
-  useEffect(() => {
-    let alive = true;
-    setSmartPlaylistLoading(true);
-    const cancel = scheduleIdleTask(() => {
-      if (!alive) {
-        return;
+  const smartPlaylistCards = useMemo(() => {
+    const smart = playlists
+      .filter((playlist) => playlist.type === 'smart')
+      .map((playlist) => ({
+        id: playlist.id,
+        baseId: playlist.id,
+        title: playlist.name,
+        subtitle: getAlbumSpotlightSubtitle(playlist),
+        artwork: getPlaylistArtwork(playlist),
+        artworks: getPlaylistArtworkSet(playlist),
+        description: playlist.description,
+        songIds: playlist.songIds,
+        kind: 'smart' as const,
+      }))
+      .filter((entry) => entry.songIds.length);
+
+    const custom = playlists
+      .filter((playlist) => playlist.type === 'custom')
+      .map((playlist) => ({
+        id: `${playlist.id}-recent`,
+        baseId: playlist.id,
+        title: playlist.name,
+        subtitle: `Recently played - ${playlist.songIds.length} songs`,
+        artwork: getPlaylistArtwork(playlist),
+        artworks: getPlaylistArtworkSet(playlist),
+        description: playlist.description,
+        songIds: playlist.songIds,
+        kind: 'custom' as const,
+      }))
+      .filter((entry) => entry.songIds.length);
+
+    const seed = smartPlaylistRenderSeed || Date.now();
+    const now = Date.now() / 1000;
+    const scoreFor = (baseId: string) => {
+      const usage = playlistUsage[baseId];
+      if (!usage) {
+        return 0;
       }
-      const smart = playlists
-        .filter((playlist) => playlist.type === 'smart')
-        .map((playlist) => ({
-          id: playlist.id,
-          baseId: playlist.id,
-          title: playlist.name,
-          subtitle: getAlbumSpotlightSubtitle(playlist),
-          artwork: getPlaylistArtwork(playlist),
-          artworks: getPlaylistArtworkSet(playlist),
-          description: playlist.description,
-          songIds: playlist.songIds,
-          kind: 'smart' as const,
-        }))
-        .filter((entry) => entry.songIds.length);
+      const daysSince = Math.max(0, (now - usage.lastUsed) / 86_400);
+      const recencyBoost = Math.max(0, 14 - daysSince) * 2;
+      return usage.count * 10 + recencyBoost;
+    };
 
-      const custom = playlists
-        .filter((playlist) => playlist.type === 'custom')
-        .map((playlist) => ({
-          id: `${playlist.id}-recent`,
-          baseId: playlist.id,
-          title: playlist.name,
-          subtitle: `Recently played - ${playlist.songIds.length} songs`,
-          artwork: getPlaylistArtwork(playlist),
-          artworks: getPlaylistArtworkSet(playlist),
-          description: playlist.description,
-          songIds: playlist.songIds,
-          kind: 'custom' as const,
-        }))
-        .filter((entry) => entry.songIds.length);
-
-      const seed = smartPlaylistRenderSeed || Date.now();
-      const now = Date.now() / 1000;
-      const scoreFor = (baseId: string) => {
-        const usage = playlistUsage[baseId];
-        if (!usage) {
-          return 0;
+    return [...smart, ...custom]
+      .sort((a, b) => {
+        const scoreDiff = scoreFor(b.baseId) - scoreFor(a.baseId);
+        if (scoreDiff !== 0) {
+          return scoreDiff;
         }
-        const daysSince = Math.max(0, (now - usage.lastUsed) / 86_400);
-        const recencyBoost = Math.max(0, 14 - daysSince) * 2;
-        return usage.count * 10 + recencyBoost;
-      };
-      const combined = [...smart, ...custom]
-        .sort((a, b) => {
-          const scoreDiff = scoreFor(b.baseId) - scoreFor(a.baseId);
-          if (scoreDiff !== 0) {
-            return scoreDiff;
-          }
-          return hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`);
-        })
-        .slice(0, 7);
+        return hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`);
+      })
+      .slice(0, 7);
+  }, [playlists, playlistUsage, smartPlaylistRenderSeed, getAlbumSpotlightSubtitle]);
 
-      setSmartPlaylistCards(combined);
-      setSmartPlaylistLoading(false);
-    }, 120);
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [playlists, songsById, smartPlaylistSeed, playlistUsage, getAlbumSpotlightSubtitle]);
-
-  useEffect(() => {
-    let alive = true;
+  const smartMixesAll = useMemo(() => {
     if (!showMoreMixes) {
-      setSmartMixesAll([]);
-      return () => {
-        alive = false;
-      };
+      return [];
     }
-
-    const cancel = scheduleIdleTask(() => {
-      if (!alive) {
-        return;
-      }
-      const next = playlists
-        .filter((playlist) => playlist.type === 'smart')
-        .map((playlist) => ({
-          id: playlist.id,
-          baseId: playlist.id,
-          title: playlist.name,
-          subtitle: playlist.description || getAlbumSpotlightSubtitle(playlist),
-          artwork: getPlaylistArtwork(playlist),
-          artworks: getPlaylistArtworkSet(playlist),
-          songIds: playlist.songIds,
-          kind: 'smart' as const,
-        }))
-        .filter((entry) => entry.songIds.length);
-      setSmartMixesAll(next);
-    }, 180);
-
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [playlists, songsById, showMoreMixes, getAlbumSpotlightSubtitle]);
+    return playlists
+      .filter((playlist) => playlist.type === 'smart')
+      .map((playlist) => ({
+        id: playlist.id,
+        baseId: playlist.id,
+        title: playlist.name,
+        subtitle: playlist.description || getAlbumSpotlightSubtitle(playlist),
+        artwork: getPlaylistArtwork(playlist),
+        artworks: getPlaylistArtworkSet(playlist),
+        songIds: playlist.songIds,
+        kind: 'smart' as const,
+      }))
+      .filter((entry) => entry.songIds.length);
+  }, [playlists, showMoreMixes, getAlbumSpotlightSubtitle]);
 
   const pickSong = (song: Song) => {
     setQueue(allSongIds, song.id);
@@ -671,17 +587,7 @@ const HomePage = () => {
             </div>
           ) : null}
           <div className="grid grid-cols-1 gap-5 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
-            {smartPlaylistLoading && !smartPlaylistCards.length
-            ? Array.from({ length: 3 }).map((_, index) => (
-                <div
-                  key={`smart-skeleton-${index}`}
-                  className={clsx(
-                    'min-h-[180px] rounded-card border border-amply-border/60 bg-amply-surface/70',
-                    index === 0 ? 'sm:col-span-2 xl:col-span-2' : '',
-                  )}
-                />
-              ))
-            : smartPlaylistCards.map((item, index) => {
+            {smartPlaylistCards.map((item, index) => {
             const isFeatured = index === 0;
             const artworkSet = item.artworks?.length ? item.artworks : item.artwork ? [item.artwork] : [];
             const glowClass = playlistGlowClasses[index % playlistGlowClasses.length];
@@ -701,7 +607,7 @@ const HomePage = () => {
                 onClick={() =>
                   handleSmartCardClick(
                     item.id,
-                    () => playPlaylist(item.songIds, item.startSongId, item.baseId),
+                    () => playPlaylist(item.songIds, undefined, item.baseId),
                     () => openPlaylistDetail(item.baseId),
                   )
                 }
@@ -802,7 +708,7 @@ const HomePage = () => {
           </div>
         </div>
 
-        {!smartPlaylistLoading && !smartPlaylistCards.length ? (
+        {!smartPlaylistCards.length ? (
           <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 text-[13px] text-amply-textMuted">
             No smart playlists yet. Add more music or refresh your library to generate mixes.
           </div>

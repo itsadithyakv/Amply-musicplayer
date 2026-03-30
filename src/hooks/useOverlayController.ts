@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useRef } from 'react';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { PhysicalPosition, currentMonitor } from '@tauri-apps/api/window';
 import { emitTo, listen } from '@tauri-apps/api/event';
@@ -8,6 +9,7 @@ import { isTauri } from '@/services/storageService';
 
 export const useOverlayController = (enabled: boolean): void => {
   const overlayAutoHide = usePlayerStore((state) => state.settings.overlayAutoHide);
+  const lastPayloadKeyRef = useRef<string | null>(null);
   const buildOverlayPayload = () => {
     const playerState = usePlayerStore.getState();
     const songId = playerState.currentSongId;
@@ -20,12 +22,18 @@ export const useOverlayController = (enabled: boolean): void => {
     };
   };
 
-  const emitOverlayState = async () => {
+  const emitOverlayState = async (force = false) => {
     const overlay = (await WebviewWindow.getAll()).find((window) => window.label === 'overlay') ?? null;
     if (!overlay) {
       return;
     }
-    await emitTo('overlay', 'amply://overlay-state', buildOverlayPayload());
+    const payload = buildOverlayPayload();
+    const payloadKey = `${payload.title}::${payload.artist}::${payload.albumArt ?? ''}::${payload.isPlaying ? '1' : '0'}`;
+    if (!force && payloadKey === lastPayloadKeyRef.current) {
+      return;
+    }
+    lastPayloadKeyRef.current = payloadKey;
+    await emitTo('overlay', 'amply://overlay-state', payload);
   };
 
   useEffect(() => {
@@ -128,7 +136,7 @@ export const useOverlayController = (enabled: boolean): void => {
         console.error('[Amply] Overlay window position failed', error);
       }
       try {
-        await emitOverlayState();
+        await emitOverlayState(true);
       } catch (error) {
         console.warn('[Amply] Overlay state emit failed', error);
       }

@@ -9,10 +9,13 @@ const GameModePage = () => {
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setGameMode = usePlayerStore((state) => state.setGameMode);
+  const songIdSet = useMemo(() => new Set(songs.map((song) => song.id)), [songs]);
 
   const items = useMemo(
     () =>
-      playlists.map((playlist) => ({
+      playlists
+        .filter((playlist) => playlist.songIds.length > 0)
+        .map((playlist) => ({
         id: playlist.id,
         name: playlist.name,
         count: playlist.songIds.length,
@@ -22,7 +25,7 @@ const GameModePage = () => {
   );
 
   const playPlaylist = async (songIds: string[], playlistId?: string) => {
-    const queue = songIds.filter((songId) => songs.some((song) => song.id === songId));
+    const queue = songIds.filter((songId) => songIdSet.has(songId));
     const first = queue[0];
     if (!first) {
       return;
@@ -42,7 +45,7 @@ const GameModePage = () => {
             Game Mode
           </div>
           <h1 className="text-[20px] font-semibold tracking-tight text-amply-textPrimary">Lean Library</h1>
-          <p className="text-[12px] text-amply-textSecondary">Only playlists and playback controls. No background fetch.</p>
+          <p className="text-[12px] text-amply-textSecondary">Only playlists and essential playback controls. Background work stays off.</p>
         </div>
         <button
           type="button"
@@ -82,6 +85,9 @@ const GameModePage = () => {
           </div>
         )}
       </section>
+      <p className="text-[11px] text-amply-textMuted">
+        Game Mode trims the app down to playlist launch and basic transport controls for the lightest possible playback path.
+      </p>
     </div>
   );
 };

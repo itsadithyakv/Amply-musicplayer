@@ -1,0 +1,20 @@
+Amply v1.5.2 Release Notes
+
+Highlights
+- Improved large-library responsiveness across startup, search, metadata fetch, and library navigation.
+- Slimmed down Game Mode further for lower overhead during gameplay.
+- Reduced redundant overlay sync work and kept the main app compatible with the mini overlay.
+- Fixed smart-playlist refresh conflicts introduced by large-library batching.
+
+Changes
+- Deferred or skipped non-essential startup work so the app becomes interactive faster.
+- Batched metadata-driven song updates to avoid repeated store writes during long enrichment runs.
+- Optimized search ranking for large libraries and kept result ordering deterministic.
+- Avoided building album, artist, and genre groupings in the Library view unless their tab is active.
+- Simplified the Game Mode player bar to essential transport, seek, and volume controls.
+- Disabled FPS monitoring in Game Mode and the overlay route to remove unnecessary animation-frame work.
+- Deduplicated overlay state emissions so library churn does not spam the overlay window.
+
+Notes
+- This release is focused on responsiveness and stability rather than new end-user features.
+- Tauri desktop builds on Windows still require Rust and Visual Studio Build Tools to be installed.

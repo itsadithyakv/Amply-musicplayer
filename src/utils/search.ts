@@ -70,8 +70,31 @@ const fieldScore = (normalizedField: string, queryTokens: string[]): number => {
   return score;
 };
 
-const scoreSongForQuery = (song: Song, query: string): number => {
-  const tokens = tokenize(query);
+const compareMatches = (a: { song: Song; score: number }, b: { song: Song; score: number }): number => {
+  const scoreDiff = b.score - a.score;
+  if (scoreDiff !== 0) {
+    return scoreDiff;
+  }
+
+  const titleDiff = a.song.title.localeCompare(b.song.title);
+  if (titleDiff !== 0) {
+    return titleDiff;
+  }
+
+  const artistDiff = a.song.artist.localeCompare(b.song.artist);
+  if (artistDiff !== 0) {
+    return artistDiff;
+  }
+
+  const albumDiff = a.song.album.localeCompare(b.song.album);
+  if (albumDiff !== 0) {
+    return albumDiff;
+  }
+
+  return a.song.id.localeCompare(b.song.id);
+};
+
+const scoreSongForQuery = (song: Song, tokens: string[]): number => {
   if (!tokens.length) {
     return 0;
   }
@@ -93,15 +116,47 @@ const scoreSongForQuery = (song: Song, query: string): number => {
   return score;
 };
 
-export const filterAndRankSongs = (songs: Song[], query: string): Song[] => {
+export const filterAndRankSongs = (songs: Song[], query: string, limit = Number.POSITIVE_INFINITY): Song[] => {
   const normalizedQuery = normalize(query);
   if (!normalizedQuery) {
     return songs;
   }
 
-  return songs
-    .map((song) => ({ song, score: scoreSongForQuery(song, normalizedQuery) }))
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => entry.song);
+  const tokens = tokenize(normalizedQuery);
+  if (!tokens.length) {
+    return songs;
+  }
+
+  const finiteLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : Number.POSITIVE_INFINITY;
+  const matches: Array<{ song: Song; score: number }> = [];
+
+  for (const song of songs) {
+    const score = scoreSongForQuery(song, tokens);
+    if (score <= 0) {
+      continue;
+    }
+
+    if (!Number.isFinite(finiteLimit)) {
+      matches.push({ song, score });
+      continue;
+    }
+
+    const candidate = { song, score };
+    let insertAt = matches.findIndex((entry) => compareMatches(candidate, entry) < 0);
+    if (insertAt === -1) {
+      if (matches.length >= finiteLimit) {
+        continue;
+      }
+      insertAt = matches.length;
+    }
+
+    matches.splice(insertAt, 0, candidate);
+    if (matches.length > finiteLimit) {
+      matches.pop();
+    }
+  }
+
+  matches.sort(compareMatches);
+
+  return matches.map((entry) => entry.song);
 };

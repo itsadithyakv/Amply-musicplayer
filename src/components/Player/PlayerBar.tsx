@@ -28,6 +28,7 @@ const PlayerBar = () => {
   const repeatMode = usePlayerStore((state) => state.repeatMode);
   const volume = usePlayerStore((state) => state.volume);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
+  const gameMode = usePlayerStore((state) => state.settings.gameMode);
 
   const pausePlayback = usePlayerStore((state) => state.pausePlayback);
   const resumePlayback = usePlayerStore((state) => state.resumePlayback);
@@ -70,6 +71,96 @@ const PlayerBar = () => {
 
   const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
   const isLooping = repeatMode === 'one';
+
+  if (gameMode) {
+    return (
+      <footer className="relative z-50 h-[84px] border-t border-amply-border/60 bg-amply-surface px-5 py-2 shadow-[0_-12px_30px_rgba(0,0,0,0.5)]">
+        <div className="grid h-full grid-cols-[minmax(0,1.5fr)_auto_minmax(0,1fr)] items-center gap-4">
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? 'Select a playlist'}</p>
+            <p className="truncate text-[12px] text-amply-textSecondary">{song ? song.artist : 'Lean playback mode'}</p>
+          </div>
+
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (actionBusyRef.current) {
+                  return;
+                }
+                actionBusyRef.current = true;
+                void playPrevious().finally(() => {
+                  actionBusyRef.current = false;
+                });
+              }}
+              className={iconButtonClass}
+            >
+              <img src={prevIcon} alt="Previous" className={darkSurfaceIconClass} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (isPlaying) {
+                  pausePlayback();
+                } else {
+                  resumePlayback();
+                }
+              }}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-amply-accent text-black shadow-glow transition-colors hover:bg-amply-accentHover"
+            >
+              <img src={isPlaying ? pauseIcon : playIcon} alt="Play/Pause" className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (actionBusyRef.current) {
+                  return;
+                }
+                actionBusyRef.current = true;
+                void playNext(true).finally(() => {
+                  actionBusyRef.current = false;
+                });
+              }}
+              className={iconButtonClass}
+            >
+              <img src={nextIcon} alt="Next" className={darkSurfaceIconClass} />
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-[11px] text-amply-textMuted">
+              <span className="w-9 text-right">{formatDuration(positionSec)}</span>
+              <div className="relative h-1 flex-1 rounded-full bg-[#3a3a3a]">
+                <div className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent" style={{ width: `${progressPercent}%` }} />
+                <input
+                  type="range"
+                  min={0}
+                  max={durationSec || 1}
+                  step={0.1}
+                  value={positionSec}
+                  onChange={(event) => seekTo(Number(event.target.value))}
+                  className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                />
+              </div>
+              <span className="w-9">{formatDuration(durationSec)}</span>
+            </div>
+            <div className="flex items-center justify-end gap-2 text-[12px] text-amply-textSecondary">
+              <span>Vol</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={volume}
+                onChange={(event) => setVolume(Number(event.target.value))}
+                className="h-1 w-24 cursor-pointer accent-amply-accent"
+              />
+            </div>
+          </div>
+        </div>
+      </footer>
+    );
+  }
 
   return (
     <footer className="relative z-50 h-[84px] border-t border-amply-border/60 bg-amply-surface px-5 py-2 shadow-[0_-12px_30px_rgba(0,0,0,0.5)]">

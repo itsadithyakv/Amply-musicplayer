@@ -19,7 +19,7 @@ import OverlayPage from '@/pages/Overlay';
 import GameModePage from '@/pages/GameMode';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
-import { flushDebouncedWrites } from '@/services/storageService';
+import { flushDebouncedWrites, hasPendingDebouncedWrites } from '@/services/storageService';
 import { warmSearchIndex } from '@/utils/search';
 
 const App = () => {
@@ -42,11 +42,11 @@ const App = () => {
   const lastUserInputRef = useRef(0);
   const searchWarmRef = useRef<string | null>(null);
   const mainScrollRef = useRef<HTMLElement | null>(null);
-  const { lowPerf } = useFpsMonitor();
-
+  const startupAtRef = useRef(Date.now());
   const isOverlayRoute =
     location.pathname === '/overlay' ||
     (typeof window !== 'undefined' && window.location.hash?.includes('/overlay'));
+  const { lowPerf } = useFpsMonitor({ enabled: !settings.gameMode && !isOverlayRoute });
 
   if (isOverlayRoute) {
     return <OverlayPage />;
@@ -56,10 +56,6 @@ const App = () => {
     initializePlayer();
     initializeLibrary();
   }, [initializeLibrary, initializePlayer]);
-
-  useEffect(() => {
-    return;
-  }, []);
 
   useOverlayController(settings.miniNowPlayingOverlay);
   useMediaSession();
@@ -79,7 +75,6 @@ const App = () => {
   useEffect(() => {
     let alive = true;
     let idleHandle: number | null = null;
-    let timeoutHandle: number | null = null;
     const idle = (globalThis as typeof globalThis & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
       cancelIdleCallback?: (handle: number) => void;
@@ -92,26 +87,29 @@ const App = () => {
       if (!alive) {
         return;
       }
+      if (!hasPendingDebouncedWrites()) {
+        return;
+      }
+      const recentlyActive = Date.now() - lastUserInputRef.current < 12_000;
+      if (!document.hidden && recentlyActive) {
+        return;
+      }
       if (typeof idle === 'function') {
         idleHandle = idle(() => {
           void flushDebouncedWrites();
-        }, { timeout: 2000 });
+        }, { timeout: 4000 });
       } else {
         void flushDebouncedWrites();
       }
     };
 
-    const interval = window.setInterval(scheduleFlush, 5000);
-    scheduleFlush();
+    const interval = window.setInterval(scheduleFlush, 20_000);
 
     return () => {
       alive = false;
       window.clearInterval(interval);
       if (idleHandle !== null && typeof cancelIdle === 'function') {
         cancelIdle(idleHandle);
-      }
-      if (timeoutHandle !== null) {
-        window.clearTimeout(timeoutHandle);
       }
     };
   }, []);
@@ -178,7 +176,7 @@ const App = () => {
   }, [location.pathname, settings.gameMode]);
 
   useEffect(() => {
-    if (!songsCount || libraryScanning) {
+    if (settings.gameMode || !songsCount || libraryScanning) {
       return;
     }
     const library = useLibraryStore.getState().songs;
@@ -190,6 +188,7 @@ const App = () => {
     let alive = true;
     let idleHandle: number | null = null;
     let timeoutHandle: number | null = null;
+    let startupDelayHandle: number | null = null;
     const idle = (globalThis as typeof globalThis & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
       cancelIdleCallback?: (handle: number) => void;
@@ -198,12 +197,13 @@ const App = () => {
       cancelIdleCallback?: (handle: number) => void;
     }).cancelIdleCallback;
     let index = 0;
+    const chunkSize = lowPerf || document.hidden ? 250 : 500;
 
     const runChunk = () => {
       if (!alive) {
         return;
       }
-      index = warmSearchIndex(library, index, 500);
+      index = warmSearchIndex(library, index, chunkSize);
       if (index < library.length) {
         schedule();
       }
@@ -217,7 +217,13 @@ const App = () => {
       }
     };
 
-    schedule();
+    const startupAge = Date.now() - startupAtRef.current;
+    const startupDelayMs = Math.max(0, 4000 - startupAge);
+    if (startupDelayMs > 0) {
+      startupDelayHandle = window.setTimeout(schedule, startupDelayMs);
+    } else {
+      schedule();
+    }
     return () => {
       alive = false;
       if (idleHandle !== null && typeof cancelIdle === 'function') {
@@ -226,8 +232,11 @@ const App = () => {
       if (timeoutHandle !== null) {
         window.clearTimeout(timeoutHandle);
       }
+      if (startupDelayHandle !== null) {
+        window.clearTimeout(startupDelayHandle);
+      }
     };
-  }, [songsCount, libraryScanning]);
+  }, [songsCount, libraryScanning, lowPerf, settings.gameMode]);
 
   useEffect(() => {
     (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ = lowPerf || settings.gameMode;
@@ -284,6 +293,9 @@ const App = () => {
       if (lowPerf) {
         return;
       }
+      if (Date.now() - startupAtRef.current < 75_000) {
+        return;
+      }
       if (document.hidden) {
         return;
       }
@@ -322,7 +334,17 @@ const App = () => {
         window.clearTimeout(timeoutHandle);
       }
     };
-  }, [settings.gameMode, libraryScanning, metadataFetch.running, isPlaying, songsCount, startMetadataFetch, lowPerf]);
+  }, [
+    settings.gameMode,
+    settings.metadataFetchPaused,
+    libraryScanning,
+    metadataFetch.running,
+    metadataFetch.pending,
+    isPlaying,
+    songsCount,
+    startMetadataFetch,
+    lowPerf,
+  ]);
 
   useEffect(() => {
     let alive = true;
@@ -375,6 +397,9 @@ const App = () => {
       if (lowPerf) {
         return;
       }
+      if (Date.now() - startupAtRef.current < 90_000) {
+        return;
+      }
       if (document.hidden) {
         return;
       }
@@ -419,6 +444,7 @@ const App = () => {
     libraryScanning,
     metadataFetch.running,
     albumTrackFetch.running,
+    albumTrackFetch.pending,
     isPlaying,
     songsCount,
     startAlbumTracklistFetch,

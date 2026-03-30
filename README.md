@@ -1,4 +1,4 @@
-# Amply v1.5.1
+# Amply v1.5.2
 
 A modern, offline-first desktop music player built for local libraries. Amply combines fast scanning, smart mixes, and a smooth desktop UI while keeping your music fully local.
 
@@ -15,12 +15,12 @@ A modern, offline-first desktop music player built for local libraries. Amply co
 - Sleep timer with countdown and auto-stop
 - Large-library performance upgrades (virtualized grids, cached lookups)
 
-## New in 1.5.1
+## New in 1.5.2
 
-- Updated branding and icon assets across the app, package, and platform bundles.
-- Refined Settings UI with responsive layout improvements, upgraded EQ editing, and a clearer sleep timer.
-- Fixed stale smart playlists so listening-driven mixes update more reliably from current library data.
-- Cleaned up EQ, crossfade, and playback logic to remove dead paths and reduce conflicting behavior.
+- Large-library performance passes across startup, search, library views, metadata fetch, and smart playlist refresh paths.
+- Leaner Game Mode with a stripped-down player bar, disabled search warming, and fewer always-on background loops.
+- Improved overlay compatibility and reduced redundant overlay state sync traffic from the main app.
+- Fixed smart-playlist refresh conflicts and restored deterministic ordering in the optimized search path.
 
 ## Core Concepts
 

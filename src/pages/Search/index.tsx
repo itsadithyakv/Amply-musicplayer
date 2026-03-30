@@ -18,7 +18,7 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
     if (trimmed.length < 2) {
       return [];
     }
-    return filterAndRankSongs(songs, trimmed).slice(0, 10);
+    return filterAndRankSongs(songs, trimmed, 10);
   }, [deferredQuery, songs]);
 
   const suggestions = useMemo(() => {
@@ -78,7 +78,7 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
       </div>
 
       {filteredSongs.length ? (
-        <SongList songs={filteredSongs} persistKey="search" />
+        <SongList songs={filteredSongs} persistKey="search" hideSort />
       ) : deferredQuery.trim().length >= 2 ? (
         <div className="rounded-card border border-amply-border bg-amply-card p-6 text-[13px] text-amply-textMuted">
           No results found. Try a different search term.

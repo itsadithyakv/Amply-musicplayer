@@ -35,7 +35,6 @@ import {
   markSongCached,
   primeMetadataIndex,
 } from '@/services/metadataCacheIndex';
-import { filterAndRankSongs } from '@/utils/search';
 
 interface LibraryPersisted {
   songs: Song[];
@@ -97,7 +96,6 @@ interface LibraryState {
   addLibraryPath: (path: string) => Promise<void>;
   removeLibraryPath: (path: string) => Promise<void>;
   setSearchQuery: (query: string) => void;
-  getFilteredSongs: () => Song[];
   getSongById: (songId: string) => Song | undefined;
   updateSongGenre: (songId: string, genre: string) => Promise<void>;
   updateSongLoudness: (songId: string, lufs: number) => Promise<void>;
@@ -131,11 +129,35 @@ let smartCacheWeek: string | null = null;
 let cachedSongsRef: Song[] | null = null;
 let cachedSongsById: Map<string, Song> | null = null;
 let metadataResumeTimer: number | null = null;
+let smartPlaylistRefreshHandle: number | null = null;
+let pendingSmartPlaylistRefresh:
+  | {
+      songs: Song[];
+    }
+  | null = null;
 const metadataPlayRetryCache = new Map<string, number>();
 const PLAY_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 let scanRunId = 0;
 let initialScanScheduled = false;
 let initialScanTimer: number | null = null;
+
+const scheduleBackgroundTask = (task: () => void, timeoutMs = 800): void => {
+  if (typeof window === 'undefined') {
+    task();
+    return;
+  }
+
+  const idle = (globalThis as typeof globalThis & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+  }).requestIdleCallback;
+
+  if (typeof idle === 'function') {
+    idle(task, { timeout: timeoutMs });
+    return;
+  }
+
+  window.setTimeout(task, Math.min(timeoutMs, 300));
+};
 
 const scheduleInitialScan = (paths: string[]): void => {
   if (initialScanScheduled) {
@@ -213,6 +235,27 @@ const getSongByIdCached = (songs: Song[], songId: string): Song | undefined => {
     cachedSongsById = new Map(songs.map((entry) => [entry.id, entry]));
   }
   return cachedSongsById.get(songId);
+};
+
+const updateSongEntry = (
+  songs: Song[],
+  songId: string,
+  updater: (song: Song) => Song,
+): { songs: Song[]; changed: boolean } => {
+  const index = songs.findIndex((song) => song.id === songId);
+  if (index < 0) {
+    return { songs, changed: false };
+  }
+
+  const current = songs[index];
+  const next = updater(current);
+  if (next === current) {
+    return { songs, changed: false };
+  }
+
+  const updated = [...songs];
+  updated[index] = next;
+  return { songs: updated, changed: true };
 };
 
 const seedFromWeekKey = (weekKey: string): number => {
@@ -337,6 +380,44 @@ const regenerateSmartPlaylistsForCurrentState = async (
     seedOverride: seed,
     persist: false,
   });
+};
+
+const scheduleSmartPlaylistRefresh = (
+  songs: Song[],
+  _overrides: Record<string, string[]>,
+  _seed: number,
+  delayMs = 1200,
+): void => {
+  pendingSmartPlaylistRefresh = { songs };
+
+  const run = async () => {
+    const next = pendingSmartPlaylistRefresh;
+    pendingSmartPlaylistRefresh = null;
+    if (!next) {
+      return;
+    }
+
+    const state = useLibraryStore.getState();
+    await regenerateSmartPlaylistsForCurrentState(next.songs, state.smartPlaylistOverrides, state.smartPlaylistSeed);
+    useLibraryStore.setState({
+      playlists: buildPlaylists(state.customPlaylists),
+      smartPlaylistSeed: state.smartPlaylistSeed,
+    });
+  };
+
+  if (typeof window === 'undefined') {
+    void run();
+    return;
+  }
+
+  if (smartPlaylistRefreshHandle !== null) {
+    window.clearTimeout(smartPlaylistRefreshHandle);
+  }
+
+  smartPlaylistRefreshHandle = window.setTimeout(() => {
+    smartPlaylistRefreshHandle = null;
+    void run();
+  }, delayMs);
 };
 
 const buildPlaylists = (customPlaylists: Playlist[]): Playlist[] => {
@@ -483,9 +564,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       let genreCount = 0;
       const loudnessCount = 0;
       let albumArtCount = 0;
+      let workingSongs = songs;
       let done = 0;
       let lastUpdate = performance.now();
       const seenAlbums = new Set<string>();
+      const pendingGenreUpdates = new Map<string, string>();
 
       const pendingEntries: Array<{
         song: Song;
@@ -636,6 +719,47 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         });
       };
 
+      const flushSongMetadataUpdates = async () => {
+        if (!pendingGenreUpdates.size) {
+          return;
+        }
+
+        let nextSongs = workingSongs;
+        let changed = false;
+
+        for (const [songId, genre] of pendingGenreUpdates.entries()) {
+          const normalized = genre.trim();
+          if (!normalized || normalized.toLowerCase() === 'unknown genre') {
+            continue;
+          }
+          const result = updateSongEntry(nextSongs, songId, (entry) => {
+            if (entry.genre.trim().toLowerCase() === normalized.toLowerCase()) {
+              return entry;
+            }
+            return {
+              ...entry,
+              genre: normalized,
+            };
+          });
+          if (result.changed) {
+            nextSongs = result.songs;
+            changed = true;
+          }
+        }
+
+        pendingGenreUpdates.clear();
+
+        if (!changed) {
+          return;
+        }
+
+        workingSongs = nextSongs;
+        const current = get();
+        set({ songs: nextSongs });
+        scheduleSmartPlaylistRefresh(nextSongs, current.smartPlaylistOverrides, current.smartPlaylistSeed, 300);
+        await persistLibrary(nextSongs, current.customPlaylists);
+      };
+
       let abortedByUser = false;
       for (const entry of pendingEntries) {
         const song = entry.song;
@@ -667,7 +791,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
                 noteMetadataSuccess(attemptsCache, 'genre', song.id);
                 void markSongCached(song.id, 'genre');
                 if (genreResult.genre && genreResult.genre.toLowerCase() !== 'unknown genre') {
-                  await get().updateSongGenre(song.id, genreResult.genre);
+                  pendingGenreUpdates.set(song.id, genreResult.genre);
                 }
               } else {
                 if (genreResult.status === 'missing' && isOnline) {
@@ -765,6 +889,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       }
 
       if (abortedByUser) {
+        await flushSongMetadataUpdates();
         await saveMetadataAttempts(attemptsCache);
         set({
           metadataFetch: {
@@ -784,16 +909,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       }
 
       const completedAll = done >= pendingEntries.length;
+      await flushSongMetadataUpdates();
       await saveMetadataAttempts(attemptsCache);
       if (completedAll) {
-        await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, {
-          force: true,
-          seedOverride: seedFromWeekKey(getIsoWeekKey()),
-        });
-        const customPlaylists = get().customPlaylists;
         set({
-          playlists: buildPlaylists(customPlaylists),
-          smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
           metadataFetch: {
             running: false,
             total: pendingEntries.length,
@@ -1159,18 +1278,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     await ensureStorageDirs();
 
-    const settings = await readStorageJson<{ libraryPath?: string; libraryPaths?: string[] }>('settings.json', {});
-    const cache = await readStorageJson<LibraryPersisted>(libraryCachePath, { songs: [] });
-    const customPlaylists = await readStorageJson<Playlist[]>(customPlaylistsPath, []);
-    const smartOverrides = await readStorageJson<Record<string, string[]>>(smartOverridesPath, {});
-    const playlistUsage = await readStorageJson<Record<string, PlaylistUsageEntry>>(playlistUsagePath, {});
+    const [settings, cache, customPlaylists, smartOverrides, playlistUsage, cachedSmartPlaylists] = await Promise.all([
+      readStorageJson<{ libraryPath?: string; libraryPaths?: string[] }>('settings.json', {}),
+      readStorageJson<LibraryPersisted>(libraryCachePath, { songs: [] }),
+      readStorageJson<Playlist[]>(customPlaylistsPath, []),
+      readStorageJson<Record<string, string[]>>(smartOverridesPath, {}),
+      readStorageJson<Record<string, PlaylistUsageEntry>>(playlistUsagePath, {}),
+      readStorageJson<SmartCache | null>(smartCachePath, null),
+    ]);
     const libraryPaths = normalizeLibraryPaths([
       ...(settings.libraryPaths ?? []),
       ...(settings.libraryPath ? [settings.libraryPath] : []),
     ]);
-
-    await refreshSmartPlaylists(cache.songs, smartOverrides);
-    const initialSeed = seedFromWeekKey(getIsoWeekKey());
+    const currentWeekKey = getIsoWeekKey();
+    if (cachedSmartPlaylists?.weekKey === currentWeekKey && cachedSmartPlaylists.playlists?.length) {
+      smartCacheWeek = cachedSmartPlaylists.weekKey;
+      smartPlaylistsCache = applySmartOverrides(cachedSmartPlaylists.playlists, smartOverrides, cache.songs);
+    } else {
+      smartCacheWeek = cachedSmartPlaylists?.weekKey ?? null;
+      smartPlaylistsCache = [];
+    }
+    const initialSeed = seedFromWeekKey(currentWeekKey);
 
     set({
       initialized: true,
@@ -1190,6 +1318,22 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         pending: cache.songs.length > 0,
       },
     });
+
+    if (!smartPlaylistsCache.length && cache.songs.length) {
+      scheduleBackgroundTask(() => {
+        void (async () => {
+          await refreshSmartPlaylists(cache.songs, smartOverrides);
+          const state = useLibraryStore.getState();
+          if (!state.initialized) {
+            return;
+          }
+          useLibraryStore.setState({
+            playlists: buildPlaylists(state.customPlaylists),
+            smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
+          });
+        })();
+      }, 1400);
+    }
 
     scheduleInitialScan(libraryPaths);
   },
@@ -1295,18 +1439,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         return;
       }
 
-      const schedule = (task: () => void) => {
-        const idle = (globalThis as typeof globalThis & {
-          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-        }).requestIdleCallback;
-        if (typeof idle === 'function') {
-          idle(task, { timeout: 1000 });
-        } else {
-          setTimeout(task, 0);
-        }
-      };
-
-      schedule(() => {
+      scheduleBackgroundTask(() => {
         if (runId !== scanRunId) {
           return;
         }
@@ -1324,7 +1457,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             smartPlaylistSeed: weeklySeed,
           });
         })();
-      });
+      }, 1000);
     } catch (error) {
       set({
         isScanning: false,
@@ -1360,11 +1493,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({ searchQuery: query });
   },
 
-  getFilteredSongs: () => {
-    const { songs, searchQuery } = get();
-    return filterAndRankSongs(songs, searchQuery);
-  },
-
   getSongById: (songId) => {
     return getSongByIdCached(get().songs, songId);
   },
@@ -1375,17 +1503,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       return;
     }
 
-    let changed = false;
-    const songs = get().songs.map((song) => {
-      if (song.id !== songId) {
-        return song;
-      }
-
+    const { songs, changed } = updateSongEntry(get().songs, songId, (song) => {
       if (song.genre.trim().toLowerCase() === normalized.toLowerCase()) {
         return song;
       }
-
-      changed = true;
       return {
         ...song,
         genre: normalized,
@@ -1397,26 +1518,24 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     const customPlaylists = get().customPlaylists;
-    await regenerateSmartPlaylistsForCurrentState(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
-    set({ songs, playlists: buildPlaylists(customPlaylists) });
+    set({ songs });
+    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
     await persistLibrary(songs, customPlaylists);
   },
 
   toggleFavorite: async (songId) => {
-    const songs = get().songs.map((song) => {
-      if (song.id !== songId) {
-        return song;
-      }
+    const { songs, changed } = updateSongEntry(get().songs, songId, (song) => ({
+      ...song,
+      favorite: !song.favorite,
+    }));
 
-      return {
-        ...song,
-        favorite: !song.favorite,
-      };
-    });
+    if (!changed) {
+      return;
+    }
 
     const customPlaylists = get().customPlaylists;
-    await regenerateSmartPlaylistsForCurrentState(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
-    set({ songs, playlists: buildPlaylists(customPlaylists) });
+    set({ songs });
+    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -1446,11 +1565,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   updateSongLoudness: async (songId, lufs) => {
-    const songs = get().songs.map((song) => {
-      if (song.id !== songId) {
-        return song;
-      }
-
+    const { songs, changed } = updateSongEntry(get().songs, songId, (song) => {
       if (song.loudnessLufs === lufs) {
         return song;
       }
@@ -1461,10 +1576,14 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       };
     });
 
+    if (!changed) {
+      return;
+    }
+
     void markSongCached(songId, 'loudness');
     const customPlaylists = get().customPlaylists;
-    await regenerateSmartPlaylistsForCurrentState(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
-    set({ songs, playlists: buildPlaylists(customPlaylists) });
+    set({ songs });
+    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -1504,22 +1623,19 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   recordSongPlay: async (songId) => {
     const now = Math.floor(Date.now() / 1000);
+    const { songs, changed } = updateSongEntry(get().songs, songId, (song) => ({
+      ...song,
+      playCount: song.playCount + 1,
+      lastPlayed: now,
+    }));
 
-    const songs = get().songs.map((song) => {
-      if (song.id !== songId) {
-        return song;
-      }
-
-      return {
-        ...song,
-        playCount: song.playCount + 1,
-        lastPlayed: now,
-      };
-    });
+    if (!changed) {
+      return;
+    }
 
     const customPlaylists = get().customPlaylists;
-    await regenerateSmartPlaylistsForCurrentState(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
-    set({ songs, playlists: buildPlaylists(customPlaylists) });
+    set({ songs });
+    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
     await persistLibrary(songs, customPlaylists);
   },
 

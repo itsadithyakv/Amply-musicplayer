@@ -35,6 +35,7 @@ interface GenreGroup {
   label: string;
   songs: Song[];
   artwork?: string;
+  totalPlays: number;
 }
 
 interface ArtistGroup {
@@ -90,17 +91,19 @@ const buildGenreGroups = (songs: Song[]): GenreGroup[] => {
         label,
         songs: [song],
         artwork: song.albumArt,
+        totalPlays: song.playCount,
       });
       continue;
     }
 
     existing.songs.push(song);
+    existing.totalPlays += song.playCount;
     if (!existing.artwork && song.albumArt) {
       existing.artwork = song.albumArt;
     }
   }
 
-  return [...groups.values()].sort((a, b) => b.songs.length - a.songs.length || a.label.localeCompare(b.label));
+  return [...groups.values()].sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
 };
 
 const buildArtistGroups = (songs: Song[]): ArtistGroup[] => {
@@ -152,6 +155,7 @@ type AlbumEntry = {
   artwork?: string;
   songs: Song[];
   key: string;
+  totalPlays: number;
 };
 
 const sortAlbums = (albums: AlbumEntry[], sortBy: AlbumSort): AlbumEntry[] => {
@@ -162,11 +166,7 @@ const sortAlbums = (albums: AlbumEntry[], sortBy: AlbumSort): AlbumEntry[] => {
     case 'artist_asc':
       return sorted.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
     case 'most_played':
-      return sorted.sort(
-        (a, b) =>
-          b.songs.reduce((sum, song) => sum + song.playCount, 0) -
-            a.songs.reduce((sum, song) => sum + song.playCount, 0) || a.album.localeCompare(b.album),
-      );
+      return sorted.sort((a, b) => b.totalPlays - a.totalPlays || a.album.localeCompare(b.album));
     case 'most_songs':
       return sorted.sort((a, b) => b.songs.length - a.songs.length || a.album.localeCompare(b.album));
     case 'title_asc':
@@ -365,6 +365,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     isLoading: boolean;
   } | null>(null);
   const activeAlbumSignatureRef = useRef<string | null>(null);
+  const shouldBuildAlbums = activeTab === 'albums' || activeAlbum !== null;
+  const shouldBuildArtists = activeTab === 'artists';
+  const shouldBuildGenres = activeTab === 'genres';
 
   useEffect(() => {
     let alive = true;
@@ -408,49 +411,10 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     window.localStorage.setItem('amply-library-sort:genres', genreSort);
   }, [genreSort]);
 
-  useEffect(() => {
-    if (!activeAlbum) {
-      activeAlbumSignatureRef.current = null;
-      return;
-    }
-    const albumName = activeAlbum.album.trim().toLowerCase();
-    const primaryArtist = getPrimaryArtistName(activeAlbum.artist).trim().toLowerCase();
-    const matchingSongs = songs.filter((song) => {
-      if (!song.album?.trim()) {
-        return false;
-      }
-      const songAlbum = song.album.trim().toLowerCase();
-      if (songAlbum !== albumName) {
-        return false;
-      }
-      const songArtist = getPrimaryArtistName(song.artist).trim().toLowerCase();
-      return songArtist === primaryArtist;
-    });
-    const signature = `${primaryArtist}::${albumName}::${matchingSongs.map((song) => song.id).join('|')}`;
-    if (signature === activeAlbumSignatureRef.current) {
-      return;
-    }
-    activeAlbumSignatureRef.current = signature;
-    const tracklistKey = getAlbumTracklistKey(primaryArtist, activeAlbum.album);
-    const tracklist = albumTracklists[tracklistKey] ?? activeAlbum.tracklist ?? null;
-    const matches = buildAlbumTrackMatches(matchingSongs, tracklist);
-    setActiveAlbum((prev) =>
-      prev
-        ? {
-            ...prev,
-            songs: matchingSongs,
-            tracklist,
-            total: matches.total,
-            available: matches.available,
-            missing: matches.missing,
-            orderedSongs: matches.orderedSongs,
-            viewItems: matches.viewItems,
-          }
-        : prev,
-    );
-  }, [songs, albumTracklists, activeAlbum]);
-
   const albums = useMemo<AlbumEntry[]>(() => {
+    if (!shouldBuildAlbums) {
+      return [];
+    }
     const map = new Map<string, AlbumEntry>();
     for (const song of songs) {
       const albumName = song.album?.trim() ?? '';
@@ -469,16 +433,53 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
           artwork: song.albumArt,
           songs: [song],
           key: albumKey,
+          totalPlays: song.playCount,
         });
         continue;
       }
       existing.songs.push(song);
+      existing.totalPlays += song.playCount;
       if (!existing.artwork && song.albumArt) {
         existing.artwork = song.albumArt;
       }
     }
     return [...map.values()];
-  }, [songs]);
+  }, [songs, shouldBuildAlbums]);
+
+  const albumsByKey = useMemo(() => new Map(albums.map((album) => [album.key, album])), [albums]);
+
+  useEffect(() => {
+    if (!activeAlbum) {
+      activeAlbumSignatureRef.current = null;
+      return;
+    }
+    const primaryArtist = getPrimaryArtistName(activeAlbum.artist);
+    const albumKey = getAlbumTracklistKey(primaryArtist, activeAlbum.album);
+    const matchingSongs = albumsByKey.get(albumKey)?.songs ?? [];
+    const normalizedArtist = primaryArtist.trim().toLowerCase();
+    const normalizedAlbum = activeAlbum.album.trim().toLowerCase();
+    const signature = `${normalizedArtist}::${normalizedAlbum}::${matchingSongs.map((song) => song.id).join('|')}`;
+    if (signature === activeAlbumSignatureRef.current) {
+      return;
+    }
+    activeAlbumSignatureRef.current = signature;
+    const tracklist = albumTracklists[albumKey] ?? activeAlbum.tracklist ?? null;
+    const matches = buildAlbumTrackMatches(matchingSongs, tracklist);
+    setActiveAlbum((prev) =>
+      prev
+        ? {
+            ...prev,
+            songs: matchingSongs,
+            tracklist,
+            total: matches.total,
+            available: matches.available,
+            missing: matches.missing,
+            orderedSongs: matches.orderedSongs,
+            viewItems: matches.viewItems,
+          }
+        : prev,
+    );
+  }, [albumTracklists, activeAlbum, albumsByKey]);
 
   const filteredAlbums = useMemo(() => {
     const query = albumQuery.trim().toLowerCase();
@@ -496,6 +497,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   }, [albums, albumQuery, albumSort]);
 
   const albumSummaries = useMemo(() => {
+    if (!shouldBuildAlbums) {
+      return new Map();
+    }
     const map = new Map<
       string,
       {
@@ -513,9 +517,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       map.set(entry.key, { ...summary, tracklist });
     }
     return map;
-  }, [albums, albumTracklists]);
-  const artists = useMemo(() => buildArtistGroups(songs), [songs]);
-  const genres = useMemo(() => buildGenreGroups(songs), [songs]);
+  }, [albums, albumTracklists, shouldBuildAlbums]);
+  const artists = useMemo(() => (shouldBuildArtists ? buildArtistGroups(songs) : []), [songs, shouldBuildArtists]);
+  const genres = useMemo(() => (shouldBuildGenres ? buildGenreGroups(songs) : []), [songs, shouldBuildGenres]);
 
   const filteredArtists = useMemo(() => {
     const query = artistQuery.trim().toLowerCase();
@@ -548,9 +552,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       case 'name_desc':
         return sorted.sort((a, b) => b.label.localeCompare(a.label));
       case 'most_played':
-        return sorted.sort((a, b) => b.songs.reduce((sum, song) => sum + song.playCount, 0) - a.songs.reduce((sum, song) => sum + song.playCount, 0));
+        return sorted.sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length);
       case 'most_songs':
-        return sorted.sort((a, b) => b.songs.length - a.songs.length);
+        return sorted.sort((a, b) => b.songs.length - a.songs.length || b.totalPlays - a.totalPlays);
       case 'name_asc':
       default:
         return sorted.sort((a, b) => a.label.localeCompare(b.label));

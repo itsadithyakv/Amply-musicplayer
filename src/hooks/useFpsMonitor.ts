@@ -4,6 +4,7 @@ type FpsMonitorOptions = {
   lowFpsThreshold?: number;
   recoverFpsThreshold?: number;
   sampleWindowMs?: number;
+  enabled?: boolean;
 };
 
 export const useFpsMonitor = (options: FpsMonitorOptions = {}) => {
@@ -11,12 +12,20 @@ export const useFpsMonitor = (options: FpsMonitorOptions = {}) => {
     lowFpsThreshold = 28,
     recoverFpsThreshold = 35,
     sampleWindowMs = 1000,
+    enabled = true,
   } = options;
   const [fps, setFps] = useState(60);
   const [lowPerf, setLowPerf] = useState(false);
   const lowPerfRef = useRef(false);
 
   useEffect(() => {
+    if (!enabled) {
+      lowPerfRef.current = false;
+      setLowPerf(false);
+      setFps(60);
+      return;
+    }
+
     let rafId = 0;
     let last = performance.now();
     let frameCount = 0;
@@ -52,7 +61,7 @@ export const useFpsMonitor = (options: FpsMonitorOptions = {}) => {
     return () => {
       window.cancelAnimationFrame(rafId);
     };
-  }, [lowFpsThreshold, recoverFpsThreshold, sampleWindowMs]);
+  }, [enabled, lowFpsThreshold, recoverFpsThreshold, sampleWindowMs]);
 
   return { fps, lowPerf };
 };
