@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
-import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
 import { usePlayerStore } from '@/store/playerStore';
@@ -168,7 +168,7 @@ const SongRow = memo(({ index, style, data }: ListChildComponentProps<SongRowDat
       <span className="text-center text-xs text-amply-textMuted">{index + 1}</span>
 
       <div className="flex min-w-0 items-center gap-3">
-        <OptimizedImage
+        <ArtworkImage
           src={song.albumArt}
           alt={song.album}
           className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-zinc-800"

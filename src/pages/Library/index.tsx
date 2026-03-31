@@ -4,6 +4,7 @@ import { FixedSizeList as List, type ListChildComponentProps } from 'react-windo
 import { useNavigate } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { LibraryTab, Song } from '@/types/music';
@@ -951,7 +952,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
               <div className="flex items-center gap-4">
                 <div className="h-16 w-16 overflow-hidden rounded-xl bg-amply-bgSecondary">
                   {activeAlbum.artwork ? (
-                    <img src={activeAlbum.artwork} alt={activeAlbum.album} className="h-full w-full object-cover" loading="lazy" />
+                    <ArtworkImage src={activeAlbum.artwork} alt={activeAlbum.album} className="h-full w-full object-cover" />
                   ) : null}
                 </div>
                 <div>

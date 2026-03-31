@@ -436,7 +436,7 @@ const SettingsPage = () => {
         <p className="text-[12px] text-amply-textSecondary">Library, playback, and app behavior.</p>
       </header>
 
-      <div className="grid gap-4 2xl:grid-cols-2">
+      <div className="grid gap-4">
         <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
           <div className="space-y-1">
           <h2 className="text-[16px] font-bold text-amply-textPrimary">Music Library</h2>
@@ -678,184 +678,198 @@ const SettingsPage = () => {
         </div>
         </section>
 
-        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
-        <h2 className="text-[16px] font-bold text-amply-textPrimary">Advanced Playback</h2>
-
-        <div className="mt-3 grid gap-2">
-          {isTauri() ? (
-            <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
-              <p className="text-[12px] text-amply-textSecondary">Output Device</p>
-              <select
-                value={settings.outputDeviceName ?? ''}
-                onChange={(event) => {
-                  const value = event.target.value || null;
-                  void setOutputDeviceName(value);
-                }}
-                className="mt-2 w-full rounded-md border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
-              >
-                <option value="">System Default</option>
-                {outputDevices.map((device) => (
-                  <option key={device.name} value={device.name}>
-                    {device.name}
-                    {device.isDefault ? ' (Default)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-
-          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[12px] text-amply-textSecondary">EQ Preset</p>
-              <span className="text-[11px] uppercase tracking-[0.16em] text-amply-textMuted">
-                {EQ_PRESET_LABELS[settings.eqPreset]}
-              </span>
-            </div>
-            <select
-              value={settings.eqPreset}
-              onChange={(event) => {
-                void setEqPreset(event.target.value as typeof settings.eqPreset);
-              }}
-              className="mt-2 w-full rounded-md border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
-            >
-              <option value="flat">Flat</option>
-              <option value="warm">Warm</option>
-              <option value="bass">Bass Boost</option>
-              <option value="treble">Treble Lift</option>
-              <option value="vocal">Vocal Focus</option>
-              <option value="club">Club</option>
-              <option value="custom">Custom</option>
-            </select>
-            <p className="mt-2 text-[11px] text-amply-textMuted">
-              Presets are templates. Drag the graph or sliders below to fine-tune your own curve.
-            </p>
-          </div>
-
-          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-[12px] text-amply-textSecondary">EQ Curve</p>
-                <p className="mt-1 text-[11px] text-amply-textMuted">Click or drag a node to shape the curve directly.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  void setEqPreset('flat');
-                }}
-                className="rounded-full border border-amply-border/60 px-3 py-1.5 text-[11px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-              >
-                Reset
-              </button>
+        <div className="grid gap-4 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)]">
+          <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
+            <div className="space-y-1">
+              <h2 className="text-[16px] font-bold text-amply-textPrimary">Advanced Playback</h2>
+              <p className="text-[12px] text-amply-textSecondary">Device routing, fades, and speed controls.</p>
             </div>
 
-            <div className="mt-4">
-              <EQGraphEditor
-                bands={settings.eqBands}
-                onChange={(next) => {
-                  void setEqBands(next);
-                }}
-              />
-            </div>
-
-            <div className="mt-4 grid gap-2 sm:grid-cols-5">
-              {EQ_BANDS.map((band, index) => (
-                <div
-                  key={band.freq}
-                  className="rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.012))] px-3 py-3"
-                >
-                  <div className="flex items-start justify-between gap-3 sm:block">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amply-textSecondary">{band.short}</p>
-                      <p className="mt-1 text-[10px] text-amply-textMuted">{band.freq}</p>
-                    </div>
-                    <span className="rounded-full border border-[rgba(255,138,43,0.22)] bg-[rgba(255,138,43,0.08)] px-2.5 py-1 text-[10px] font-semibold text-amply-textPrimary sm:mt-4 sm:inline-flex">
-                      {settings.eqBands[index] > 0 ? '+' : ''}
-                      {settings.eqBands[index].toFixed(1)} dB
-                    </span>
-                  </div>
+            <div className="mt-3 grid gap-2">
+              {isTauri() ? (
+                <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+                  <p className="text-[12px] text-amply-textSecondary">Output Device</p>
+                  <select
+                    value={settings.outputDeviceName ?? ''}
+                    onChange={(event) => {
+                      const value = event.target.value || null;
+                      void setOutputDeviceName(value);
+                    }}
+                    className="mt-2 w-full rounded-md border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+                  >
+                    <option value="">System Default</option>
+                    {outputDevices.map((device) => (
+                      <option key={device.name} value={device.name}>
+                        {device.name}
+                        {device.isDefault ? ' (Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              ))}
-            </div>
-          </div>
+              ) : null}
 
-          <ToggleRow
-            title="Crossfade"
-            description="Smoothly blend the end of a track into the next."
-            checked={settings.crossfadeEnabled}
-            onChange={(next) => {
-              void setCrossfadeEnabled(next);
-            }}
-          />
-
-          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
-              <span>Crossfade Duration</span>
-              <span>{settings.crossfadeDurationSec}s</span>
-            </div>
-            <div className="relative mt-2 h-1 w-full rounded-full bg-[#3a3a3a]">
-              <div
-                className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
-                style={{ width: `${((settings.crossfadeDurationSec - 1) / 11) * 100}%` }}
-              />
-              <input
-                type="range"
-                min={1}
-                max={12}
-                step={1}
-                value={settings.crossfadeDurationSec}
-                onChange={(event) => {
-                  void setCrossfadeDuration(Number(event.target.value));
+              <ToggleRow
+                title="Crossfade"
+                description="Smoothly blend the end of a track into the next."
+                checked={settings.crossfadeEnabled}
+                onChange={(next) => {
+                  void setCrossfadeEnabled(next);
                 }}
-                className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
               />
-            </div>
-          </div>
 
-          <ToggleRow
-            title="Gapless Playback"
-            description="Preload the next track to avoid silence."
-            checked={settings.gaplessEnabled}
-            onChange={(next) => {
-              void setGaplessEnabled(next);
-            }}
-          />
+              <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+                  <span>Crossfade Duration</span>
+                  <span>{settings.crossfadeDurationSec}s</span>
+                </div>
+                <div className="relative mt-2 h-1 w-full rounded-full bg-[#3a3a3a]">
+                  <div
+                    className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                    style={{ width: `${((settings.crossfadeDurationSec - 1) / 11) * 100}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={1}
+                    max={12}
+                    step={1}
+                    value={settings.crossfadeDurationSec}
+                    onChange={(event) => {
+                      void setCrossfadeDuration(Number(event.target.value));
+                    }}
+                    className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                  />
+                </div>
+              </div>
 
-          <ToggleRow
-            title="Volume Normalization"
-            description="Balance volume using ReplayGain when available."
-            checked={settings.volumeNormalizationEnabled}
-            onChange={(next) => {
-              void setVolumeNormalizationEnabled(next);
-            }}
-          />
-
-          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
-              <span>Playback Speed</span>
-              <span>{settings.playbackSpeed.toFixed(2)}x</span>
-            </div>
-            <div className="relative mt-2 h-1 w-full rounded-full bg-[#3a3a3a]">
-              <div
-                className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
-                style={{ width: `${((settings.playbackSpeed - 0.75) / 0.75) * 100}%` }}
-              />
-              <input
-                type="range"
-                min={0.75}
-                max={1.5}
-                step={0.05}
-                value={settings.playbackSpeed}
-                onChange={(event) => {
-                  void setPlaybackSpeed(Number(event.target.value));
+              <ToggleRow
+                title="Gapless Playback"
+                description="Preload the next track to avoid silence."
+                checked={settings.gaplessEnabled}
+                onChange={(next) => {
+                  void setGaplessEnabled(next);
                 }}
-                className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
               />
+
+              <ToggleRow
+                title="Volume Normalization"
+                description="Balance volume using ReplayGain when available."
+                checked={settings.volumeNormalizationEnabled}
+                onChange={(next) => {
+                  void setVolumeNormalizationEnabled(next);
+                }}
+              />
+
+              <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+                  <span>Playback Speed</span>
+                  <span>{settings.playbackSpeed.toFixed(2)}x</span>
+                </div>
+                <div className="relative mt-2 h-1 w-full rounded-full bg-[#3a3a3a]">
+                  <div
+                    className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                    style={{ width: `${((settings.playbackSpeed - 0.75) / 0.75) * 100}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0.75}
+                    max={1.5}
+                    step={0.05}
+                    value={settings.playbackSpeed}
+                    onChange={(event) => {
+                      void setPlaybackSpeed(Number(event.target.value));
+                    }}
+                    className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
+          </section>
+
+          <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
+            <div className="space-y-1">
+              <h2 className="text-[16px] font-bold text-amply-textPrimary">Equalizer</h2>
+              <p className="text-[12px] text-amply-textSecondary">Shape the sound with presets and a custom curve.</p>
+            </div>
+
+            <div className="mt-3 grid gap-2">
+              <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12px] text-amply-textSecondary">EQ Preset</p>
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-amply-textMuted">
+                    {EQ_PRESET_LABELS[settings.eqPreset]}
+                  </span>
+                </div>
+                <select
+                  value={settings.eqPreset}
+                  onChange={(event) => {
+                    void setEqPreset(event.target.value as typeof settings.eqPreset);
+                  }}
+                  className="mt-2 w-full rounded-md border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+                >
+                  <option value="flat">Flat</option>
+                  <option value="warm">Warm</option>
+                  <option value="bass">Bass Boost</option>
+                  <option value="treble">Treble Lift</option>
+                  <option value="vocal">Vocal Focus</option>
+                  <option value="club">Club</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <p className="mt-2 text-[11px] text-amply-textMuted">
+                  Presets are templates. Drag the graph or sliders below to fine-tune your own curve.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[12px] text-amply-textSecondary">EQ Curve</p>
+                    <p className="mt-1 text-[11px] text-amply-textMuted">Click or drag a node to shape the curve directly.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void setEqPreset('flat');
+                    }}
+                    className="rounded-full border border-amply-border/60 px-3 py-1.5 text-[11px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                  >
+                    Reset
+                  </button>
+                </div>
+
+                <div className="mt-4">
+                  <EQGraphEditor
+                    bands={settings.eqBands}
+                    onChange={(next) => {
+                      void setEqBands(next);
+                    }}
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-5">
+                  {EQ_BANDS.map((band, index) => (
+                    <div
+                      key={band.freq}
+                      className="rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.012))] px-3 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3 sm:block">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amply-textSecondary">{band.short}</p>
+                          <p className="mt-1 text-[10px] text-amply-textMuted">{band.freq}</p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(255,138,43,0.22)] bg-[rgba(255,138,43,0.08)] px-2.5 py-1 text-[10px] font-semibold text-amply-textPrimary sm:mt-4 sm:inline-flex">
+                          {settings.eqBands[index] > 0 ? '+' : ''}
+                          {settings.eqBands[index].toFixed(1)} dB
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
-        </section>
 
-        <div className="grid gap-4">
+        <div className="grid gap-4 2xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
         <div className="space-y-1">
           <h2 className="text-[16px] font-bold text-amply-textPrimary">Lyrics Visuals</h2>

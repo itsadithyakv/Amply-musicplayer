@@ -4,10 +4,12 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
 import PlaylistComposer from '@/components/Playlists/PlaylistComposer';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import addIcon from '@/assets/icons/add.svg';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Playlist } from '@/types/music';
+import { useArtworkReady } from '@/hooks/useArtworkReady';
 
 const PlaylistsPage = () => {
   const songs = useLibraryStore((state) => state.songs);
@@ -17,6 +19,7 @@ const PlaylistsPage = () => {
 
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
+  const artworkReady = useArtworkReady();
 
   const [showComposer, setShowComposer] = useState(false);
   const songById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
@@ -118,7 +121,7 @@ const PlaylistsPage = () => {
     firstSongId?: string;
     index: number;
   }) => {
-    const backgroundStyle = artworkSet[0]
+    const backgroundStyle = artworkReady && artworkSet[0]
       ? {
           backgroundImage: `linear-gradient(140deg, rgba(10, 10, 12, 0.8), rgba(10, 10, 12, 0.5)), url(${artworkSet[0]})`,
           backgroundSize: 'cover',
@@ -153,9 +156,9 @@ const PlaylistsPage = () => {
         style={backgroundStyle}
         title="Click to play · Double-click to open"
       >
-        {artworkSet[0] ? (
+        {artworkReady && artworkSet[0] ? (
           <div className="blur-backdrop playlist-backdrop">
-            <img src={artworkSet[0]} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            <ArtworkImage src={artworkSet[0]} alt="" className="h-full w-full object-cover" />
           </div>
         ) : null}
 
@@ -183,7 +186,7 @@ const PlaylistsPage = () => {
                     key={`${playlist.id}-art-${slot}`}
                     className="artwork-tile h-16 w-16 bg-gradient-to-br from-[#1d1f2a] via-[#12151f] to-[#0c0f17]"
                   >
-                    {art ? <img src={art} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : null}
+                    {art ? <ArtworkImage src={art} alt="" className="h-full w-full object-cover" /> : null}
                   </div>
                 );
               })}

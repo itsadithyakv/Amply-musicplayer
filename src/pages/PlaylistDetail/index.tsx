@@ -1,10 +1,12 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import shuffleIcon from '@/assets/icons/shuffle.svg';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Song } from '@/types/music';
+import { useArtworkReady } from '@/hooks/useArtworkReady';
 
 const PlaylistDetailPage = () => {
   const { playlistId } = useParams();
@@ -15,6 +17,7 @@ const PlaylistDetailPage = () => {
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setShuffleEnabled = usePlayerStore((state) => state.setShuffleEnabled);
   const navigate = useNavigate();
+  const artworkReady = useArtworkReady();
 
   const playlist = useMemo(
     () => playlists.find((entry) => entry.id === playlistId),
@@ -44,7 +47,7 @@ const PlaylistDetailPage = () => {
     return list;
   }, [playlistSongs]);
   const collageBackground = useMemo(() => {
-    if (!artworkSet.length) {
+    if (!artworkReady || !artworkSet.length) {
       return undefined;
     }
     const layers = artworkSet.map(
@@ -56,7 +59,7 @@ const PlaylistDetailPage = () => {
       backgroundPosition: 'center',
       backgroundBlendMode: 'overlay',
     } as CSSProperties;
-  }, [artworkSet]);
+  }, [artworkReady, artworkSet]);
 
   if (!playlist) {
     return (
@@ -154,7 +157,7 @@ const PlaylistDetailPage = () => {
               <div className="grid h-full w-full grid-cols-2 gap-2 p-3">
                 {artworkSet.map((art, index) => (
                   <div key={`art-${index}`} className="overflow-hidden rounded-xl">
-                    <img src={art} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                    <ArtworkImage src={art} alt="" className="h-full w-full object-cover" />
                   </div>
                 ))}
               </div>

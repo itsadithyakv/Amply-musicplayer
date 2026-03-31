@@ -801,98 +801,102 @@ fn extract_text_metadata(tagged_file: &TaggedFile, filename_fallback: &str) -> (
 }
 
 #[tauri::command]
-fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> {
-    let scan_root = folder
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(default_music_path);
+async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let scan_root = folder
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(default_music_path);
 
-    if !scan_root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut songs: Vec<ScannedSong> = Vec::new();
-
-    for entry in WalkDir::new(scan_root)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-
-        if !entry.file_type().is_file() || !is_supported_audio(path) {
-            continue;
+        if !scan_root.exists() {
+            return Ok(Vec::new());
         }
 
-        let metadata = match fs::metadata(path) {
-            Ok(meta) => meta,
-            Err(_) => continue,
-        };
+        let mut songs: Vec<ScannedSong> = Vec::new();
 
-        let filename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Unknown File")
-            .to_string();
+        for entry in WalkDir::new(scan_root)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
 
-        let filename_no_ext = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Unknown Title");
+            if !entry.file_type().is_file() || !is_supported_audio(path) {
+                continue;
+            }
 
-        let (title, artist, album, genre, track, year, replay_gain, duration, album_art) =
-            match Probe::open(path).and_then(|probe| probe.read()) {
-                Ok(tagged_file) => {
-                    let (title, artist, album, genre, track, year, replay_gain) =
-                        extract_text_metadata(&tagged_file, filename_no_ext);
-                    let duration = tagged_file.properties().duration().as_secs_f64();
-                    let album_art = extract_album_art(&tagged_file);
-                    (title, artist, album, genre, track, year, replay_gain, duration, album_art)
-                }
-                Err(_) => (
-                    filename_no_ext.to_string(),
-                    "Unknown Artist".to_string(),
-                    "Unknown Album".to_string(),
-                    "Unknown Genre".to_string(),
-                    0,
-                    None,
-                    None,
-                    0.0,
-                    None,
-                ),
+            let metadata = match fs::metadata(path) {
+                Ok(meta) => meta,
+                Err(_) => continue,
             };
 
-        let full_path = path.to_string_lossy().to_string();
-        songs.push(ScannedSong {
-            id: sanitize_id(&full_path),
-            path: full_path,
-            filename,
-            title,
-            artist,
-            album,
-            genre,
-            duration,
-            track,
-            year,
-            album_art,
-            added_at: to_unix_secs(&metadata),
-            play_count: 0,
-            last_played: None,
-            favorite: false,
-            replay_gain,
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Unknown File")
+                .to_string();
+
+            let filename_no_ext = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Unknown Title");
+
+            let (title, artist, album, genre, track, year, replay_gain, duration, album_art) =
+                match Probe::open(path).and_then(|probe| probe.read()) {
+                    Ok(tagged_file) => {
+                        let (title, artist, album, genre, track, year, replay_gain) =
+                            extract_text_metadata(&tagged_file, filename_no_ext);
+                        let duration = tagged_file.properties().duration().as_secs_f64();
+                        let album_art = extract_album_art(&tagged_file);
+                        (title, artist, album, genre, track, year, replay_gain, duration, album_art)
+                    }
+                    Err(_) => (
+                        filename_no_ext.to_string(),
+                        "Unknown Artist".to_string(),
+                        "Unknown Album".to_string(),
+                        "Unknown Genre".to_string(),
+                        0,
+                        None,
+                        None,
+                        0.0,
+                        None,
+                    ),
+                };
+
+            let full_path = path.to_string_lossy().to_string();
+            songs.push(ScannedSong {
+                id: sanitize_id(&full_path),
+                path: full_path,
+                filename,
+                title,
+                artist,
+                album,
+                genre,
+                duration,
+                track,
+                year,
+                album_art,
+                added_at: to_unix_secs(&metadata),
+                play_count: 0,
+                last_played: None,
+                favorite: false,
+                replay_gain,
+            });
+        }
+
+        songs.sort_by(|a, b| {
+            a.artist
+                .to_ascii_lowercase()
+                .cmp(&b.artist.to_ascii_lowercase())
+                .then_with(|| a.album.to_ascii_lowercase().cmp(&b.album.to_ascii_lowercase()))
+                .then_with(|| a.track.cmp(&b.track))
+                .then_with(|| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()))
         });
-    }
 
-    songs.sort_by(|a, b| {
-        a.artist
-            .to_ascii_lowercase()
-            .cmp(&b.artist.to_ascii_lowercase())
-            .then_with(|| a.album.to_ascii_lowercase().cmp(&b.album.to_ascii_lowercase()))
-            .then_with(|| a.track.cmp(&b.track))
-            .then_with(|| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()))
-    });
-
-    Ok(songs)
+        Ok(songs)
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 fn storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -952,8 +956,8 @@ fn biquad_peaking(sample_rate: u32, freq: f32, q: f32, gain_db: f32) -> BiquadCo
 
 #[tauri::command]
 fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
-  let root = storage_root(&app)?;
-  Ok(root.to_string_lossy().to_string())
+    let root = storage_root(&app)?;
+    Ok(root.to_string_lossy().to_string())
 }
 
 fn count_files(path: &Path) -> usize {
@@ -968,22 +972,26 @@ fn count_files(path: &Path) -> usize {
 }
 
 #[tauri::command]
-fn get_storage_stats(app: tauri::AppHandle) -> Result<StorageStats, String> {
-    let root = storage_root(&app)?;
-    let lyrics_files = count_files(&root.join("lyrics_cache"));
-    let artist_files = count_files(&root.join("artist_cache"));
-    let metadata_files = count_files(&root.join("metadata_cache"));
-    let playlists_files = count_files(&root.join("playlists"));
-    let total_files = lyrics_files + artist_files + metadata_files + playlists_files;
+async fn get_storage_stats(app: tauri::AppHandle) -> Result<StorageStats, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = storage_root(&app)?;
+        let lyrics_files = count_files(&root.join("lyrics_cache"));
+        let artist_files = count_files(&root.join("artist_cache"));
+        let metadata_files = count_files(&root.join("metadata_cache"));
+        let playlists_files = count_files(&root.join("playlists"));
+        let total_files = lyrics_files + artist_files + metadata_files + playlists_files;
 
-    Ok(StorageStats {
-        storage_path: root.to_string_lossy().to_string(),
-        lyrics_files,
-        artist_files,
-        metadata_files,
-        playlists_files,
-        total_files,
+        Ok(StorageStats {
+            storage_path: root.to_string_lossy().to_string(),
+            lyrics_files,
+            artist_files,
+            metadata_files,
+            playlists_files,
+            total_files,
+        })
     })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -1023,13 +1031,17 @@ fn open_storage_dir(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn clear_storage_cache(app: tauri::AppHandle) -> Result<(), String> {
-    let root = storage_root(&app)?;
-    if root.exists() {
-        fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
-    }
-    let _ = storage_root(&app)?;
-    Ok(())
+async fn clear_storage_cache(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = storage_root(&app)?;
+        if root.exists() {
+            fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        }
+        let _ = storage_root(&app)?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -1052,49 +1064,88 @@ fn pick_music_folders() -> Vec<String> {
 }
 
 #[tauri::command]
-fn read_storage_file(app: tauri::AppHandle, relative_path: String) -> Result<Option<String>, String> {
-    let target = resolve_storage_path(&app, &relative_path)?;
+async fn read_storage_file(
+    app: tauri::AppHandle,
+    relative_path: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = resolve_storage_path(&app, &relative_path)?;
 
-    if !target.exists() {
-        return Ok(None);
-    }
+        if !target.exists() {
+            return Ok(None);
+        }
 
-    let mut file = fs::File::open(target).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
+        let mut file = fs::File::open(target).map_err(|err| err.to_string())?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|err| err.to_string())?;
 
-    Ok(Some(content))
+        Ok(Some(content))
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-fn write_storage_file(app: tauri::AppHandle, relative_path: String, content: String) -> Result<(), String> {
-    let target = resolve_storage_path(&app, &relative_path)?;
+async fn write_storage_file(
+    app: tauri::AppHandle,
+    relative_path: String,
+    content: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = resolve_storage_path(&app, &relative_path)?;
 
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
 
-    let mut file = fs::File::create(target).map_err(|err| err.to_string())?;
-    file.write_all(content.as_bytes())
-        .map_err(|err| err.to_string())?;
+        let mut file = fs::File::create(target).map_err(|err| err.to_string())?;
+        file.write_all(content.as_bytes())
+            .map_err(|err| err.to_string())?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
-#[tauri::command]
-fn audio_preload(state: tauri::State<AudioState>, paths: Vec<String>) -> Result<(), String> {
+fn send_audio_command<F>(
+    sender: mpsc::Sender<AudioCommand>,
+    builder: F,
+) -> Result<(), String>
+where
+    F: FnOnce(mpsc::Sender<Result<(), String>>) -> AudioCommand,
+{
     let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::Preload { paths, reply: reply_tx })
+    sender
+        .send(builder(reply_tx))
         .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+    reply_rx
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "Audio command timeout".to_string())?
+}
+
+async fn send_audio_command_async<F>(
+    sender: mpsc::Sender<AudioCommand>,
+    builder: F,
+) -> Result<(), String>
+where
+    F: FnOnce(mpsc::Sender<Result<(), String>>) -> AudioCommand + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || send_audio_command(sender, builder))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-fn audio_load_song(
-    state: tauri::State<AudioState>,
+async fn audio_preload(state: tauri::State<'_, AudioState>, paths: Vec<String>) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::Preload { paths, reply }).await
+}
+
+#[tauri::command]
+async fn audio_load_song(
+    state: tauri::State<'_, AudioState>,
     path: String,
     autoplay: bool,
     transition: bool,
@@ -1105,131 +1156,93 @@ fn audio_load_song(
     track_volume: f32,
     gapless_enabled: bool,
 ) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::LoadSong {
-            path,
-            autoplay,
-            transition,
-            start_at_sec,
-            duration_sec,
-            crossfade_duration_sec,
-            crossfade,
-            track_volume,
-            gapless_enabled,
-            reply: reply_tx,
-        })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::LoadSong {
+        path,
+        autoplay,
+        transition,
+        start_at_sec,
+        duration_sec,
+        crossfade_duration_sec,
+        crossfade,
+        track_volume,
+        gapless_enabled,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
-fn audio_play(state: tauri::State<AudioState>) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::Play { reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_play(state: tauri::State<'_, AudioState>) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, |reply| AudioCommand::Play { reply }).await
 }
 
 #[tauri::command]
-fn audio_play_from(state: tauri::State<AudioState>, position_sec: f64) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::PlayFrom { position_sec, reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_play_from(state: tauri::State<'_, AudioState>, position_sec: f64) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::PlayFrom { position_sec, reply }).await
 }
 
 #[tauri::command]
-fn audio_pause(state: tauri::State<AudioState>) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::Pause { reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_pause(state: tauri::State<'_, AudioState>) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, |reply| AudioCommand::Pause { reply }).await
 }
 
 #[tauri::command]
-fn audio_stop(state: tauri::State<AudioState>) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::Stop { reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_stop(state: tauri::State<'_, AudioState>) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, |reply| AudioCommand::Stop { reply }).await
 }
 
 #[tauri::command]
-fn audio_seek(state: tauri::State<AudioState>, position_sec: f64) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::Seek { position_sec, reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_seek(state: tauri::State<'_, AudioState>, position_sec: f64) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::Seek { position_sec, reply }).await
 }
 
 #[tauri::command]
-fn audio_set_volume(state: tauri::State<AudioState>, volume: f32) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::SetVolume { volume: volume.max(0.0), reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_set_volume(state: tauri::State<'_, AudioState>, volume: f32) -> Result<(), String> {
+    let sender = state.sender.clone();
+    let volume = volume.max(0.0);
+    send_audio_command_async(sender, move |reply| AudioCommand::SetVolume { volume, reply }).await
 }
 
 #[tauri::command]
-fn audio_set_rate(state: tauri::State<AudioState>, rate: f32) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::SetRate { rate, reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_set_rate(state: tauri::State<'_, AudioState>, rate: f32) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::SetRate { rate, reply }).await
 }
 
 #[tauri::command]
-fn audio_set_loop(state: tauri::State<AudioState>, enabled: bool) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::SetLoop { enabled, reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_set_loop(state: tauri::State<'_, AudioState>, enabled: bool) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::SetLoop { enabled, reply }).await
 }
 
 #[tauri::command]
-fn audio_set_eq_gains(state: tauri::State<AudioState>, gains: Vec<f32>) -> Result<(), String> {
+async fn audio_set_eq_gains(state: tauri::State<'_, AudioState>, gains: Vec<f32>) -> Result<(), String> {
     let mut normalized = [0.0_f32; 5];
     for (index, gain) in gains.into_iter().take(5).enumerate() {
         normalized[index] = gain.clamp(-12.0, 12.0);
     }
 
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::SetEqGains {
-            gains: normalized,
-            reply: reply_tx,
-        })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::SetEqGains {
+        gains: normalized,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
-fn audio_set_output_device(state: tauri::State<AudioState>, name: Option<String>) -> Result<(), String> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .sender
-        .send(AudioCommand::SetOutputDevice { name, reply: reply_tx })
-        .map_err(|_| "Audio thread unavailable".to_string())?;
-    reply_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "Audio command timeout".to_string())?
+async fn audio_set_output_device(
+    state: tauri::State<'_, AudioState>,
+    name: Option<String>,
+) -> Result<(), String> {
+    let sender = state.sender.clone();
+    send_audio_command_async(sender, move |reply| AudioCommand::SetOutputDevice { name, reply }).await
 }
 
 #[tauri::command]
@@ -1306,7 +1319,7 @@ fn main() {
                 }
             }
 
-            let window_icon = Image::from_bytes(include_bytes!("../../icons/icon.png")).ok();
+            let window_icon = Image::from_bytes(include_bytes!("../../icons/AmplyNoBG.png")).ok();
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = window_icon {
                     let _ = window.set_icon(icon);

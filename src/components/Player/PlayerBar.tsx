@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { memo, useEffect, useRef, useState } from 'react';
-import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import prevIcon from '@/assets/icons/prev.svg';
 import nextIcon from '@/assets/icons/next.svg';
 import playIcon from '@/assets/icons/play.svg';
@@ -167,7 +167,7 @@ const PlayerBar = () => {
       <div className="grid h-full grid-cols-[1.6fr_2fr_1.2fr] items-center gap-4">
         <div className="relative flex min-w-0 items-center gap-3">
           <Link to="/now-playing" className="flex min-w-0 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-amply-hover">
-            <OptimizedImage
+            <ArtworkImage
               src={song?.albumArt}
               alt={song?.album ?? 'Unknown Album'}
               className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800"

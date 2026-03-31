@@ -10,6 +10,7 @@ import {
   type ArtistProfileLoadResult,
 } from '@/services/artistProfileService';
 import { formatDuration } from '@/utils/time';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useIdleRender } from '@/hooks/useIdleRender';
 import { useMetadataPriority } from '@/hooks/useMetadataPriority';
 import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
@@ -448,7 +449,7 @@ const NowPlayingPanel = () => {
           <div className="space-y-4 border-b border-amply-border/40 pb-4">
             <div className="h-[240px] w-full overflow-hidden rounded-2xl bg-zinc-900/70 shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
               {song.albumArt ? (
-                <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                <ArtworkImage src={song.albumArt} alt={song.album} className="h-full w-full object-cover" />
               ) : null}
             </div>
             <div className="space-y-1">
@@ -522,7 +523,7 @@ const NowPlayingPanel = () => {
               <div className="space-y-3">
                 {artistProfile.imageUrl ? (
                   <div className="h-[150px] w-full overflow-hidden rounded-2xl bg-zinc-900/60">
-                    <img src={artistProfile.imageUrl} alt={artistProfile.artistName} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                    <ArtworkImage src={artistProfile.imageUrl} alt={artistProfile.artistName} className="h-full w-full object-cover" />
                   </div>
                 ) : null}
                 <div className="max-h-44 overflow-y-auto pr-1">

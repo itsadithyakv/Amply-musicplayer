@@ -2,12 +2,14 @@ import clsx from 'clsx';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { readCachedArtistProfile } from '@/services/artistProfileService';
 import { getAlbumTracklistKey, loadAlbumTracklistCache, normalizeTrackTitle } from '@/services/albumTracklistService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Playlist, Song } from '@/types/music';
 import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
+import { useArtworkReady } from '@/hooks/useArtworkReady';
 
 const SectionRow = ({
   title,
@@ -124,6 +126,7 @@ const HomePage = () => {
   const metadataFetchDone = useLibraryStore((state) => state.metadataFetch.done);
   const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const navigate = useNavigate();
+  const artworkReady = useArtworkReady();
 
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
@@ -591,7 +594,7 @@ const HomePage = () => {
             const isFeatured = index === 0;
             const artworkSet = item.artworks?.length ? item.artworks : item.artwork ? [item.artwork] : [];
             const glowClass = playlistGlowClasses[index % playlistGlowClasses.length];
-            const backgroundStyle = artworkSet[0]
+            const backgroundStyle = artworkReady && artworkSet[0]
               ? {
                   backgroundImage: `linear-gradient(140deg, rgba(10, 10, 12, 0.78), rgba(10, 10, 12, 0.45)), url(${artworkSet[0]})`,
                   backgroundSize: 'cover',
@@ -620,9 +623,9 @@ const HomePage = () => {
                 style={backgroundStyle}
                 title="Click to play. Double-click to open playlist."
               >
-                {artworkSet[0] ? (
+                {artworkReady && artworkSet[0] ? (
                   <div className="blur-backdrop playlist-backdrop">
-                    <img src={artworkSet[0]} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                    <ArtworkImage src={artworkSet[0]} alt="" className="h-full w-full object-cover" />
                   </div>
                 ) : null}
 
@@ -668,7 +671,7 @@ const HomePage = () => {
                             isFeatured ? 'h-24 w-24' : 'h-20 w-20',
                           )}
                         >
-                          {art ? <img src={art} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : null}
+                          {art ? <ArtworkImage src={art} alt="" className="h-full w-full object-cover" /> : null}
                         </div>
                       );
                     })}
@@ -743,9 +746,7 @@ const HomePage = () => {
                         <p className="truncate text-[12px] text-amply-textSecondary">{item.subtitle}</p>
                       </div>
                       <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-amply-border/60 bg-amply-surface/70">
-                        {item.artwork ? (
-                          <img src={item.artwork} alt={item.title} className="h-full w-full object-cover" loading="lazy" decoding="async" />
-                        ) : null}
+                        {item.artwork ? <ArtworkImage src={item.artwork} alt={item.title} className="h-full w-full object-cover" /> : null}
                       </div>
                     </div>
                   </button>

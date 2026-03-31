@@ -3,6 +3,7 @@ import { listen, emitTo } from '@tauri-apps/api/event';
 import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWindow, PhysicalSize } from '@tauri-apps/api/window';
 import { isTauri } from '@/services/storageService';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import clsx from 'clsx';
 
 interface OverlayState {
@@ -175,17 +176,13 @@ const OverlayPage = () => {
               state.isPlaying ? 'animate-[spin_6s_linear_infinite]' : '',
             )}
           />
-          <div className="absolute inset-1 overflow-hidden rounded-full bg-white/5 backdrop-blur-2xl">
-            {state.albumArt ? (
-              <img
-                src={state.albumArt}
-                alt=""
-                className={clsx(
-                  'h-full w-full object-cover transition-transform duration-700',
-                  isHovering ? 'animate-[spin_12s_linear_infinite]' : state.isPlaying ? 'animate-[spin_6s_linear_infinite]' : '',
-                )}
-              />
-            ) : null}
+          <div
+            className={clsx(
+              'absolute inset-1 overflow-hidden rounded-full bg-white/5 backdrop-blur-2xl transition-transform duration-700',
+              isHovering ? 'animate-[spin_12s_linear_infinite]' : state.isPlaying ? 'animate-[spin_6s_linear_infinite]' : '',
+            )}
+          >
+            {state.albumArt ? <ArtworkImage src={state.albumArt} alt="" className="h-full w-full" forceReady /> : null}
           </div>
           <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/60" />
         </div>

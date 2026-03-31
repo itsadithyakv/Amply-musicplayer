@@ -1,6 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
-import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 
 interface AlbumCardProps {
   title: string;
@@ -34,7 +34,7 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
       )}
     >
       <div className="group relative h-[150px] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2233] via-[#171b24] to-[#12151c]">
-        <OptimizedImage
+        <ArtworkImage
           src={artwork}
           alt={title}
           className="h-full w-full object-cover"

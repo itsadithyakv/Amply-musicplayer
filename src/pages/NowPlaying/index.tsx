@@ -11,6 +11,7 @@ import repeatOnIcon from '@/assets/icons/repeat-on.svg';
 import settingsIcon from '@/assets/icons/settings.svg';
 import LyricsViewer from '@/components/LyricsViewer/LyricsViewer';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Song } from '@/types/music';
@@ -120,7 +121,7 @@ const NowPlayingPage = () => {
             style={{ aspectRatio: '1 / 1' }}
           >
             {song?.albumArt ? (
-              <img src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+              <ArtworkImage src={song.albumArt} alt={song.album} className="h-full w-full object-cover" />
             ) : null}
           </div>
 

@@ -3,7 +3,7 @@ name = "amply"
 version = "1.5.2"
 edition = "2021"
 description = "Amply Music Player"
-authors = ["Adithya KV <hello@amply.local>"]
+authors = ["Adithya KV <adithyakrishnan.vinod@gmail.com>"]
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }

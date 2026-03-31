@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import type { Playlist, Song } from '@/types/music';
 
 interface PlaylistComposerProps {
@@ -111,7 +112,7 @@ const PlaylistComposer = ({ songs, onSave, onCancel }: PlaylistComposerProps) =>
             <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Playlist Details</p>
             <div className="mt-3 flex items-start gap-4">
               <div className="h-24 w-24 overflow-hidden rounded-md border border-amply-border bg-zinc-900">
-                {playlistArtwork ? <img src={playlistArtwork} alt="Playlist cover" className="h-full w-full object-cover" /> : null}
+                {playlistArtwork ? <ArtworkImage src={playlistArtwork} alt="Playlist cover" className="h-full w-full object-cover" /> : null}
               </div>
               <div className="flex-1 space-y-2">
                 <label className="space-y-1">

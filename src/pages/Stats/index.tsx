@@ -6,7 +6,7 @@ import {
   type GridChildComponentProps,
   type ListChildComponentProps,
 } from 'react-window';
-import { OptimizedImage } from '@/components/OptimizedImage/OptimizedImage';
+import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useLibraryStore } from '@/store/libraryStore';
 import { buildStats } from '@/services/statsService';
 import { formatDuration } from '@/utils/time';
@@ -51,7 +51,7 @@ const TopSongRow = memo(({ index, style, data }: ListChildComponentProps) => {
       <span className="flex h-6 w-6 items-center justify-center rounded-full border border-amply-border/60 bg-amply-bgPrimary text-[11px] text-amply-textMuted">
         {index + 1}
       </span>
-      <OptimizedImage
+      <ArtworkImage
         src={albumImages[song.album] ?? song.albumArt}
         alt={song.album}
         className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-zinc-800"
@@ -84,9 +84,9 @@ const TopArtistCell = memo(({ columnIndex, rowIndex, style, data }: GridChildCom
       <div className="flex items-center gap-3">
         <div className="h-12 w-12 overflow-hidden rounded-full bg-zinc-800">
           {artistImages[artist.artist] ? (
-            <img src={artistImages[artist.artist]} alt={artist.artist} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            <ArtworkImage src={artistImages[artist.artist]} alt={artist.artist} className="h-full w-full object-cover" />
           ) : songsByArtist.get(artist.artist) ? (
-            <img src={songsByArtist.get(artist.artist)} alt={artist.artist} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            <ArtworkImage src={songsByArtist.get(artist.artist)} alt={artist.artist} className="h-full w-full object-cover" />
           ) : null}
         </div>
         <div className="min-w-0">
@@ -113,7 +113,7 @@ const TopAlbumCell = memo(({ columnIndex, rowIndex, style, data }: GridChildComp
   return (
     <div style={style} className="rounded-lg border border-amply-border/60 bg-amply-bgSecondary/70 p-3 transition-colors hover:bg-amply-hover">
       <div className="flex items-center gap-3">
-        <OptimizedImage
+        <ArtworkImage
           src={albumImages[album.album] ?? albumRepresentatives.get(album.album)?.albumArt}
           alt={album.album}
           className="h-12 w-12 overflow-hidden rounded-md bg-zinc-800"
