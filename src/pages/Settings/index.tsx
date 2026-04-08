@@ -300,6 +300,12 @@ const SettingsPage = () => {
   const setLyricsVisualsEnabled = usePlayerStore((state) => state.setLyricsVisualsEnabled);
   const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
   const setMetadataFetchPaused = usePlayerStore((state) => state.setMetadataFetchPaused);
+  const setDiscoveryIntensity = usePlayerStore((state) => state.setDiscoveryIntensity);
+  const setRandomnessIntensity = usePlayerStore((state) => state.setRandomnessIntensity);
+  const setPauseMixRegenDuringPlayback = usePlayerStore((state) => state.setPauseMixRegenDuringPlayback);
+  const setAutoPauseOnFocus = usePlayerStore((state) => state.setAutoPauseOnFocus);
+  const setAutoPauseIgnoreApps = usePlayerStore((state) => state.setAutoPauseIgnoreApps);
+  const setAutoPauseIgnoreFullscreen = usePlayerStore((state) => state.setAutoPauseIgnoreFullscreen);
 
   const [localPath, setLocalPath] = useState('');
   const [customSleepMinutes, setCustomSleepMinutes] = useState('');
@@ -338,6 +344,32 @@ const SettingsPage = () => {
     [songs],
   );
   const genresProgress = Math.min(100, (genresFound / totalSongs) * 100);
+  const [ignoreAppsText, setIgnoreAppsText] = useState(settings.autoPauseIgnoreApps.join(', '));
+
+  useEffect(() => {
+    setIgnoreAppsText(settings.autoPauseIgnoreApps.join(', '));
+  }, [settings.autoPauseIgnoreApps]);
+  const discoveryLevel = Math.max(0, Math.min(1, settings.discoveryIntensity ?? 0.35));
+  const discoveryPercent = Math.round(discoveryLevel * 100);
+  const discoveryLabel =
+    discoveryLevel < 0.2
+      ? 'Subtle'
+      : discoveryLevel < 0.5
+        ? 'Balanced'
+        : discoveryLevel < 0.8
+          ? 'Adventurous'
+          : 'Wild';
+
+  const randomnessLevel = Math.max(0, Math.min(1, settings.randomnessIntensity ?? 0.3));
+  const randomnessPercent = Math.round(randomnessLevel * 100);
+  const randomnessLabel =
+    randomnessLevel < 0.2
+      ? 'Focused'
+      : randomnessLevel < 0.5
+        ? 'Varied'
+        : randomnessLevel < 0.8
+          ? 'Surprising'
+          : 'Wild';
 
   const statusItems = useMemo(
     () => [
@@ -533,7 +565,7 @@ const SettingsPage = () => {
             disabled={metadataFetch.running}
             onClick={() => {
               setBulkMessage(null);
-              startMetadataFetch();
+              startMetadataFetch({ allowWhenActive: true });
             }}
             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-amply-accent px-3 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -628,6 +660,80 @@ const SettingsPage = () => {
 
         <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
         <div className="space-y-1">
+          <h2 className="text-[16px] font-bold text-amply-textPrimary">Smart Playlists</h2>
+          <p className="text-[12px] text-amply-textSecondary">
+            Tune how much discovery content appears in your smart mixes.
+          </p>
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+              <span>Discovery Intensity</span>
+              <span>{discoveryPercent}% • {discoveryLabel}</span>
+            </div>
+            <p className="mt-2 text-[11px] text-amply-textMuted">
+              Higher values surface more low-play and forgotten tracks.
+            </p>
+            <div className="relative mt-3 h-1 w-full rounded-full bg-[#3a3a3a]">
+              <div
+                className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                style={{ width: `${discoveryPercent}%` }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={discoveryLevel}
+                onChange={(event) => {
+                  void setDiscoveryIntensity(Number(event.target.value));
+                }}
+                className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+              <span>Randomness</span>
+              <span>{randomnessPercent}% â€¢ {randomnessLabel}</span>
+            </div>
+            <p className="mt-2 text-[11px] text-amply-textMuted">
+              Higher values reduce repeats and bias toward less-played songs.
+            </p>
+            <div className="relative mt-3 h-1 w-full rounded-full bg-[#3a3a3a]">
+              <div
+                className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                style={{ width: `${randomnessPercent}%` }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={randomnessLevel}
+                onChange={(event) => {
+                  void setRandomnessIntensity(Number(event.target.value));
+                }}
+                className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+              />
+            </div>
+          </div>
+
+          <ToggleRow
+            title="Pause Mix Regen During Playback"
+            description="Avoids rebuilding heavy mixes while music is playing."
+            checked={settings.pauseMixRegenDuringPlayback}
+            onChange={(next) => {
+              void setPauseMixRegenDuringPlayback(next);
+            }}
+          />
+        </div>
+        </section>
+
+        <section className="rounded-2xl border border-amply-border/60 bg-amply-surface p-4 shadow-card">
+        <div className="space-y-1">
           <h2 className="text-[16px] font-bold text-amply-textPrimary">App Behavior</h2>
           <p className="text-[12px] text-amply-textSecondary">Control how Amply launches and behaves on startup.</p>
         </div>
@@ -649,6 +755,39 @@ const SettingsPage = () => {
               void setGameMode(next);
             }}
           />
+          <ToggleRow
+            title="Auto-pause for Other Audio (Windows)"
+            description="Pause Amply when another app plays audio, then resume after a short grace period."
+            checked={settings.autoPauseOnFocus}
+            onChange={(next) => {
+              void setAutoPauseOnFocus(next);
+            }}
+          />
+          <ToggleRow
+            title="Ignore Fullscreen Apps"
+            description="If a fullscreen app is active, Amply keeps playing."
+            checked={settings.autoPauseIgnoreFullscreen}
+            onChange={(next) => {
+              void setAutoPauseIgnoreFullscreen(next);
+            }}
+          />
+          <div className="rounded-xl border border-amply-border/60 bg-amply-surface px-4 py-3">
+            <p className="text-[12px] font-semibold text-amply-textPrimary">Ignore These Apps</p>
+            <p className="mt-1 text-[11px] text-amply-textMuted">Comma-separated process names, e.g. "eldenring.exe, valorant.exe".</p>
+            <input
+              value={ignoreAppsText}
+              onChange={(event) => setIgnoreAppsText(event.target.value)}
+              onBlur={() => {
+                const list = ignoreAppsText
+                  .split(',')
+                  .map((entry) => entry.trim())
+                  .filter(Boolean);
+                void setAutoPauseIgnoreApps(list);
+              }}
+              placeholder="eldenring.exe, valorant.exe"
+              className="mt-2 w-full rounded-lg border border-amply-border/60 bg-amply-bgSecondary px-3 py-2 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+            />
+          </div>
         </div>
         </section>
 

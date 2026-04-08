@@ -1,15 +1,18 @@
 import clsx from 'clsx';
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
-import { readCachedArtistProfile } from '@/services/artistProfileService';
+import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistProfileService';
 import { getAlbumTracklistKey, loadAlbumTracklistCache, normalizeTrackTitle } from '@/services/albumTracklistService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Playlist, Song } from '@/types/music';
 import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
+import { buildArtworkSet, pickPlaylistArtwork } from '@/services/playlistArtworkService';
+import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { useArtworkReady } from '@/hooks/useArtworkReady';
+import { isMoreMixPlaylistId } from '@/services/playlistGenerator';
 
 const SectionRow = ({
   title,
@@ -32,10 +35,7 @@ const SectionRow = ({
       {scrollable ? (
         <div className="flex gap-5 overflow-x-auto pb-3 pr-2">
           {songs.map((song) => (
-            <div
-              key={`${title}-${song.id}`}
-              className="card-sheen group min-w-[200px] max-w-[220px] flex-1 overflow-hidden rounded-card border border-amply-border/60 bg-amply-surface/60 p-1 shadow-card transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:shadow-lift"
-            >
+            <div key={`${title}-${song.id}`} className="min-w-[200px] max-w-[220px] flex-1">
               <AlbumCard title={song.title} subtitle={song.artist} artwork={song.albumArt} onClick={() => onPick(song)} />
             </div>
           ))}
@@ -43,10 +43,7 @@ const SectionRow = ({
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
           {songs.map((song) => (
-            <div
-              key={`${title}-${song.id}`}
-              className="card-sheen group overflow-hidden rounded-card border border-amply-border/60 bg-amply-surface/60 p-1 shadow-card transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:shadow-lift"
-            >
+            <div key={`${title}-${song.id}`}>
               <AlbumCard title={song.title} subtitle={song.artist} artwork={song.albumArt} onClick={() => onPick(song)} />
             </div>
           ))}
@@ -118,6 +115,7 @@ const scheduleIdleTask = (task: () => void, timeoutMs = 300): (() => void) => {
 
 const HomePage = () => {
   const songs = useLibraryStore((state) => state.songs);
+  const deferredSongs = useDeferredValue(songs);
   const playlists = useLibraryStore((state) => state.playlists);
   const regenerateSmartPlaylists = useLibraryStore((state) => state.regenerateSmartPlaylists);
   const smartPlaylistSeed = useLibraryStore((state) => state.smartPlaylistSeed);
@@ -127,6 +125,7 @@ const HomePage = () => {
   const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const navigate = useNavigate();
   const artworkReady = useArtworkReady();
+  const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
 
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
@@ -140,14 +139,9 @@ const HomePage = () => {
   const clickTargetRef = useRef<string | null>(null);
   const albumSubtitleCacheRef = useRef<Map<string, string>>(new Map());
   const wasRegeneratingRef = useRef(regeneratingSmartPlaylists);
-  const smartMixCount = useMemo(
-    () => playlists.filter((playlist) => playlist.type === 'smart' && playlist.songIds.length).length,
-    [playlists],
-  );
-  const showMoreMixesCard = smartMixCount > 0;
-
-  const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
-  const allSongIds = useMemo(() => songs.map((song) => song.id), [songs]);
+  const songsById = useMemo(() => new Map(deferredSongs.map((song) => [song.id, song])), [deferredSongs]);
+  const allSongIds = useMemo(() => deferredSongs.map((song) => song.id), [deferredSongs]);
+  const albumArtFrequency = useAlbumArtFrequency(deferredSongs);
 
   useEffect(() => {
     let alive = true;
@@ -254,11 +248,11 @@ const HomePage = () => {
 
   const recentlyPlayed = useMemo(
     () =>
-      [...songs]
+      [...deferredSongs]
         .filter((song) => song.lastPlayed)
         .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
         .slice(0, 16),
-    [songs],
+    [deferredSongs],
   );
 
   const rediscoverSongs = useMemo(() => {
@@ -279,7 +273,7 @@ const HomePage = () => {
 
   useEffect(() => {
     let alive = true;
-    const songList = [...songs];
+    const songList = [...deferredSongs];
     const playCountBySongId = new Map(songList.map((song) => [song.id, song.playCount]));
     const artistMap = new Map<string, Song[]>();
     const artistSongIdMap = new Map<string, Set<string>>();
@@ -345,7 +339,7 @@ const HomePage = () => {
       alive = false;
       cancel();
     };
-  }, [songs]);
+  }, [deferredSongs]);
 
   useEffect(() => {
     let alive = true;
@@ -364,7 +358,10 @@ const HomePage = () => {
       const next: Record<string, string | undefined> = {};
       let handled = 0;
       for (const entry of topArtists) {
-        const result = await readCachedArtistProfile(entry.artistName);
+        let result = await readCachedArtistProfile(entry.artistName);
+        if (result.status === 'missing' && !metadataFetchPaused) {
+          result = await loadArtistProfile(entry.artistName);
+        }
         if (!alive) {
           return;
         }
@@ -391,68 +388,52 @@ const HomePage = () => {
       alive = false;
       cancel();
     };
-  }, [topArtists, metadataFetchDone]);
+  }, [topArtists, metadataFetchDone, metadataFetchPaused]);
 
-  const getPlaylistArtwork = (playlist: Playlist): string | undefined => {
+  const getPlaylistArtwork = useCallback((playlist: Playlist): string | undefined => {
     if (playlist.artwork) {
       return playlist.artwork;
     }
+    const playlistSongs = playlist.songIds
+      .map((songId) => songsById.get(songId))
+      .filter((entry): entry is Song => Boolean(entry));
+    return pickPlaylistArtwork(playlistSongs, albumArtFrequency);
+  }, [albumArtFrequency, songsById]);
 
-    const firstSong = playlist.songIds.map((songId) => songsById.get(songId)).find(Boolean);
-    return firstSong?.albumArt;
-  };
-
-  const getPlaylistArtworkSet = (playlist: Playlist): string[] => {
-    const artSet = new Set<string>();
-    for (const songId of playlist.songIds) {
-      const art = songsById.get(songId)?.albumArt;
-      if (art) {
-        artSet.add(art);
-      }
-      if (artSet.size >= 4) {
-        break;
-      }
-    }
-    const list = [...artSet];
+  const getPlaylistArtworkSet = useCallback((playlist: Playlist): string[] => {
+    const playlistSongs = playlist.songIds
+      .map((songId) => songsById.get(songId))
+      .filter((entry): entry is Song => Boolean(entry));
+    const list = buildArtworkSet(playlistSongs, albumArtFrequency, 4, playlist.artwork);
     if (list.length) {
       while (list.length < 4) {
         list.push(list[list.length - 1]);
       }
     }
     return list;
-  };
+  }, [albumArtFrequency, songsById]);
 
-  const smartPlaylistCards = useMemo(() => {
-    const smart = playlists
-      .filter((playlist) => playlist.type === 'smart')
-      .map((playlist) => ({
-        id: playlist.id,
-        baseId: playlist.id,
-        title: playlist.name,
-        subtitle: getAlbumSpotlightSubtitle(playlist),
-        artwork: getPlaylistArtwork(playlist),
-        artworks: getPlaylistArtworkSet(playlist),
-        description: playlist.description,
-        songIds: playlist.songIds,
-        kind: 'smart' as const,
-      }))
-      .filter((entry) => entry.songIds.length);
+  const smartPlaylistItems = useMemo(
+    () =>
+      playlists
+        .filter((playlist) => playlist.type === 'smart')
+        .map((playlist) => ({
+          id: playlist.id,
+          baseId: playlist.id,
+          title: playlist.name,
+          subtitle: playlist.description || getAlbumSpotlightSubtitle(playlist),
+          artwork: getPlaylistArtwork(playlist),
+          artworks: getPlaylistArtworkSet(playlist),
+          description: playlist.description,
+          songIds: playlist.songIds,
+          kind: 'smart' as const,
+          isMoreMix: isMoreMixPlaylistId(playlist.id),
+        }))
+        .filter((entry) => entry.songIds.length),
+    [playlists, getAlbumSpotlightSubtitle, getPlaylistArtwork, getPlaylistArtworkSet],
+  );
 
-    const custom = playlists
-      .filter((playlist) => playlist.type === 'custom')
-      .map((playlist) => ({
-        id: `${playlist.id}-recent`,
-        baseId: playlist.id,
-        title: playlist.name,
-        subtitle: `Recently played - ${playlist.songIds.length} songs`,
-        artwork: getPlaylistArtwork(playlist),
-        artworks: getPlaylistArtworkSet(playlist),
-        description: playlist.description,
-        songIds: playlist.songIds,
-        kind: 'custom' as const,
-      }))
-      .filter((entry) => entry.songIds.length);
-
+  const smartHighlightCards = useMemo(() => {
     const seed = smartPlaylistRenderSeed || Date.now();
     const now = Date.now() / 1000;
     const scoreFor = (baseId: string) => {
@@ -465,7 +446,8 @@ const HomePage = () => {
       return usage.count * 10 + recencyBoost;
     };
 
-    return [...smart, ...custom]
+    return smartPlaylistItems
+      .filter((entry) => !entry.isMoreMix)
       .sort((a, b) => {
         const scoreDiff = scoreFor(b.baseId) - scoreFor(a.baseId);
         if (scoreDiff !== 0) {
@@ -474,26 +456,16 @@ const HomePage = () => {
         return hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`);
       })
       .slice(0, 7);
-  }, [playlists, playlistUsage, smartPlaylistRenderSeed, getAlbumSpotlightSubtitle]);
+  }, [smartPlaylistItems, playlistUsage, smartPlaylistRenderSeed]);
 
   const smartMixesAll = useMemo(() => {
     if (!showMoreMixes) {
       return [];
     }
-    return playlists
-      .filter((playlist) => playlist.type === 'smart')
-      .map((playlist) => ({
-        id: playlist.id,
-        baseId: playlist.id,
-        title: playlist.name,
-        subtitle: playlist.description || getAlbumSpotlightSubtitle(playlist),
-        artwork: getPlaylistArtwork(playlist),
-        artworks: getPlaylistArtworkSet(playlist),
-        songIds: playlist.songIds,
-        kind: 'smart' as const,
-      }))
-      .filter((entry) => entry.songIds.length);
-  }, [playlists, showMoreMixes, getAlbumSpotlightSubtitle]);
+    return smartPlaylistItems.filter((entry) => entry.isMoreMix);
+  }, [smartPlaylistItems, showMoreMixes]);
+
+  const showMoreMixesCard = smartPlaylistItems.some((entry) => entry.isMoreMix);
 
   const pickSong = (song: Song) => {
     setQueue(allSongIds, song.id);
@@ -509,7 +481,7 @@ const HomePage = () => {
       return;
     }
 
-    setQueue(queue, targetSongId);
+    setQueue(queue, targetSongId, { playlistId: playlistId ?? null });
     void playSongById(targetSongId, false);
     if (playlistId) {
       void recordPlaylistUse(playlistId);
@@ -532,9 +504,14 @@ const HomePage = () => {
             type="button"
             onClick={async () => {
               setRegenMessage(null);
-              await regenerateSmartPlaylists();
-              setRegenMessage('Smart playlists regenerated.');
-              window.setTimeout(() => setRegenMessage(null), 2500);
+              try {
+                await regenerateSmartPlaylists();
+                setRegenMessage('Smart playlists regenerated.');
+              } catch (error) {
+                setRegenMessage(error instanceof Error ? error.message : 'Failed to regenerate playlists.');
+              } finally {
+                window.setTimeout(() => setRegenMessage(null), 2500);
+              }
             }}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-amply-border/60 text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Regenerate playlists"
@@ -590,7 +567,7 @@ const HomePage = () => {
             </div>
           ) : null}
           <div className="grid grid-cols-1 gap-5 pb-2 sm:grid-flow-row-dense sm:grid-cols-2 xl:grid-cols-3">
-            {smartPlaylistCards.map((item, index) => {
+            {smartHighlightCards.map((item, index) => {
             const isFeatured = index === 0;
             const artworkSet = item.artworks?.length ? item.artworks : item.artwork ? [item.artwork] : [];
             const glowClass = playlistGlowClasses[index % playlistGlowClasses.length];
@@ -615,7 +592,7 @@ const HomePage = () => {
                   )
                 }
                 className={clsx(
-                  'playlist-card group relative overflow-hidden rounded-card border border-amply-border/60 p-6 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
+                  'playlist-card playlist-card--smart group relative overflow-hidden rounded-card border border-amply-border/60 p-6 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
                   playlistToneClasses[index % playlistToneClasses.length],
                   glowClass,
                   isFeatured ? 'min-h-[240px] sm:col-span-2 xl:col-span-2' : 'min-h-[180px]',
@@ -624,8 +601,8 @@ const HomePage = () => {
                 title="Click to play. Double-click to open playlist."
               >
                 {artworkReady && artworkSet[0] ? (
-                  <div className="blur-backdrop playlist-backdrop">
-                    <ArtworkImage src={artworkSet[0]} alt="" className="h-full w-full object-cover" />
+                  <div className="absolute inset-0 pointer-events-none">
+                    <ArtworkImage src={artworkSet[0]} alt="" className="h-full w-full object-cover opacity-0" />
                   </div>
                 ) : null}
 
@@ -686,7 +663,7 @@ const HomePage = () => {
                 type="button"
                 onClick={() => setShowMoreMixes((value) => !value)}
                 className={clsx(
-                  'playlist-card group relative min-h-[180px] overflow-hidden rounded-card border border-amply-border/60 p-5 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
+                  'playlist-card playlist-card--smart group relative min-h-[180px] overflow-hidden rounded-card border border-amply-border/60 p-5 text-left transition-[transform,box-shadow,filter] duration-300 ease-smooth hover:scale-[1.02] hover:shadow-lift hover:brightness-110 hover:saturate-125',
                   playlistToneClasses[0],
                   playlistGlowClasses[0],
                 )}
@@ -711,7 +688,7 @@ const HomePage = () => {
           </div>
         </div>
 
-        {!smartPlaylistCards.length ? (
+        {!smartHighlightCards.length ? (
           <div className="rounded-card border border-amply-border/60 bg-amply-surface p-4 text-[13px] text-amply-textMuted">
             No smart playlists yet. Add more music or refresh your library to generate mixes.
           </div>
@@ -734,7 +711,7 @@ const HomePage = () => {
                       )
                     }
                     className={clsx(
-                      'card-sheen relative min-w-[220px] max-w-[240px] flex-1 overflow-hidden rounded-card border border-amply-border/60 p-5 text-left shadow-card transition-all duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
+                      'card-sheen playlist-card--smart relative min-w-[220px] max-w-[240px] flex-1 overflow-hidden rounded-card border border-amply-border/60 p-5 text-left shadow-card transition-all duration-200 ease-smooth hover:scale-[1.02] hover:shadow-lift',
                       playlistToneClasses[(index + 1) % playlistToneClasses.length],
                     )}
                     title="Click to play. Double-click to open playlist."

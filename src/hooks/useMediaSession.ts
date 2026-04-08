@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { isTauri } from '@/services/storageService';
 
 export const useMediaSession = (): void => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
@@ -10,6 +12,7 @@ export const useMediaSession = (): void => {
   const resumePlayback = usePlayerStore((state) => state.resumePlayback);
   const playNext = usePlayerStore((state) => state.playNext);
   const playPrevious = usePlayerStore((state) => state.playPrevious);
+  const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
   const song = useLibraryStore((state) => (currentSongId ? state.getSongById(currentSongId) : undefined));
 
   useEffect(() => {
@@ -65,6 +68,9 @@ export const useMediaSession = (): void => {
     mediaSession.setActionHandler('pause', () => {
       pausePlayback();
     });
+    mediaSession.setActionHandler('stop', () => {
+      pausePlayback();
+    });
     mediaSession.setActionHandler('previoustrack', () => {
       void playPrevious();
     });
@@ -75,8 +81,60 @@ export const useMediaSession = (): void => {
     return () => {
       mediaSession.setActionHandler('play', null);
       mediaSession.setActionHandler('pause', null);
+      mediaSession.setActionHandler('stop', null);
       mediaSession.setActionHandler('previoustrack', null);
       mediaSession.setActionHandler('nexttrack', null);
     };
   }, [playNext, playPrevious, pausePlayback, resumePlayback]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let unlisten: UnlistenFn | null = null;
+    let alive = true;
+
+    listen<{ action?: string }>('amply://media-key', (event) => {
+      if (!alive) {
+        return;
+      }
+      const action = event.payload?.action;
+      if (!action) {
+        return;
+      }
+      if (action === 'playpause') {
+        togglePlayPause();
+        return;
+      }
+      if (action === 'play') {
+        resumePlayback();
+        return;
+      }
+      if (action === 'pause' || action === 'stop') {
+        pausePlayback();
+        return;
+      }
+      if (action === 'next') {
+        void playNext(true);
+        return;
+      }
+      if (action === 'previous') {
+        void playPrevious();
+      }
+    }).then((dispose) => {
+      if (alive) {
+        unlisten = dispose;
+      } else {
+        dispose();
+      }
+    });
+
+    return () => {
+      alive = false;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [pausePlayback, playNext, playPrevious, resumePlayback, togglePlayPause]);
 };

@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::mpsc,
     thread,
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use std::f32::consts::PI;
 
@@ -25,6 +25,36 @@ use walkdir::WalkDir;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use rodio::cpal;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
+
+mod playlist;
+mod metadata;
+mod compute;
+
+#[cfg(target_os = "windows")]
+use windows::{
+    core::Interface,
+    Win32::{
+        Media::Audio::{
+            AudioSessionStateActive, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+            MMDeviceEnumerator, eMultimedia, eRender,
+        },
+        System::{
+            Com::{CoCreateInstance, CoInitializeEx, COINIT_MULTITHREADED, CLSCTX_ALL},
+            Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32},
+        },
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect},
+        Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO},
+    },
+};
+
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::{
+    Input::KeyboardAndMouse::{
+        RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT, VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP,
+    },
+    WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY},
+};
+
 
 trait ReadSeek: Read + Seek + Send + Sync {}
 impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
@@ -66,6 +96,22 @@ struct StorageStats {
 struct OutputDeviceInfo {
     name: String,
     is_default: bool,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioFocusEvent {
+    other_active: bool,
+    active_apps: Vec<String>,
+    foreground_fullscreen: bool,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaKeyEvent {
+    action: String,
 }
 
 const EQ_BAND_FREQUENCIES: [f32; 5] = [60.0, 250.0, 1000.0, 4000.0, 12000.0];
@@ -899,7 +945,7 @@ async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> 
     .map_err(|err| err.to_string())?
 }
 
-fn storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let root = app
         .path()
         .app_data_dir()
@@ -914,7 +960,7 @@ fn storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn resolve_storage_path(app: &tauri::AppHandle, relative_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_storage_path(app: &tauri::AppHandle, relative_path: &str) -> Result<PathBuf, String> {
     let candidate = PathBuf::from(relative_path);
 
     if candidate.is_absolute() {
@@ -1326,6 +1372,11 @@ fn main() {
                 }
             }
 
+            #[cfg(target_os = "windows")]
+            start_windows_audio_focus_watcher(app.handle().clone());
+            #[cfg(target_os = "windows")]
+            start_windows_media_key_listener(app.handle().clone());
+
             let app_handle = app.handle().clone();
             thread::spawn(move || {
                 let mut audio = NativeAudio::new();
@@ -1476,7 +1527,27 @@ fn main() {
             audio_set_eq_gains,
             audio_set_output_device,
             audio_list_output_devices,
-            audio_analyze_loudness
+            audio_analyze_loudness,
+            generate_smart_playlists_rust,
+            metadata::has_cached_artist_profile_rust,
+            metadata::read_cached_artist_profile_rust,
+            metadata::load_artist_profile_rust,
+            metadata::load_album_artwork_cache_rust,
+            metadata::read_cached_album_artwork_rust,
+            metadata::load_album_artwork_rust,
+            metadata::load_album_tracklist_cache_rust,
+            metadata::read_cached_album_tracklist_rust,
+            metadata::load_album_tracklist_rust,
+            metadata::load_song_genre_cache_rust,
+            metadata::load_song_genre_rust,
+            metadata::lyrics_find_candidates_rust,
+            metadata::lyrics_read_cached_rust,
+            metadata::lyrics_save_selection_rust,
+            metadata::lyrics_load_rust,
+            compute::build_stats_rust,
+            compute::search_filter_rank_rust,
+            compute::build_album_art_frequency_rust,
+            compute::build_artwork_set_rust
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
@@ -1495,5 +1566,245 @@ fn main() {
 fn close_all_windows(app: &tauri::AppHandle) {
     for (_label, window) in app.webview_windows() {
         let _ = window.close();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_audio_focus_watcher(app: tauri::AppHandle) {
+    thread::spawn(move || {
+        unsafe {
+            let _ = CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED);
+        }
+
+        let current_pid = unsafe { GetCurrentProcessId() };
+        let mut last_other_active: Option<bool> = None;
+        let mut last_foreground_fullscreen: Option<bool> = None;
+        let mut last_active_apps: Vec<String> = Vec::new();
+
+        loop {
+            let focus_state = (|| -> windows::core::Result<(bool, Vec<String>, bool)> {
+                let enumerator: IMMDeviceEnumerator = unsafe {
+                    CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?
+                };
+                let device = unsafe {
+                    enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?
+                };
+                let manager: IAudioSessionManager2 = unsafe {
+                    device.Activate(CLSCTX_ALL, None)?
+                };
+                let sessions = unsafe {
+                    manager.GetSessionEnumerator()?
+                };
+                let count = unsafe {
+                    sessions.GetCount()?
+                };
+                let mut found = false;
+                let mut active_apps: Vec<String> = Vec::new();
+
+                for i in 0..count {
+                    let session = unsafe {
+                        sessions.GetSession(i)?
+                    };
+                    let control: IAudioSessionControl2 = session.cast()?;
+                    let state = unsafe {
+                        control.GetState()?
+                    };
+                    if state != AudioSessionStateActive {
+                        continue;
+                    }
+                    let pid = unsafe {
+                        control.GetProcessId()?
+                    };
+                    if pid == 0 || pid == current_pid {
+                        continue;
+                    }
+                    let is_system_result = unsafe {
+                        control.IsSystemSoundsSession()
+                    };
+                    if is_system_result.0 >= 0 {
+                        continue;
+                    }
+                    if let Some(name) = process_name_from_pid(pid) {
+                        if !active_apps.contains(&name) {
+                            active_apps.push(name);
+                        }
+                    }
+                    found = true;
+                }
+
+                Ok((found, active_apps, is_foreground_fullscreen()))
+            })();
+
+            if let Ok((active, active_apps, foreground_fullscreen)) = focus_state {
+                let apps_changed = active_apps != last_active_apps;
+                let state_changed = last_other_active.map(|prev| prev != active).unwrap_or(true);
+                let fullscreen_changed =
+                    last_foreground_fullscreen.map(|prev| prev != foreground_fullscreen).unwrap_or(true);
+                if state_changed || apps_changed || fullscreen_changed {
+                    last_other_active = Some(active);
+                    last_active_apps = active_apps.clone();
+                    last_foreground_fullscreen = Some(foreground_fullscreen);
+                    let _ = app.emit(
+                        "amply://audio-focus",
+                        AudioFocusEvent {
+                            other_active: active,
+                            active_apps,
+                            foreground_fullscreen,
+                        },
+                    );
+                }
+            }
+
+            thread::sleep(Duration::from_millis(800));
+        }
+    });
+}
+
+#[tauri::command]
+fn generate_smart_playlists_rust(
+    songs: Vec<playlist::SongInput>,
+    seed: Option<u64>,
+    daily_seed: Option<u64>,
+    profile: Option<playlist::ListeningProfileInput>,
+    discovery_intensity: Option<f32>,
+    randomness_intensity: Option<f32>,
+    lite: Option<bool>,
+) -> Result<Vec<playlist::PlaylistOutput>, String> {
+    let seed_value = seed.unwrap_or_else(|| {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        now.as_secs()
+    });
+    let daily_seed_value = daily_seed.unwrap_or(seed_value);
+    let discovery = discovery_intensity.unwrap_or(0.35).clamp(0.0, 1.0);
+    let randomness = randomness_intensity.unwrap_or(0.3).clamp(0.0, 1.0);
+    let lite_flag = lite.unwrap_or(false);
+
+    Ok(playlist::generate_playlists(
+        songs,
+        seed_value,
+        daily_seed_value,
+        profile,
+        discovery,
+        randomness,
+        lite_flag,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_media_key_listener(app: tauri::AppHandle) {
+    thread::spawn(move || unsafe {
+        let hotkeys = [
+            (1, VK_MEDIA_PLAY_PAUSE.0 as u32, "playpause"),
+            (2, VK_MEDIA_NEXT_TRACK.0 as u32, "next"),
+            (3, VK_MEDIA_PREV_TRACK.0 as u32, "previous"),
+            (4, VK_MEDIA_STOP.0 as u32, "stop"),
+        ];
+
+        for (id, vk, _) in hotkeys {
+            if RegisterHotKey(None, id, MOD_NOREPEAT, vk).is_err() {
+                eprintln!("Failed to register media key hotkey id={id}");
+            }
+        }
+
+        let mut msg = MSG::default();
+        loop {
+            let result = GetMessageW(&mut msg, None, 0, 0);
+            if result.0 == 0 {
+                break;
+            }
+            if msg.message == WM_HOTKEY {
+                let id = msg.wParam.0 as i32;
+                let action = match id {
+                    1 => Some("playpause"),
+                    2 => Some("next"),
+                    3 => Some("previous"),
+                    4 => Some("stop"),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    let _ = app.emit(
+                        "amply://media-key",
+                        MediaKeyEvent {
+                            action: action.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+
+        for (id, _, _) in hotkeys {
+            let _ = UnregisterHotKey(None, id);
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn process_name_from_pid(pid: u32) -> Option<String> {
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(h) => h,
+            Err(_) => return None,
+        };
+        let mut buffer = [0u16; 260];
+        let mut size = buffer.len() as u32;
+        
+        let result = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            std::mem::transmute(buffer.as_mut_ptr()),
+            &mut size,
+        );
+        let _ = windows::Win32::Foundation::CloseHandle(handle);
+        
+        if result.is_err() || size == 0 {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buffer[..size as usize]);
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_foreground_fullscreen() -> bool {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return false;
+        }
+        let mut rect = std::mem::MaybeUninit::uninit();
+        if GetWindowRect(hwnd, rect.as_mut_ptr()).is_err() {
+            return false;
+        }
+        let rect = rect.assume_init();
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if monitor.0.is_null() {
+            return false;
+        }
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return false;
+        }
+        let win_w = (rect.right - rect.left) as i32;
+        let win_h = (rect.bottom - rect.top) as i32;
+        let mon_w = (info.rcMonitor.right - info.rcMonitor.left) as i32;
+        let mon_h = (info.rcMonitor.bottom - info.rcMonitor.top) as i32;
+        if mon_w <= 0 || mon_h <= 0 {
+            return false;
+        }
+        let coverage_w = win_w as f32 / mon_w as f32;
+        let coverage_h = win_h as f32 / mon_h as f32;
+        coverage_w >= 0.95 && coverage_h >= 0.95
     }
 }

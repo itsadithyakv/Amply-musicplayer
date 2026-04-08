@@ -3,8 +3,9 @@ import type { AppSettings, NowPlayingTab, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
 import { useLibraryStore } from '@/store/libraryStore';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { listOutputDevices } from '@/services/audioDeviceService';
-import { isTauri, readStorageJson, writeStorageJson } from '@/services/storageService';
+import { isTauri, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { loadSongLoudness } from '@/services/loudnessService';
 import {
   loadMetadataAttempts,
@@ -66,8 +67,12 @@ interface PlayerState {
   settings: AppSettings;
   sleepTimerEndsAt: number | null;
   sleepTimerDurationMin: number | null;
+  autoPausedByFocus: boolean;
+  toastMessage: string | null;
+  lastQueuePlaylistId: string | null;
   initialize: () => Promise<void>;
-  setQueue: (songIds: string[], startSongId?: string) => void;
+  showToast: (message: string) => void;
+  setQueue: (songIds: string[], startSongId?: string, options?: { playlistId?: string | null }) => void;
   setAlbumQueueView: (view: PlayerState['albumQueueView']) => void;
   playSongById: (songId: string, transition?: boolean) => Promise<void>;
   togglePlayPause: () => void;
@@ -95,6 +100,12 @@ interface PlayerState {
   setLyricsVisualsEnabled: (enabled: boolean) => Promise<void>;
   setLyricsVisualTheme: (theme: AppSettings['lyricsVisualTheme']) => Promise<void>;
   setMetadataFetchPaused: (paused: boolean) => Promise<void>;
+  setDiscoveryIntensity: (value: number) => Promise<void>;
+  setRandomnessIntensity: (value: number) => Promise<void>;
+  setPauseMixRegenDuringPlayback: (enabled: boolean) => Promise<void>;
+  setAutoPauseOnFocus: (enabled: boolean) => Promise<void>;
+  setAutoPauseIgnoreApps: (apps: string[]) => Promise<void>;
+  setAutoPauseIgnoreFullscreen: (enabled: boolean) => Promise<void>;
   setSleepTimer: (minutes: number | null) => void;
   enqueueSong: (songId: string) => void;
   removeQueuedSong: (songId: string) => void;
@@ -119,6 +130,39 @@ const defaultSettings: AppSettings = {
   lyricsVisualsEnabled: true,
   lyricsVisualTheme: 'ember',
   metadataFetchPaused: false,
+  discoveryIntensity: 0.35,
+  randomnessIntensity: 0.3,
+  pauseMixRegenDuringPlayback: true,
+  autoPauseOnFocus: true,
+  autoPauseIgnoreApps: [],
+  autoPauseIgnoreFullscreen: true,
+};
+
+type PersistedPlaybackState = {
+  songId: string | null;
+  positionSec: number;
+  queueSongIds: string[];
+  queueCursor: number;
+  playlistId: string | null;
+  updatedAt: number;
+};
+
+const playbackStatePath = 'playback/last_state.json';
+const PLAYBACK_PERSIST_DEBOUNCE_MS = 1500;
+const PLAYBACK_PERSIST_THROTTLE_MS = 5000;
+let lastPlaybackPersistAt = 0;
+
+const persistPlaybackState = (state: PlayerState, overrides: Partial<PersistedPlaybackState> = {}): void => {
+  const payload: PersistedPlaybackState = {
+    songId: state.currentSongId,
+    positionSec: state.positionSec,
+    queueSongIds: state.queueSongIds,
+    queueCursor: state.queueCursor,
+    playlistId: state.lastQueuePlaylistId ?? null,
+    updatedAt: Math.floor(Date.now() / 1000),
+    ...overrides,
+  };
+  void writeStorageJsonDebounced(playbackStatePath, payload, PLAYBACK_PERSIST_DEBOUNCE_MS);
 };
 
 const eqPresetBands: Record<AppSettings['eqPreset'], number[]> = {
@@ -148,6 +192,15 @@ const normalizeEqBands = (bands: number[] | undefined, fallbackPreset: AppSettin
   return normalized;
 };
 
+const normalizeIgnoreApps = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
+    .filter(Boolean);
+};
+
 let sleepTimerHandle: number | null = null;
 let progressFlushHandle: number | null = null;
 let lastProgressUpdate = 0;
@@ -158,6 +211,9 @@ const preloadOnceCache = new Map<string, number>();
 const PRELOAD_CACHE_LIMIT = 200;
 let defaultOutputPollHandle: number | null = null;
 let lastDefaultOutputName: string | null = null;
+let audioFocusUnlisten: UnlistenFn | null = null;
+let audioFocusResumeTimer: number | null = null;
+let toastTimer: number | null = null;
 
 const clearSleepTimerHandle = (): void => {
   if (sleepTimerHandle !== null) {
@@ -322,6 +378,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   settings: defaultSettings,
   sleepTimerEndsAt: null,
   sleepTimerDurationMin: null,
+  autoPausedByFocus: false,
+  toastMessage: null,
+  lastQueuePlaylistId: null,
 
   initialize: async () => {
     if (get().initialized) {
@@ -329,6 +388,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     const persisted = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+    const persistedPlayback = await readStorageJson<PersistedPlaybackState | null>(playbackStatePath, null);
     let settings: AppSettings = {
       ...defaultSettings,
       ...persisted,
@@ -336,6 +396,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     settings = {
       ...settings,
       eqBands: normalizeEqBands(settings.eqBands, settings.eqPreset),
+      discoveryIntensity: Math.max(0, Math.min(1, settings.discoveryIntensity ?? defaultSettings.discoveryIntensity)),
+      randomnessIntensity: Math.max(0, Math.min(1, settings.randomnessIntensity ?? defaultSettings.randomnessIntensity)),
+      autoPauseIgnoreApps: normalizeIgnoreApps(settings.autoPauseIgnoreApps),
+      autoPauseIgnoreFullscreen: Boolean(settings.autoPauseIgnoreFullscreen),
     };
     if ('albumTracklistFetchPaused' in persisted) {
       const { albumTracklistFetchPaused: _legacy, ...rest } = persisted;
@@ -350,6 +414,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       } catch {
         // Ignore autostart failures; keep persisted setting.
       }
+    }
+
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__ = settings.discoveryIntensity;
+      (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__ = settings.randomnessIntensity;
+      (window as unknown as { __AMP_MIX_REGEN_PAUSED__?: boolean }).__AMP_MIX_REGEN_PAUSED__ =
+        settings.pauseMixRegenDuringPlayback;
     }
 
     audioEngine.setCallbacks({
@@ -396,6 +467,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             }
             return { positionSec: nextPos, durationSec: nextDur };
           });
+
+          const currentId = get().currentSongId;
+          const now = Date.now();
+          if (currentId && now - lastPlaybackPersistAt >= PLAYBACK_PERSIST_THROTTLE_MS) {
+            lastPlaybackPersistAt = now;
+            persistPlaybackState(get(), { songId: currentId, positionSec: nextPos });
+          }
         };
 
         if (now - lastProgressUpdate >= PROGRESS_UPDATE_MS) {
@@ -416,9 +494,76 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         }
       },
       onEnded: async () => {
+        const state = get();
+        const finishedId = state.currentSongId;
+        if (finishedId) {
+          void useLibraryStore.getState().recordPlaybackEvent(finishedId, {
+            listenedSec: state.durationSec || state.positionSec,
+            durationSec: state.durationSec,
+            manualSkip: false,
+            completed: true,
+          });
+        }
         await get().playNext();
       },
     });
+
+    if (isTauri() && !audioFocusUnlisten) {
+      audioFocusUnlisten = await listen<{ otherActive: boolean }>('amply://audio-focus', (event) => {
+        const payload = event.payload as {
+          otherActive?: boolean;
+          activeApps?: string[];
+          foregroundFullscreen?: boolean;
+        };
+        const otherActive = payload?.otherActive ?? false;
+        const activeAppsRaw = Array.isArray(payload?.activeApps) ? payload.activeApps : [];
+        const activeApps = activeAppsRaw.map((app) => app.toLowerCase());
+        const state = get();
+        if (!state.settings.autoPauseOnFocus) {
+          return;
+        }
+        if (state.settings.autoPauseIgnoreFullscreen && payload?.foregroundFullscreen) {
+          return;
+        }
+        let shouldPause = otherActive;
+        if (activeApps.length) {
+          const ignore = new Set(normalizeIgnoreApps(state.settings.autoPauseIgnoreApps));
+          const remaining = activeApps.filter((app) => !ignore.has(app));
+          shouldPause = remaining.length > 0;
+        }
+        if (otherActive) {
+          if (!shouldPause) {
+            return;
+          }
+          if (audioFocusResumeTimer) {
+            window.clearTimeout(audioFocusResumeTimer);
+            audioFocusResumeTimer = null;
+          }
+          if (state.isPlaying || audioEngine.isPlaying()) {
+            const position = audioEngine.getPosition();
+            audioEngine.pause();
+            setGlobalPlayingFlag(false);
+            set({ isPlaying: false, positionSec: position, autoPausedByFocus: true });
+            get().showToast('Amply paused for other audio');
+          }
+          return;
+        }
+        if (state.autoPausedByFocus && !state.isPlaying) {
+          if (audioFocusResumeTimer) {
+            window.clearTimeout(audioFocusResumeTimer);
+          }
+          audioFocusResumeTimer = window.setTimeout(() => {
+            const latest = get();
+            if (!latest.autoPausedByFocus || latest.isPlaying) {
+              return;
+            }
+            void latest.resumePlayback();
+            set({ autoPausedByFocus: false });
+            get().showToast('Amply resumed');
+          }, 1200);
+        }
+      });
+    }
 
     if (settings.gaplessEnabled && settings.crossfadeEnabled) {
       settings = { ...settings, crossfadeEnabled: false };
@@ -432,18 +577,77 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({ initialized: true, settings });
     startDefaultOutputWatcher();
+
+    const attemptRestore = () => {
+      const state = get();
+      if (state.currentSongId || state.isPlaying) {
+        return true;
+      }
+      if (!persistedPlayback?.songId) {
+        return true;
+      }
+      const library = useLibraryStore.getState();
+      if (!library.initialized) {
+        return false;
+      }
+      const song = library.getSongById(persistedPlayback.songId);
+      if (!song) {
+        return true;
+      }
+      const filteredQueue = (persistedPlayback.queueSongIds || [])
+        .map((id) => library.getSongById(id))
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .map((entry) => entry.id);
+      const queue = filteredQueue.length ? filteredQueue : [song.id];
+      let queueCursor = queue.indexOf(song.id);
+      if (queueCursor < 0) {
+        queueCursor = Math.max(0, Math.min(queue.length - 1, persistedPlayback.queueCursor ?? 0));
+      }
+      const resumeAt = Math.max(0, Math.min(song.duration || 0, persistedPlayback.positionSec || 0));
+      audioEngine.setLoop(state.repeatMode === 'one');
+      void audioEngine.loadSong(song, { autoplay: false, transition: false, startAtSec: resumeAt });
+      setGlobalPlayingFlag(false);
+      set({
+        currentSongId: song.id,
+        queueSongIds: queue,
+        queueCursor,
+        isPlaying: false,
+        positionSec: resumeAt,
+        durationSec: song.duration,
+        lastQueuePlaylistId: persistedPlayback.playlistId ?? null,
+      });
+      setGlobalPlaybackHints(song.id, buildUpcomingSongIds({ ...get(), currentSongId: song.id, queueSongIds: queue, queueCursor }, getPreloadCount()));
+      return true;
+    };
+
+    if (!attemptRestore()) {
+      const unsubscribe = useLibraryStore.subscribe((state) => {
+        if (!state.initialized) {
+          return;
+        }
+        attemptRestore();
+        unsubscribe();
+      });
+    }
   },
 
-  setQueue: (songIds, startSongId) => {
+  setQueue: (songIds, startSongId, options) => {
     const startIndex = startSongId ? Math.max(0, songIds.indexOf(startSongId)) : 0;
     set({
       queueSongIds: songIds,
       queueCursor: startIndex,
       albumQueueView: null,
+      lastQueuePlaylistId: options?.playlistId ?? null,
     });
     const nextState = get();
     const preloadIds = buildUpcomingSongIds(nextState, getPreloadCount());
     setGlobalPlaybackHints(nextState.currentSongId, preloadIds);
+    persistPlaybackState(nextState, {
+      queueSongIds: songIds,
+      queueCursor: startIndex,
+      playlistId: options?.playlistId ?? null,
+      songId: startSongId ?? nextState.currentSongId,
+    });
     if (preloadIds.length) {
       const library = useLibraryStore.getState();
       const preloadSongs = preloadIds
@@ -500,6 +704,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           : prev.albumQueueView,
     }));
     setGlobalPlaybackHints(songId, buildUpcomingSongIds(get(), getPreloadCount()));
+    persistPlaybackState(get(), { songId, positionSec: 0 });
 
     void useLibraryStore.getState().recordSongPlay(songId);
     if (!get().settings.gameMode) {
@@ -608,7 +813,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const position = audioEngine.getPosition();
       audioEngine.pause();
       setGlobalPlayingFlag(false);
-      set({ isPlaying: false, positionSec: position });
+      set({ isPlaying: false, positionSec: position, autoPausedByFocus: false });
+      persistPlaybackState(get(), { positionSec: position });
       return;
     }
 
@@ -618,7 +824,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const dailyMix = library.playlists.find((playlist) => playlist.id === 'smart_daily_mix');
       const dailyFirst = dailyMix?.songIds?.[0];
       if (dailyMix?.songIds?.length) {
-        get().setQueue(dailyMix.songIds, dailyFirst);
+        get().setQueue(dailyMix.songIds, dailyFirst, { playlistId: dailyMix.id });
       }
       const fallback = dailyFirst ?? get().queueSongIds[0] ?? library.songs[0]?.id;
       if (fallback) {
@@ -630,15 +836,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const resumeAt = get().positionSec || 0;
     audioEngine.playFrom(resumeAt);
     setGlobalPlayingFlag(true);
-    set({ isPlaying: true, positionSec: resumeAt });
+    set({ isPlaying: true, positionSec: resumeAt, autoPausedByFocus: false });
+    persistPlaybackState(get(), { positionSec: resumeAt });
   },
 
   pausePlayback: () => {
     const position = audioEngine.getPosition();
     audioEngine.pause();
     setGlobalPlayingFlag(false);
-    set({ isPlaying: false, positionSec: position });
+    set({ isPlaying: false, positionSec: position, autoPausedByFocus: false });
     setGlobalPlaybackHints(get().currentSongId, buildUpcomingSongIds(get()));
+    persistPlaybackState(get(), { positionSec: position });
   },
 
   resumePlayback: () => {
@@ -648,7 +856,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const dailyMix = library.playlists.find((playlist) => playlist.id === 'smart_daily_mix');
       const dailyFirst = dailyMix?.songIds?.[0];
       if (dailyMix?.songIds?.length) {
-        get().setQueue(dailyMix.songIds, dailyFirst);
+        get().setQueue(dailyMix.songIds, dailyFirst, { playlistId: dailyMix.id });
       }
       const fallback = dailyFirst ?? get().queueSongIds[0] ?? library.songs[0]?.id;
       if (fallback) {
@@ -659,12 +867,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const resumeAt = get().positionSec || 0;
     audioEngine.playFrom(resumeAt);
     setGlobalPlayingFlag(true);
-    set({ isPlaying: true, positionSec: resumeAt });
+    set({ isPlaying: true, positionSec: resumeAt, autoPausedByFocus: false });
     setGlobalPlaybackHints(get().currentSongId, buildUpcomingSongIds(get()));
+    persistPlaybackState(get(), { positionSec: resumeAt });
   },
 
   playNext: async (manual = false) => {
     const state = get();
+    if (state.currentSongId) {
+      void useLibraryStore.getState().recordPlaybackEvent(state.currentSongId, {
+        listenedSec: state.positionSec,
+        durationSec: state.durationSec,
+        manualSkip: manual,
+        completed: !manual,
+      });
+    }
     const nextSongId =
       manual && state.repeatMode === 'one'
         ? resolveNextSongId({ ...state, repeatMode: 'off' })
@@ -691,6 +908,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const previousSongId = resolvePreviousSongId(state);
     if (!previousSongId) {
       return;
+    }
+
+    if (state.currentSongId) {
+      void useLibraryStore.getState().recordPlaybackEvent(state.currentSongId, {
+        listenedSec: state.positionSec,
+        durationSec: state.durationSec,
+        manualSkip: true,
+        completed: false,
+      });
     }
 
     await get().playSongById(previousSongId, false);
@@ -903,6 +1129,96 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     await persistSettings(settings);
   },
 
+  setDiscoveryIntensity: async (value) => {
+    const clamped = Math.max(0, Math.min(1, Number.isFinite(value) ? value : defaultSettings.discoveryIntensity));
+    const settings = {
+      ...get().settings,
+      discoveryIntensity: clamped,
+    };
+
+    set({ settings });
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__ = clamped;
+    }
+    await persistSettings(settings);
+    void useLibraryStore.getState().regenerateSmartPlaylists();
+  },
+
+  setRandomnessIntensity: async (value) => {
+    const clamped = Math.max(0, Math.min(1, Number.isFinite(value) ? value : defaultSettings.randomnessIntensity));
+    const settings = {
+      ...get().settings,
+      randomnessIntensity: clamped,
+    };
+
+    set({ settings });
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__ = clamped;
+    }
+    await persistSettings(settings);
+    void useLibraryStore.getState().regenerateSmartPlaylists();
+  },
+
+  setPauseMixRegenDuringPlayback: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      pauseMixRegenDuringPlayback: enabled,
+    };
+
+    set({ settings });
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __AMP_MIX_REGEN_PAUSED__?: boolean }).__AMP_MIX_REGEN_PAUSED__ = enabled;
+    }
+    await persistSettings(settings);
+  },
+
+  setAutoPauseOnFocus: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      autoPauseOnFocus: enabled,
+    };
+
+    if (!enabled && audioFocusResumeTimer) {
+      window.clearTimeout(audioFocusResumeTimer);
+      audioFocusResumeTimer = null;
+    }
+    set({ settings, autoPausedByFocus: enabled ? get().autoPausedByFocus : false });
+    await persistSettings(settings);
+  },
+
+  setAutoPauseIgnoreApps: async (apps) => {
+    const normalized = normalizeIgnoreApps(apps);
+    const settings = {
+      ...get().settings,
+      autoPauseIgnoreApps: normalized,
+    };
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setAutoPauseIgnoreFullscreen: async (enabled) => {
+    const settings = {
+      ...get().settings,
+      autoPauseIgnoreFullscreen: enabled,
+    };
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  showToast: (message) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    set({ toastMessage: message });
+    if (toastTimer) {
+      window.clearTimeout(toastTimer);
+    }
+    toastTimer = window.setTimeout(() => {
+      toastTimer = null;
+      set({ toastMessage: null });
+    }, 2400);
+  },
+
   setSleepTimer: (minutes) => {
     clearSleepTimerHandle();
 
@@ -928,6 +1244,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   enqueueSong: (songId) => {
+    void useLibraryStore.getState().recordQueueAdd(songId);
     set((state) => ({
       manualQueueSongIds: state.manualQueueSongIds.includes(songId)
         ? state.manualQueueSongIds

@@ -11,6 +11,7 @@ interface ArtworkImageProps {
   decoding?: 'async' | 'sync' | 'auto';
   onLoad?: () => void;
   forceReady?: boolean;
+  pulse?: boolean;
 }
 
 export const ArtworkImage: React.FC<ArtworkImageProps> = ({
@@ -19,10 +20,11 @@ export const ArtworkImage: React.FC<ArtworkImageProps> = ({
   className,
   placeholderClassName,
   placeholderContent,
-  loading = 'lazy',
+  loading = 'eager',
   decoding = 'async',
   onLoad,
   forceReady = false,
+  pulse = true,
 }) => {
   const artworkReady = forceReady || useArtworkReady();
   const resolvedSrc = artworkReady ? src : undefined;
@@ -38,6 +40,7 @@ export const ArtworkImage: React.FC<ArtworkImageProps> = ({
       loading={loading}
       decoding={decoding}
       onLoad={onLoad}
+      pulse={pulse}
     />
   );
 };

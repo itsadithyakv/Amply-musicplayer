@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import type { AppSettings, Playlist, Song } from '@/types/music';
+import type { AppSettings, ListeningProfile, Playlist, Song, TasteProfile } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
-import { generateSmartPlaylists } from '@/services/playlistGenerator';
+import { generateSmartPlaylists, generateSmartPlaylistsLite, isHeavyMixPlaylistId, postProcessGeneratedPlaylists } from '@/services/playlistGenerator';
+import { generateSmartPlaylistsRust } from '@/services/rustPlaylistService';
 import { hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
 import { hydrateSongsWithCachedLoudness } from '@/services/loudnessService';
 import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
@@ -16,6 +17,7 @@ import {
   getAlbumTracklistKey,
   loadAlbumTracklist,
   loadAlbumTracklistCache,
+  type AlbumTracklistCache,
 } from '@/services/albumTracklistService';
 import {
   loadMetadataAttempts,
@@ -26,6 +28,7 @@ import {
   tryAcquireMetadata,
   releaseMetadata,
 } from '@/services/metadataAttemptService';
+import { isMetadataActivityPaused, isMetadataPaused } from '@/services/metadataActivityGate';
 import { getPrimaryArtistName } from '@/utils/artists';
 import {
   isAlbumCached,
@@ -52,6 +55,7 @@ interface LibraryState {
   libraryPaths: string[];
   songs: Song[];
   playlists: Playlist[];
+  smartPlaylists: Playlist[];
   customPlaylists: Playlist[];
   smartPlaylistOverrides: Record<string, string[]>;
   playlistUsage: Record<string, PlaylistUsageEntry>;
@@ -77,7 +81,9 @@ interface LibraryState {
     pending: boolean;
     message: string | null;
   };
-  startMetadataFetch: () => void;
+  listeningProfile: ListeningProfile;
+  tasteProfile: TasteProfile | null;
+  startMetadataFetch: (options?: { allowWhenActive?: boolean }) => void;
   startAlbumTracklistFetch: () => void;
   fetchMissingMetadataForSong: (
     songId: string,
@@ -103,6 +109,13 @@ interface LibraryState {
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
   addSongToPlaylist: (playlistId: string, songId: string) => Promise<'added' | 'exists' | 'missing'>;
   recordSongPlay: (songId: string) => Promise<void>;
+  recordPlaybackEvent: (songId: string, event: {
+    listenedSec: number;
+    durationSec?: number;
+    manualSkip?: boolean;
+    completed?: boolean;
+  }) => Promise<void>;
+  recordQueueAdd: (songId: string) => Promise<void>;
   recordPlaylistUse: (playlistId: string) => Promise<void>;
   upsertCustomPlaylist: (playlist: Playlist) => Promise<void>;
 }
@@ -111,24 +124,38 @@ const libraryCachePath = 'playlists/library_cache.json';
 const customPlaylistsPath = 'playlists/custom_playlists.json';
 const smartOverridesPath = 'playlists/smart_overrides.json';
 const smartCachePath = 'playlists/smart_cache.json';
+const smartLiteCachePath = 'playlists/smart_cache_lite.json';
 const dailyMixCachePath = 'playlists/daily_mix_cache.json';
 const playlistUsagePath = 'playlists/playlist_usage.json';
+const listeningProfilePath = 'playlists/listening_profile.json';
+const tasteProfilePath = 'playlists/taste_profile.json';
 
 type SmartCache = {
   weekKey: string;
   playlists: Playlist[];
 };
 
+type LiteSmartCache = {
+  generatedAt: number;
+  playlists: Playlist[];
+};
+
 type DailyMixCache = {
   dayKey: string;
   songIds: string[];
+  discoveryIntensity?: number;
+  randomnessIntensity?: number;
 };
 
-let smartPlaylistsCache: Playlist[] = [];
 let smartCacheWeek: string | null = null;
 let cachedSongsRef: Song[] | null = null;
 let cachedSongsById: Map<string, Song> | null = null;
 let metadataResumeTimer: number | null = null;
+let albumTracklistCacheMemo: AlbumTracklistCache | null = null;
+let albumTracklistCacheLoadedAt = 0;
+let smartPlaylistBuildInFlight = false;
+let lastHeavyMixRegenAt = 0;
+const HEAVY_MIX_REGEN_COOLDOWN_MS = 10 * 60 * 1000;
 let smartPlaylistRefreshHandle: number | null = null;
 let pendingSmartPlaylistRefresh:
   | {
@@ -138,6 +165,139 @@ let pendingSmartPlaylistRefresh:
 const metadataPlayRetryCache = new Map<string, number>();
 const PLAY_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 let scanRunId = 0;
+
+const createDefaultListeningProfile = (): ListeningProfile => ({
+  hourly: Array.from({ length: 24 }, () => 0),
+  weekday: Array.from({ length: 7 }, () => 0),
+  recentArtists: {},
+  recentGenres: {},
+});
+
+const hydrateSongsWithCachedAlbumArt = async (songs: Song[]): Promise<Song[]> => {
+  if (!songs.length) {
+    return songs;
+  }
+  const cache = await loadAlbumArtworkCache();
+  if (!cache || !Object.keys(cache).length) {
+    return songs;
+  }
+  let changed = false;
+  const updated = songs.map((song) => {
+    if (song.albumArt || !song.album?.trim() || !song.artist?.trim()) {
+      return song;
+    }
+    const key = getAlbumArtworkCacheKey(song.artist, song.album);
+    const cached = cache[key];
+    if (!cached) {
+      return song;
+    }
+    changed = true;
+    return { ...song, albumArt: cached };
+  });
+  return changed ? updated : songs;
+};
+
+const normalizeProfile = (profile: ListeningProfile | null): ListeningProfile => {
+  const base = createDefaultListeningProfile();
+  if (!profile) {
+    return base;
+  }
+  return {
+    hourly: profile.hourly?.length === 24 ? profile.hourly : base.hourly,
+    weekday: profile.weekday?.length === 7 ? profile.weekday : base.weekday,
+    recentArtists: profile.recentArtists ?? {},
+    recentGenres: profile.recentGenres ?? {},
+    updatedAt: profile.updatedAt,
+  };
+};
+
+const noteRecentMap = (
+  map: Record<string, { count: number; lastPlayed: number }>,
+  key: string,
+  now: number,
+): Record<string, { count: number; lastPlayed: number }> => {
+  if (!key) {
+    return map;
+  }
+  const existing = map[key];
+  const cutoff = now - 30 * 24 * 60 * 60;
+  const shouldReset = existing ? existing.lastPlayed < cutoff : false;
+  const nextCount = shouldReset ? 1 : (existing?.count ?? 0) + 1;
+  return {
+    ...map,
+    [key]: { count: nextCount, lastPlayed: now },
+  };
+};
+
+const buildTasteProfile = (songs: Song[], profile: ListeningProfile): TasteProfile => {
+  const updatedAt = Math.floor(Date.now() / 1000);
+  const artistCounts = new Map<string, number>();
+  const genreCounts = new Map<string, number>();
+  let totalPlays = 0;
+  let totalSkips = 0;
+  let completionSum = 0;
+  let completionCount = 0;
+  let lowPlayPlays = 0;
+
+  for (const song of songs) {
+    const plays = song.playCount ?? 0;
+    if (plays > 0) {
+      totalPlays += plays;
+      const artistKey = getPrimaryArtistName(song.artist).trim();
+      if (artistKey) {
+        artistCounts.set(artistKey, (artistCounts.get(artistKey) ?? 0) + plays);
+      }
+      const genreKey = song.genre?.trim();
+      if (genreKey && genreKey.toLowerCase() !== 'unknown genre') {
+        genreCounts.set(genreKey, (genreCounts.get(genreKey) ?? 0) + plays);
+      }
+    }
+    totalSkips += song.skipCount ?? 0;
+    if (song.duration && song.duration > 0 && song.totalPlaySeconds && plays > 0) {
+      const ratio = Math.min(1, Math.max(0, song.totalPlaySeconds / (plays * song.duration)));
+      completionSum += ratio;
+      completionCount += 1;
+    }
+    if ((song.playCount ?? 0) <= 2) {
+      lowPlayPlays += plays;
+    }
+  }
+
+  const topArtists = [...artistCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([name, count]) => ({ name, count }));
+  const topGenres = [...genreCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([name, count]) => ({ name, count }));
+
+  const hourBuckets = profile.hourly ?? Array.from({ length: 24 }, () => 0);
+  const morning = hourBuckets.slice(5, 12).reduce((sum, value) => sum + value, 0);
+  const afternoon = hourBuckets.slice(12, 17).reduce((sum, value) => sum + value, 0);
+  const evening = hourBuckets.slice(17, 22).reduce((sum, value) => sum + value, 0);
+  const night = hourBuckets.reduce((sum, value, index) => {
+    if (index >= 22 || index <= 4) {
+      return sum + value;
+    }
+    return sum;
+  }, 0);
+
+  return {
+    updatedAt,
+    topArtists,
+    topGenres,
+    dayparts: {
+      morning,
+      afternoon,
+      evening,
+      night,
+    },
+    skipRate: totalPlays ? Math.min(1, totalSkips / Math.max(1, totalPlays)) : 0,
+    completionRate: completionCount ? Math.min(1, completionSum / completionCount) : 0,
+    explorationRate: totalPlays ? Math.min(1, lowPlayPlays / totalPlays) : 0,
+  };
+};
 let initialScanScheduled = false;
 let initialScanTimer: number | null = null;
 
@@ -157,6 +317,17 @@ const scheduleBackgroundTask = (task: () => void, timeoutMs = 800): void => {
   }
 
   window.setTimeout(task, Math.min(timeoutMs, 300));
+};
+
+const getCachedAlbumTracklistCache = async (force = false): Promise<AlbumTracklistCache> => {
+  const now = Date.now();
+  if (!force && albumTracklistCacheMemo && now - albumTracklistCacheLoadedAt < 5 * 60 * 1000) {
+    return albumTracklistCacheMemo;
+  }
+  const cache = await loadAlbumTracklistCache();
+  albumTracklistCacheMemo = cache;
+  albumTracklistCacheLoadedAt = now;
+  return cache;
 };
 
 const scheduleInitialScan = (paths: string[]): void => {
@@ -193,8 +364,7 @@ const scheduleMetadataResume = (): void => {
   if (typeof window === 'undefined') {
     return;
   }
-  const paused = (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ === true;
-  if (paused) {
+  if (isMetadataPaused()) {
     return;
   }
   const lowPerf = (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ === true;
@@ -326,45 +496,92 @@ const refreshSmartPlaylists = async (
   const { force = false, seedOverride, persist = true } = options;
   const weekKey = getIsoWeekKey();
   const dayKey = getIsoDayKey();
-  if (!force && smartCacheWeek === weekKey && smartPlaylistsCache.length) {
-    return smartPlaylistsCache;
+  const cachedSmart = useLibraryStore.getState().smartPlaylists;
+  if (!force && smartCacheWeek === weekKey && cachedSmart.length) {
+    return cachedSmart;
   }
 
   const cached = force ? null : await readStorageJson<SmartCache | null>(smartCachePath, null);
   if (!force && cached?.weekKey === weekKey && cached.playlists?.length) {
     smartCacheWeek = cached.weekKey;
-    smartPlaylistsCache = applySmartOverrides(cached.playlists, overrides, songs);
-    return smartPlaylistsCache;
+    return applySmartOverrides(cached.playlists, overrides, songs);
   }
 
   const resolvedSeed = seedOverride ?? (force ? Date.now() : undefined);
   const dailySeed = seedFromDayKey(dayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
-  const dailyCached = await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const dailyCached = force ? null : await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const dailyMatchesSettings =
+    dailyCached &&
+    (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
+    (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
   const dailyMixOverride =
-    dailyCached && dailyCached.dayKey === dayKey
+    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
       ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
       : null;
   const resolvedDailyOverride =
     dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
-  const albumTracklistCache = await loadAlbumTracklistCache();
-  const generated = generateSmartPlaylists(
-    songs,
-    overrides,
-    resolvedSeed,
-    albumTracklistCache,
-    resolvedDailyOverride ?? undefined,
+  const albumTracklistCache = await getCachedAlbumTracklistCache();
+  const discoveryFromGlobal =
+    typeof window !== 'undefined'
+      ? (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__
+      : undefined;
+  const randomnessFromGlobal =
+    typeof window !== 'undefined'
+      ? (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__
+      : undefined;
+  let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
+  let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
+  if (discoveryIntensity === undefined || randomnessIntensity === undefined) {
+    const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+    if (discoveryIntensity === undefined) {
+      discoveryIntensity = typeof settings.discoveryIntensity === 'number' ? settings.discoveryIntensity : undefined;
+    }
+    if (randomnessIntensity === undefined) {
+      randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
+    }
+  }
+  const listeningProfile = useLibraryStore.getState().listeningProfile;
+  const seedForPost = resolvedSeed ?? seedFromWeekKey(weekKey);
+  const rustGenerated = await generateSmartPlaylistsRust(songs, {
+    seed: resolvedSeed,
     dailySeed,
-  );
+    profile: listeningProfile,
+    discoveryIntensity,
+    randomnessIntensity,
+    lite: false,
+  });
+  const generated = rustGenerated
+    ? await postProcessGeneratedPlaylists(rustGenerated as Playlist[], songs, overrides, seedForPost)
+    : generateSmartPlaylists(
+        songs,
+        overrides,
+        resolvedSeed,
+        albumTracklistCache,
+        resolvedDailyOverride ?? undefined,
+        dailySeed,
+        listeningProfile,
+        discoveryIntensity,
+        randomnessIntensity,
+      );
   smartCacheWeek = weekKey;
-  smartPlaylistsCache = generated;
+  const tasteProfile = buildTasteProfile(songs, listeningProfile);
+  useLibraryStore.setState({ tasteProfile });
+  if (persist) {
+    await writeStorageJsonDebounced(tasteProfilePath, tasteProfile, 1500);
+  }
   if (persist) {
     await writeStorageJson(smartCachePath, { weekKey, playlists: generated });
   }
   if (persist && !resolvedDailyOverride) {
     const daily = generated.find((playlist) => playlist.id === 'smart_daily_mix');
     if (daily?.songIds?.length) {
-      await writeStorageJson(dailyMixCachePath, { dayKey, songIds: daily.songIds });
+      await writeStorageJson(dailyMixCachePath, {
+        dayKey,
+        songIds: daily.songIds,
+        discoveryIntensity,
+        randomnessIntensity,
+      });
     }
   }
   return generated;
@@ -382,15 +599,183 @@ const regenerateSmartPlaylistsForCurrentState = async (
   });
 };
 
-const scheduleSmartPlaylistRefresh = (
+const shouldBlockMixRegen = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const flags = window as unknown as {
+    __AMP_IS_PLAYING__?: boolean;
+    __AMP_MIX_REGEN_PAUSED__?: boolean;
+  };
+  return flags.__AMP_MIX_REGEN_PAUSED__ === true && flags.__AMP_IS_PLAYING__ === true;
+};
+
+const refreshSmartPlaylistsLite = async (
   songs: Song[],
-  _overrides: Record<string, string[]>,
-  _seed: number,
+  overrides: Record<string, string[]>,
+  options: {
+    seedOverride?: number;
+    dailySeedOverride?: number;
+    persist?: boolean;
+  } = {},
+): Promise<Playlist[]> => {
+  const { seedOverride, dailySeedOverride, persist = false } = options;
+  const dayKey = getIsoDayKey();
+  const resolvedSeed = seedOverride ?? Date.now();
+  const dailySeed = dailySeedOverride ?? seedFromDayKey(dayKey);
+  const songsById = new Map(songs.map((song) => [song.id, song]));
+  const dailyCached = await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const dailyMatchesSettings =
+    dailyCached &&
+    (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
+    (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
+  const dailyMixOverride =
+    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
+      ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
+      : null;
+  const resolvedDailyOverride =
+    dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
+  const listeningProfile = useLibraryStore.getState().listeningProfile;
+  const discoveryFromGlobal =
+    typeof window !== 'undefined'
+      ? (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__
+      : undefined;
+  const randomnessFromGlobal =
+    typeof window !== 'undefined'
+      ? (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__
+      : undefined;
+  let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
+  let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
+  if (discoveryIntensity === undefined || randomnessIntensity === undefined) {
+    const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+    if (discoveryIntensity === undefined) {
+      discoveryIntensity = typeof settings.discoveryIntensity === 'number' ? settings.discoveryIntensity : undefined;
+    }
+    if (randomnessIntensity === undefined) {
+      randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
+    }
+  }
+
+  const carryMixes = useLibraryStore
+    .getState()
+    .smartPlaylists.filter((playlist) => isHeavyMixPlaylistId(playlist.id));
+  const rustGenerated = await generateSmartPlaylistsRust(songs, {
+    seed: resolvedSeed,
+    dailySeed,
+    profile: listeningProfile,
+    discoveryIntensity,
+    randomnessIntensity,
+    lite: true,
+  });
+  const generated = rustGenerated
+    ? await postProcessGeneratedPlaylists(
+        [...(rustGenerated as Playlist[]), ...carryMixes],
+        songs,
+        overrides,
+        resolvedSeed,
+      )
+    : generateSmartPlaylistsLite(
+        songs,
+        overrides,
+        resolvedSeed,
+        resolvedDailyOverride ?? undefined,
+        dailySeed,
+        listeningProfile,
+        discoveryIntensity,
+        randomnessIntensity,
+        carryMixes,
+      );
+
+  const tasteProfile = buildTasteProfile(songs, listeningProfile);
+  useLibraryStore.setState({ tasteProfile });
+  if (persist) {
+    await writeStorageJsonDebounced(tasteProfilePath, tasteProfile, 1500);
+    await writeStorageJsonDebounced(
+      smartLiteCachePath,
+      { generatedAt: Math.floor(Date.now() / 1000), playlists: generated },
+      1500,
+    );
+  }
+  return generated;
+};
+
+const regenerateSmartPlaylistsLiteForCurrentState = async (
+  songs: Song[],
+  overrides: Record<string, string[]>,
+  seed: number,
+): Promise<Playlist[]> => {
+  return refreshSmartPlaylistsLite(songs, overrides, {
+    seedOverride: seed,
+    persist: true,
+  });
+};
+
+const scheduleIdleHeavyMixRefresh = (
+  songs: Song[],
+  overrides: Record<string, string[]>,
+  seed: number,
   delayMs = 1200,
 ): void => {
+  const run = async () => {
+    if (shouldBlockMixRegen()) {
+      if (typeof window !== 'undefined') {
+        window.setTimeout(() => scheduleIdleHeavyMixRefresh(songs, overrides, seed, delayMs), 4000);
+      }
+      return;
+    }
+    const now = Date.now();
+    if (lastHeavyMixRegenAt && now - lastHeavyMixRegenAt < HEAVY_MIX_REGEN_COOLDOWN_MS) {
+      const wait = Math.max(1000, HEAVY_MIX_REGEN_COOLDOWN_MS - (now - lastHeavyMixRegenAt));
+      if (typeof window !== 'undefined') {
+        window.setTimeout(() => scheduleIdleHeavyMixRefresh(songs, overrides, seed, delayMs), wait);
+      }
+      return;
+    }
+    smartPlaylistBuildInFlight = true;
+    let generated: Playlist[] = [];
+    try {
+      generated = await regenerateSmartPlaylistsForCurrentState(songs, overrides, seed);
+      lastHeavyMixRegenAt = Date.now();
+    } finally {
+      smartPlaylistBuildInFlight = false;
+    }
+    const state = useLibraryStore.getState();
+    useLibraryStore.setState({
+      smartPlaylists: generated,
+      playlists: buildPlaylists(generated, state.customPlaylists),
+      smartPlaylistSeed: state.smartPlaylistSeed,
+    });
+  };
+
+  if (typeof window === 'undefined') {
+    void run();
+    return;
+  }
+
+  const idle = (globalThis as typeof globalThis & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+  }).requestIdleCallback;
+
+  if (typeof idle === 'function') {
+    idle(() => void run(), { timeout: delayMs });
+  } else {
+    window.setTimeout(() => void run(), delayMs);
+  }
+};
+
+const scheduleSmartPlaylistRefresh = (songs: Song[], delayMs = 1200): void => {
   pendingSmartPlaylistRefresh = { songs };
 
   const run = async () => {
+    if (smartPlaylistBuildInFlight) {
+      if (typeof window !== 'undefined') {
+        smartPlaylistRefreshHandle = window.setTimeout(() => {
+          smartPlaylistRefreshHandle = null;
+          void run();
+        }, Math.min(delayMs, 1200));
+      }
+      return;
+    }
     const next = pendingSmartPlaylistRefresh;
     pendingSmartPlaylistRefresh = null;
     if (!next) {
@@ -398,11 +783,20 @@ const scheduleSmartPlaylistRefresh = (
     }
 
     const state = useLibraryStore.getState();
-    await regenerateSmartPlaylistsForCurrentState(next.songs, state.smartPlaylistOverrides, state.smartPlaylistSeed);
+    smartPlaylistBuildInFlight = true;
+    let generated: Playlist[] = [];
+    try {
+      generated = await regenerateSmartPlaylistsLiteForCurrentState(next.songs, state.smartPlaylistOverrides, state.smartPlaylistSeed);
+    } finally {
+      smartPlaylistBuildInFlight = false;
+    }
     useLibraryStore.setState({
-      playlists: buildPlaylists(state.customPlaylists),
+      smartPlaylists: generated,
+      playlists: buildPlaylists(generated, state.customPlaylists),
       smartPlaylistSeed: state.smartPlaylistSeed,
     });
+
+    scheduleIdleHeavyMixRefresh(next.songs, state.smartPlaylistOverrides, state.smartPlaylistSeed, Math.max(1200, delayMs));
   };
 
   if (typeof window === 'undefined') {
@@ -420,8 +814,8 @@ const scheduleSmartPlaylistRefresh = (
   }, delayMs);
 };
 
-const buildPlaylists = (customPlaylists: Playlist[]): Playlist[] => {
-  return [...smartPlaylistsCache, ...customPlaylists];
+const buildPlaylists = (smartPlaylists: Playlist[], customPlaylists: Playlist[]): Playlist[] => {
+  return [...smartPlaylists, ...customPlaylists];
 };
 
 const normalizeLibraryPaths = (paths: string[]): string[] => {
@@ -443,35 +837,41 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   libraryPaths: ['music'],
   songs: [],
   playlists: [],
+  smartPlaylists: [],
   customPlaylists: [],
   smartPlaylistOverrides: {},
   playlistUsage: {},
   smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
   regeneratingSmartPlaylists: false,
   searchQuery: '',
-  metadataFetch: {
-    running: false,
-    total: 0,
-    done: 0,
-    artists: 0,
-    lyrics: 0,
-    genres: 0,
-    loudness: 0,
-    albumArt: 0,
-    pending: false,
-    message: null,
-  },
-  albumTrackFetch: {
-    running: false,
-    total: 0,
-    done: 0,
-    pending: false,
-    message: null,
-  },
+      metadataFetch: {
+        running: false,
+        total: 0,
+        done: 0,
+        artists: 0,
+        lyrics: 0,
+        genres: 0,
+        loudness: 0,
+        albumArt: 0,
+        pending: false,
+        message: null,
+      },
+      albumTrackFetch: {
+        running: false,
+        total: 0,
+        done: 0,
+        pending: false,
+        message: null,
+      },
+      listeningProfile: createDefaultListeningProfile(),
+      tasteProfile: null,
 
-  startMetadataFetch: () => {
+  startMetadataFetch: (options) => {
     const state = get();
     if (state.metadataFetch.running) {
+      return;
+    }
+    if (!options?.allowWhenActive && isMetadataActivityPaused()) {
       return;
     }
 
@@ -569,6 +969,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       let lastUpdate = performance.now();
       const seenAlbums = new Set<string>();
       const pendingGenreUpdates = new Map<string, string>();
+      const pendingAlbumArtUpdates = new Map<string, string>();
 
       const pendingEntries: Array<{
         song: Song;
@@ -720,7 +1121,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       };
 
       const flushSongMetadataUpdates = async () => {
-        if (!pendingGenreUpdates.size) {
+        if (!pendingGenreUpdates.size && !pendingAlbumArtUpdates.size) {
           return;
         }
 
@@ -749,6 +1150,29 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
         pendingGenreUpdates.clear();
 
+        if (pendingAlbumArtUpdates.size) {
+          const updates = pendingAlbumArtUpdates;
+          pendingAlbumArtUpdates.clear();
+          const updated = nextSongs.map((song) => {
+            if (!song.album?.trim() || !song.artist?.trim()) {
+              return song;
+            }
+            const key = getAlbumArtworkCacheKey(song.artist, song.album);
+            const art = updates.get(key);
+            if (!art) {
+              return song;
+            }
+            if (song.albumArt === art) {
+              return song;
+            }
+            changed = true;
+            return { ...song, albumArt: art };
+          });
+          if (changed) {
+            nextSongs = updated;
+          }
+        }
+
         if (!changed) {
           return;
         }
@@ -756,7 +1180,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         workingSongs = nextSongs;
         const current = get();
         set({ songs: nextSongs });
-        scheduleSmartPlaylistRefresh(nextSongs, current.smartPlaylistOverrides, current.smartPlaylistSeed, 300);
+        scheduleSmartPlaylistRefresh(nextSongs, 300);
         await persistLibrary(nextSongs, current.customPlaylists);
       };
 
@@ -849,6 +1273,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
                 if (art) {
                   albumArtCount += 1;
                   noteMetadataSuccess(attemptsCache, 'album', albumKey);
+                  pendingAlbumArtUpdates.set(albumKey, art);
                 } else {
                   noteMetadataFailure(attemptsCache, 'album', albumKey);
                 }
@@ -950,6 +1375,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   startAlbumTracklistFetch: () => {
     const state = get();
     if (state.albumTrackFetch.running) {
+      return;
+    }
+    if (isMetadataActivityPaused()) {
       return;
     }
 
@@ -1259,13 +1687,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
     const seed = Date.now();
     set({ regeneratingSmartPlaylists: true });
+    if (typeof window !== 'undefined') {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    }
     try {
-      await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, {
+      const generated = await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, {
         force: true,
         seedOverride: seed,
       });
       const customPlaylists = get().customPlaylists;
-      set({ playlists: buildPlaylists(customPlaylists), smartPlaylistSeed: seed });
+      set({
+        smartPlaylists: generated,
+        playlists: buildPlaylists(generated, customPlaylists),
+        smartPlaylistSeed: seed,
+      });
     } finally {
       set({ regeneratingSmartPlaylists: false });
     }
@@ -1278,57 +1713,74 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     await ensureStorageDirs();
 
-    const [settings, cache, customPlaylists, smartOverrides, playlistUsage, cachedSmartPlaylists] = await Promise.all([
+    const [settings, cache, customPlaylists, smartOverrides, playlistUsage, cachedSmartPlaylists, cachedLitePlaylists, storedProfile, storedTaste] = await Promise.all([
       readStorageJson<{ libraryPath?: string; libraryPaths?: string[] }>('settings.json', {}),
       readStorageJson<LibraryPersisted>(libraryCachePath, { songs: [] }),
       readStorageJson<Playlist[]>(customPlaylistsPath, []),
       readStorageJson<Record<string, string[]>>(smartOverridesPath, {}),
       readStorageJson<Record<string, PlaylistUsageEntry>>(playlistUsagePath, {}),
       readStorageJson<SmartCache | null>(smartCachePath, null),
+      readStorageJson<LiteSmartCache | null>(smartLiteCachePath, null),
+      readStorageJson<ListeningProfile | null>(listeningProfilePath, null),
+      readStorageJson<TasteProfile | null>(tasteProfilePath, null),
     ]);
+    const listeningProfile = normalizeProfile(storedProfile);
+    const hydratedSongs = await hydrateSongsWithCachedAlbumArt(cache.songs);
     const libraryPaths = normalizeLibraryPaths([
       ...(settings.libraryPaths ?? []),
       ...(settings.libraryPath ? [settings.libraryPath] : []),
     ]);
     const currentWeekKey = getIsoWeekKey();
-    if (cachedSmartPlaylists?.weekKey === currentWeekKey && cachedSmartPlaylists.playlists?.length) {
+    let initialSmartPlaylists: Playlist[] = [];
+    const hasFreshSmartCache = Boolean(
+      cachedSmartPlaylists?.weekKey === currentWeekKey && cachedSmartPlaylists?.playlists?.length,
+    );
+    const hasLiteCache = Boolean(cachedLitePlaylists?.playlists?.length);
+    if (hasFreshSmartCache && cachedSmartPlaylists) {
       smartCacheWeek = cachedSmartPlaylists.weekKey;
-      smartPlaylistsCache = applySmartOverrides(cachedSmartPlaylists.playlists, smartOverrides, cache.songs);
+      initialSmartPlaylists = applySmartOverrides(cachedSmartPlaylists.playlists, smartOverrides, hydratedSongs);
+    } else if (hasLiteCache && cachedLitePlaylists) {
+      smartCacheWeek = cachedSmartPlaylists?.weekKey ?? null;
+      initialSmartPlaylists = applySmartOverrides(cachedLitePlaylists.playlists, smartOverrides, hydratedSongs);
     } else {
       smartCacheWeek = cachedSmartPlaylists?.weekKey ?? null;
-      smartPlaylistsCache = [];
+      initialSmartPlaylists = [];
     }
     const initialSeed = seedFromWeekKey(currentWeekKey);
 
     set({
       initialized: true,
-      songs: cache.songs,
+      songs: hydratedSongs,
       customPlaylists,
-      playlists: buildPlaylists(customPlaylists),
+      smartPlaylists: initialSmartPlaylists,
+      playlists: buildPlaylists(initialSmartPlaylists, customPlaylists),
       libraryPaths,
       smartPlaylistOverrides: smartOverrides,
       playlistUsage,
       smartPlaylistSeed: initialSeed,
       metadataFetch: {
         ...get().metadataFetch,
-        pending: cache.songs.length > 0,
+        pending: hydratedSongs.length > 0,
       },
       albumTrackFetch: {
         ...get().albumTrackFetch,
-        pending: cache.songs.length > 0,
+        pending: hydratedSongs.length > 0,
       },
+      listeningProfile,
+      tasteProfile: storedTaste,
     });
 
-    if (!smartPlaylistsCache.length && cache.songs.length) {
+    if ((!initialSmartPlaylists.length || (!hasFreshSmartCache && hasLiteCache)) && hydratedSongs.length) {
       scheduleBackgroundTask(() => {
         void (async () => {
-          await refreshSmartPlaylists(cache.songs, smartOverrides);
+          const generated = await refreshSmartPlaylists(hydratedSongs, smartOverrides);
           const state = useLibraryStore.getState();
           if (!state.initialized) {
             return;
           }
           useLibraryStore.setState({
-            playlists: buildPlaylists(state.customPlaylists),
+            smartPlaylists: generated,
+            playlists: buildPlaylists(generated, state.customPlaylists),
             smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
           });
         })();
@@ -1400,6 +1852,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           favorite: previous?.favorite ?? song.favorite,
           genre: previous?.genre?.trim() ? previous.genre : song.genre,
           albumArt: previous?.albumArt ?? song.albumArt,
+          skipCount: previous?.skipCount ?? song.skipCount,
+          lastSkipped: previous?.lastSkipped ?? song.lastSkipped,
+          totalPlaySeconds: previous?.totalPlaySeconds ?? song.totalPlaySeconds,
+          lastPlayDurationSec: previous?.lastPlayDurationSec ?? song.lastPlayDurationSec,
+          lastPlayStarted: previous?.lastPlayStarted ?? song.lastPlayStarted,
+          lastCompleted: previous?.lastCompleted ?? song.lastCompleted,
         });
         if (index % 200 === 0) {
           await yieldToMain();
@@ -1410,17 +1868,19 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       await yieldToMain();
       const loudnessHydrated = await hydrateSongsWithCachedLoudness(hydratedSongs);
       await yieldToMain();
+      const artHydrated = await hydrateSongsWithCachedAlbumArt(loudnessHydrated);
+      await yieldToMain();
 
       const customPlaylists = get().customPlaylists;
       const weeklySeed = seedFromWeekKey(getIsoWeekKey());
-      const playlists = buildPlaylists(customPlaylists);
+      const playlists = buildPlaylists(get().smartPlaylists, customPlaylists);
 
       if (runId !== scanRunId) {
         return;
       }
 
       set({
-        songs: loudnessHydrated,
+        songs: artHydrated,
         playlists,
         isScanning: false,
         smartPlaylistSeed: weeklySeed,
@@ -1433,7 +1893,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           pending: true,
         },
       });
-      await persistLibrary(loudnessHydrated, customPlaylists);
+      await persistLibrary(artHydrated, customPlaylists);
 
       if (runId !== scanRunId) {
         return;
@@ -1444,7 +1904,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           return;
         }
         void (async () => {
-          await refreshSmartPlaylists(loudnessHydrated, get().smartPlaylistOverrides, {
+          const generated = await refreshSmartPlaylists(artHydrated, get().smartPlaylistOverrides, {
             force: true,
             seedOverride: weeklySeed,
           });
@@ -1453,7 +1913,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           }
           const updatedCustom = get().customPlaylists;
           set({
-            playlists: buildPlaylists(updatedCustom),
+            smartPlaylists: generated,
+            playlists: buildPlaylists(generated, updatedCustom),
             smartPlaylistSeed: weeklySeed,
           });
         })();
@@ -1519,7 +1980,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     const customPlaylists = get().customPlaylists;
     set({ songs });
-    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
+    scheduleSmartPlaylistRefresh(songs, 1200);
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -1535,7 +1996,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     const customPlaylists = get().customPlaylists;
     set({ songs });
-    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
+    scheduleSmartPlaylistRefresh(songs, 1200);
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -1560,7 +2021,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     const updated = [...existing];
     updated[index] = updatedPlaylist;
-    set({ customPlaylists: updated, playlists: buildPlaylists(updated) });
+    set({
+      customPlaylists: updated,
+      playlists: buildPlaylists(get().smartPlaylists, updated),
+    });
     await persistLibrary(songs, updated);
   },
 
@@ -1583,7 +2047,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     void markSongCached(songId, 'loudness');
     const customPlaylists = get().customPlaylists;
     set({ songs });
-    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
+    scheduleSmartPlaylistRefresh(songs, 1200);
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -1611,11 +2075,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
     overrides[playlistId] = list;
 
-    smartPlaylistsCache = applySmartOverrides(smartPlaylistsCache, overrides, state.songs);
+    const updatedSmart = applySmartOverrides(state.smartPlaylists, overrides, state.songs);
     const customPlaylists = state.customPlaylists;
     set({
       smartPlaylistOverrides: overrides,
-      playlists: buildPlaylists(customPlaylists),
+      smartPlaylists: updatedSmart,
+      playlists: buildPlaylists(updatedSmart, customPlaylists),
     });
     await writeStorageJson(smartOverridesPath, overrides);
     return 'added';
@@ -1623,10 +2088,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   recordSongPlay: async (songId) => {
     const now = Math.floor(Date.now() / 1000);
+    const songSnapshot = get().getSongById(songId);
+    const nextHour = new Date(now * 1000).getHours();
+    const nextWeekday = new Date(now * 1000).getDay();
+    const profile = get().listeningProfile;
+    const artistKey = songSnapshot ? getPrimaryArtistName(songSnapshot.artist).trim().toLowerCase() : '';
+    const genreKey = songSnapshot?.genre?.trim().toLowerCase() ?? '';
+    const nextProfile: ListeningProfile = {
+      ...profile,
+      hourly: profile.hourly.map((value, index) => (index === nextHour ? value + 1 : value)),
+      weekday: profile.weekday.map((value, index) => (index === nextWeekday ? value + 1 : value)),
+      recentArtists: artistKey ? noteRecentMap(profile.recentArtists, artistKey, now) : profile.recentArtists,
+      recentGenres: genreKey ? noteRecentMap(profile.recentGenres, genreKey, now) : profile.recentGenres,
+      updatedAt: now,
+    };
     const { songs, changed } = updateSongEntry(get().songs, songId, (song) => ({
       ...song,
       playCount: song.playCount + 1,
       lastPlayed: now,
+      lastPlayStarted: now,
+      skipCount: song.skipCount ?? 0,
+      totalPlaySeconds: song.totalPlaySeconds ?? 0,
     }));
 
     if (!changed) {
@@ -1634,8 +2116,57 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     const customPlaylists = get().customPlaylists;
+    set({ songs, listeningProfile: nextProfile });
+    scheduleSmartPlaylistRefresh(songs, 1200);
+    await writeStorageJsonDebounced(listeningProfilePath, nextProfile, 1500);
+    await persistLibrary(songs, customPlaylists);
+  },
+
+  recordPlaybackEvent: async (songId, event) => {
+    const now = Math.floor(Date.now() / 1000);
+    const listened = Math.max(0, Math.floor(event.listenedSec));
+    const { songs, changed } = updateSongEntry(get().songs, songId, (song) => {
+      const duration = event.durationSec ?? song.duration;
+      const playSeconds = (song.totalPlaySeconds ?? 0) + listened;
+      const skipCount = song.skipCount ?? 0;
+      const skipThreshold = duration > 0 ? Math.min(45, duration * 0.35) : 20;
+      const wasManualSkip = Boolean(event.manualSkip);
+      const shouldSkip = wasManualSkip && listened > 0 && listened < skipThreshold;
+      const completed = event.completed ?? (duration > 0 ? listened >= duration * 0.92 : false);
+
+      return {
+        ...song,
+        totalPlaySeconds: playSeconds,
+        lastPlayDurationSec: listened || song.lastPlayDurationSec,
+        lastSkipped: shouldSkip ? now : song.lastSkipped,
+        skipCount: shouldSkip ? skipCount + 1 : skipCount,
+        lastCompleted: completed ? now : song.lastCompleted,
+      };
+    });
+
+    if (!changed) {
+      return;
+    }
+
+    const customPlaylists = get().customPlaylists;
     set({ songs });
-    scheduleSmartPlaylistRefresh(songs, get().smartPlaylistOverrides, get().smartPlaylistSeed);
+    scheduleSmartPlaylistRefresh(songs, 1200);
+    await persistLibrary(songs, customPlaylists);
+  },
+
+  recordQueueAdd: async (songId) => {
+    const now = Math.floor(Date.now() / 1000);
+    const { songs, changed } = updateSongEntry(get().songs, songId, (song) => ({
+      ...song,
+      manualQueueAdds: (song.manualQueueAdds ?? 0) + 1,
+      lastManualQueueAdd: now,
+    }));
+    if (!changed) {
+      return;
+    }
+    const customPlaylists = get().customPlaylists;
+    set({ songs });
+    scheduleSmartPlaylistRefresh(songs, 1200);
     await persistLibrary(songs, customPlaylists);
   },
 
@@ -1667,7 +2198,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     const songs = get().songs;
-    set({ customPlaylists: updated, playlists: buildPlaylists(updated) });
+    set({
+      customPlaylists: updated,
+      playlists: buildPlaylists(get().smartPlaylists, updated),
+    });
     await persistLibrary(songs, updated);
   },
 }));

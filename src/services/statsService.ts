@@ -1,5 +1,7 @@
+import { invoke } from '@tauri-apps/api/core';
 import type { Song } from '@/types/music';
 import { splitArtistNames } from '@/utils/artists';
+import { isTauri } from '@/services/storageService';
 
 interface StatsCards {
   totalListeningHours: number;
@@ -8,7 +10,7 @@ interface StatsCards {
   topAlbums: { album: string; count: number }[];
 }
 
-export const buildStats = (songs: Song[]): StatsCards => {
+const buildStatsLocal = (songs: Song[]): StatsCards => {
   const sortedByPlays = [...songs].sort((a, b) => b.playCount - a.playCount);
   const artistMap = new Map<string, number>();
   const albumMap = new Map<string, number>();
@@ -39,4 +41,42 @@ export const buildStats = (songs: Song[]): StatsCards => {
     topArtists,
     topAlbums,
   };
+};
+
+export const buildStats = async (songs: Song[]): Promise<StatsCards> => {
+  if (!isTauri()) {
+    return buildStatsLocal(songs);
+  }
+
+  try {
+    const result = await invoke<{
+      totalListeningHours: number;
+      topSongIds: string[];
+      topArtists: { artist: string; count: number }[];
+      topAlbums: { album: string; count: number }[];
+    }>('build_stats_rust', {
+      songs: songs.map((song) => ({
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        duration: song.duration,
+        playCount: song.playCount,
+      })),
+    });
+
+    const songMap = new Map(songs.map((song) => [song.id, song]));
+    const topSongs = result.topSongIds
+      .map((id) => songMap.get(id))
+      .filter((entry): entry is Song => Boolean(entry));
+
+    return {
+      totalListeningHours: result.totalListeningHours,
+      topSongs,
+      topArtists: result.topArtists,
+      topAlbums: result.topAlbums,
+    };
+  } catch {
+    return buildStatsLocal(songs);
+  }
 };

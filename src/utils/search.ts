@@ -1,4 +1,6 @@
+import { invoke } from '@tauri-apps/api/core';
 import type { Song } from '@/types/music';
+import { isTauri } from '@/services/storageService';
 
 const normalize = (value: string): string =>
   value
@@ -43,6 +45,9 @@ const getNormalizedFields = (song: Song): NormalizedSongFields => {
 
 export const warmSearchIndex = (songs: Song[], startIndex = 0, chunkSize = 400): number => {
   const end = Math.min(songs.length, startIndex + chunkSize);
+  if (isTauri()) {
+    return end;
+  }
   for (let i = startIndex; i < end; i += 1) {
     getNormalizedFields(songs[i]);
   }
@@ -116,7 +121,7 @@ const scoreSongForQuery = (song: Song, tokens: string[]): number => {
   return score;
 };
 
-export const filterAndRankSongs = (songs: Song[], query: string, limit = Number.POSITIVE_INFINITY): Song[] => {
+const filterAndRankSongsLocal = (songs: Song[], query: string, limit = Number.POSITIVE_INFINITY): Song[] => {
   const normalizedQuery = normalize(query);
   if (!normalizedQuery) {
     return songs;
@@ -159,4 +164,40 @@ export const filterAndRankSongs = (songs: Song[], query: string, limit = Number.
   matches.sort(compareMatches);
 
   return matches.map((entry) => entry.song);
+};
+
+export const filterAndRankSongs = async (
+  songs: Song[],
+  query: string,
+  limit = Number.POSITIVE_INFINITY,
+): Promise<Song[]> => {
+  if (!isTauri()) {
+    return filterAndRankSongsLocal(songs, query, limit);
+  }
+
+  const normalizedQuery = normalize(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const finiteLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : undefined;
+
+  try {
+    const ids = await invoke<string[]>('search_filter_rank_rust', {
+      songs: songs.map((song) => ({
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        genre: song.genre ?? null,
+      })),
+      query: normalizedQuery,
+      limit: finiteLimit ?? null,
+    });
+
+    const songMap = new Map(songs.map((song) => [song.id, song]));
+    return ids.map((id) => songMap.get(id)).filter((entry): entry is Song => Boolean(entry));
+  } catch {
+    return filterAndRankSongsLocal(songs, query, limit);
+  }
 };

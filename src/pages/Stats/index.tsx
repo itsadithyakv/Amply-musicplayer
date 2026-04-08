@@ -8,9 +8,10 @@ import {
 } from 'react-window';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useLibraryStore } from '@/store/libraryStore';
+import { usePlayerStore } from '@/store/playerStore';
 import { buildStats } from '@/services/statsService';
 import { formatDuration } from '@/utils/time';
-import { readCachedArtistProfile } from '@/services/artistProfileService';
+import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistProfileService';
 import { readCachedAlbumArtwork } from '@/services/albumArtworkService';
 
 type TopSongItem = {
@@ -130,7 +131,25 @@ const TopAlbumCell = memo(({ columnIndex, rowIndex, style, data }: GridChildComp
 const StatsPage = () => {
   const songs = useLibraryStore((state) => state.songs);
   const metadataFetchDone = useLibraryStore((state) => state.metadataFetch.done);
-  const stats = useMemo(() => buildStats(songs), [songs]);
+  const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
+  const [stats, setStats] = useState(() => ({
+    totalListeningHours: 0,
+    topSongs: [],
+    topArtists: [],
+    topAlbums: [],
+  }));
+
+  useEffect(() => {
+    let alive = true;
+    void buildStats(songs).then((next) => {
+      if (alive) {
+        setStats(next);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [songs]);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [albumImages, setAlbumImages] = useState<Record<string, string | undefined>>({});
   const songsByArtist = useMemo(() => {
@@ -299,7 +318,10 @@ const StatsPage = () => {
       const next: Record<string, string | undefined> = {};
       let handled = 0;
       for (const artist of stats.topArtists) {
-        const result = await readCachedArtistProfile(artist.artist);
+        let result = await readCachedArtistProfile(artist.artist);
+        if (result.status === 'missing' && !metadataFetchPaused) {
+          result = await loadArtistProfile(artist.artist);
+        }
         if (!alive) {
           return;
         }
@@ -320,7 +342,7 @@ const StatsPage = () => {
     return () => {
       alive = false;
     };
-  }, [stats.topArtists, metadataFetchDone]);
+  }, [stats.topArtists, metadataFetchDone, metadataFetchPaused]);
 
   useEffect(() => {
     let alive = true;

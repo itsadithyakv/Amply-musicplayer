@@ -35,6 +35,7 @@ const App = () => {
   const playerInitialized = usePlayerStore((state) => state.initialized);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const settings = usePlayerStore((state) => state.settings);
+  const toastMessage = usePlayerStore((state) => state.toastMessage);
   const location = useLocation();
   const navigate = useNavigate();
   const lastIdleFetchRef = useRef(0);
@@ -478,12 +479,12 @@ const App = () => {
   }
 
   return (
-    <div className="app-shell grid h-screen w-full grid-rows-[minmax(0,1fr)_84px] text-amply-textPrimary">
+    <div className="app-shell relative grid h-screen w-full grid-rows-[minmax(0,1fr)_84px] text-amply-textPrimary">
       <div className={`grid min-h-0 ${settings.gameMode ? 'grid-cols-1' : 'grid-cols-[240px_minmax(0,1fr)_320px]'}`}>
         {settings.gameMode ? null : <Sidebar />}
         <main
           ref={mainScrollRef}
-          className="min-w-0 overflow-y-auto bg-amply-bgSecondary px-6 pb-8 pt-6 xl:px-8 xl:pb-10 xl:pt-8"
+          className="min-w-0 overflow-y-auto overflow-x-hidden bg-amply-bgSecondary px-6 pb-8 pt-6 xl:px-8 xl:pb-10 xl:pt-8"
         >
           {settings.gameMode ? (
             <Routes>
@@ -516,6 +517,13 @@ const App = () => {
         {settings.gameMode ? null : <NowPlayingPanel />}
       </div>
       <PlayerBar />
+      {toastMessage ? (
+        <div className="pointer-events-none absolute bottom-24 left-1/2 z-50 -translate-x-1/2">
+          <div className="rounded-full border border-amply-border/60 bg-amply-surface/90 px-4 py-2 text-[12px] text-amply-textPrimary shadow-card">
+            {toastMessage}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

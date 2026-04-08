@@ -1,8 +1,9 @@
-import { useDeferredValue, useMemo } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import SongList from '@/components/SongList/SongList';
 import { useLibraryStore } from '@/store/libraryStore';
 import { splitArtistNames } from '@/utils/artists';
 import { filterAndRankSongs } from '@/utils/search';
+import type { Song } from '@/types/music';
 
 const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const query = useLibraryStore((state) => state.searchQuery);
@@ -10,15 +11,25 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const songs = useLibraryStore((state) => state.songs);
   const deferredQuery = useDeferredValue(query);
 
-  const filteredSongs = useMemo(() => {
+  const [filteredSongs, setFilteredSongs] = useState<Song[]>([]);
+
+  useEffect(() => {
+    let alive = true;
     const trimmed = deferredQuery.trim();
-    if (!trimmed) {
-      return [];
+    if (!trimmed || trimmed.length < 2) {
+      setFilteredSongs([]);
+      return () => {
+        alive = false;
+      };
     }
-    if (trimmed.length < 2) {
-      return [];
-    }
-    return filterAndRankSongs(songs, trimmed, 10);
+    void filterAndRankSongs(songs, trimmed, 10).then((next) => {
+      if (alive) {
+        setFilteredSongs(next);
+      }
+    });
+    return () => {
+      alive = false;
+    };
   }, [deferredQuery, songs]);
 
   const suggestions = useMemo(() => {

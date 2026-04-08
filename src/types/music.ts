@@ -17,8 +17,39 @@ export interface Song {
   playCount: number;
   lastPlayed?: number;
   favorite: boolean;
+  skipCount?: number;
+  lastSkipped?: number;
+  totalPlaySeconds?: number;
+  lastPlayDurationSec?: number;
+  lastPlayStarted?: number;
+  lastCompleted?: number;
+  manualQueueAdds?: number;
+  lastManualQueueAdd?: number;
   replayGain?: number;
   loudnessLufs?: number;
+}
+
+export interface ListeningProfile {
+  hourly: number[];
+  weekday: number[];
+  recentArtists: Record<string, { count: number; lastPlayed: number }>;
+  recentGenres: Record<string, { count: number; lastPlayed: number }>;
+  updatedAt?: number;
+}
+
+export interface TasteProfile {
+  updatedAt: number;
+  topArtists: Array<{ name: string; count: number }>;
+  topGenres: Array<{ name: string; count: number }>;
+  dayparts: {
+    morning: number;
+    afternoon: number;
+    evening: number;
+    night: number;
+  };
+  skipRate: number;
+  completionRate: number;
+  explorationRate: number;
 }
 
 export interface Playlist {
@@ -53,6 +84,12 @@ export interface AppSettings {
   lyricsVisualsEnabled: boolean;
   lyricsVisualTheme: 'ember' | 'aurora' | 'mono';
   metadataFetchPaused: boolean;
+  discoveryIntensity: number;
+  randomnessIntensity: number;
+  pauseMixRegenDuringPlayback: boolean;
+  autoPauseOnFocus: boolean;
+  autoPauseIgnoreApps: string[];
+  autoPauseIgnoreFullscreen: boolean;
 }
 
 export type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club' | 'custom';

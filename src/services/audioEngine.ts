@@ -80,6 +80,11 @@ const defaultSettings: AppSettings = {
   lyricsVisualsEnabled: true,
   lyricsVisualTheme: 'ember',
   metadataFetchPaused: false,
+  discoveryIntensity: 0.5,
+  pauseMixRegenDuringPlayback: false,
+  autoPauseOnFocus: false,
+  autoPauseIgnoreApps: [],
+  autoPauseIgnoreFullscreen: false,
 };
 
 class NativeAudioEngine {

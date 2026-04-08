@@ -4,11 +4,10 @@ import { usePlayerStore } from '@/store/playerStore';
 
 export const useArtworkReady = (): boolean => {
   const libraryInitialized = useLibraryStore((state) => state.initialized);
-  const libraryScanning = useLibraryStore((state) => state.isScanning);
   const playerInitialized = usePlayerStore((state) => state.initialized);
 
   const [readyOnce, setReadyOnce] = useState(false);
-  const readyNow = libraryInitialized && playerInitialized && !libraryScanning;
+  const readyNow = libraryInitialized && playerInitialized;
 
   useEffect(() => {
     if (readyNow && !readyOnce) {

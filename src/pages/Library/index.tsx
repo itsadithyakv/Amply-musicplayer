@@ -20,6 +20,8 @@ import {
 import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptService';
 import addIcon from '@/assets/icons/add.svg';
 import { isUnknownGenre } from '@/services/songMetadataService';
+import { pickPlaylistArtwork } from '@/services/playlistArtworkService';
+import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 
 const tabs: Array<{ label: string; value: LibraryTab }> = [
   { label: 'Songs', value: 'songs' },
@@ -57,11 +59,7 @@ const CARD_MIN_WIDTH = 190;
 const CARD_GAP = 20;
 const CARD_HEIGHT = 250;
 
-const LibraryCardShell = ({ children }: { children: React.ReactNode }) => (
-  <div className="card-sheen group overflow-hidden rounded-card border border-amply-border/60 bg-amply-surface/60 p-1 shadow-card transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:shadow-lift">
-    {children}
-  </div>
-);
+const LibraryCardShell = ({ children }: { children: React.ReactNode }) => <div>{children}</div>;
 
 const CardGridRow = <T,>({ index, style, data }: ListChildComponentProps<CardGridData<T>>) => {
   const { items, columns, renderItem, getKey } = data;
@@ -79,7 +77,7 @@ const CardGridRow = <T,>({ index, style, data }: ListChildComponentProps<CardGri
   );
 };
 
-const buildGenreGroups = (songs: Song[]): GenreGroup[] => {
+const buildGenreGroups = (songs: Song[], artworkFor: (songs: Song[]) => string | undefined): GenreGroup[] => {
   const groups = new Map<string, GenreGroup>();
 
   for (const song of songs) {
@@ -91,7 +89,7 @@ const buildGenreGroups = (songs: Song[]): GenreGroup[] => {
       groups.set(key, {
         label,
         songs: [song],
-        artwork: song.albumArt,
+        artwork: undefined,
         totalPlays: song.playCount,
       });
       continue;
@@ -104,10 +102,15 @@ const buildGenreGroups = (songs: Song[]): GenreGroup[] => {
     }
   }
 
-  return [...groups.values()].sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      artwork: group.artwork ?? artworkFor(group.songs),
+    }))
+    .sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
 };
 
-const buildArtistGroups = (songs: Song[]): ArtistGroup[] => {
+const buildArtistGroups = (songs: Song[], artworkFor: (songs: Song[]) => string | undefined): ArtistGroup[] => {
   const groups = new Map<string, ArtistGroup>();
   const seenByArtist = new Map<string, Set<string>>();
 
@@ -129,7 +132,7 @@ const buildArtistGroups = (songs: Song[]): ArtistGroup[] => {
         groups.set(key, {
           label: artistName,
           songs: [song],
-          artwork: song.albumArt,
+          artwork: undefined,
           totalPlays: song.playCount,
         });
         continue;
@@ -143,7 +146,12 @@ const buildArtistGroups = (songs: Song[]): ArtistGroup[] => {
     }
   }
 
-  return [...groups.values()].sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      artwork: group.artwork ?? artworkFor(group.songs),
+    }))
+    .sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
 };
 
 type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played' | 'most_songs';
@@ -317,6 +325,11 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const settings = usePlayerStore((state) => state.settings);
   const albumTrackFetch = useLibraryStore((state) => state.albumTrackFetch);
+  const albumArtFrequency = useAlbumArtFrequency(songs);
+  const pickArtwork = useMemo(
+    () => (groupSongs: Song[]) => pickPlaylistArtwork(groupSongs, albumArtFrequency),
+    [albumArtFrequency],
+  );
 
   const [activeTab, setActiveTab] = useState<LibraryTab>(() => {
     if (typeof window === 'undefined') {
@@ -444,8 +457,11 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
         existing.artwork = song.albumArt;
       }
     }
-    return [...map.values()];
-  }, [songs, shouldBuildAlbums]);
+    return [...map.values()].map((entry) => ({
+      ...entry,
+      artwork: entry.artwork ?? pickArtwork(entry.songs),
+    }));
+  }, [songs, shouldBuildAlbums, pickArtwork]);
 
   const albumsByKey = useMemo(() => new Map(albums.map((album) => [album.key, album])), [albums]);
 
@@ -519,8 +535,14 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     }
     return map;
   }, [albums, albumTracklists, shouldBuildAlbums]);
-  const artists = useMemo(() => (shouldBuildArtists ? buildArtistGroups(songs) : []), [songs, shouldBuildArtists]);
-  const genres = useMemo(() => (shouldBuildGenres ? buildGenreGroups(songs) : []), [songs, shouldBuildGenres]);
+  const artists = useMemo(
+    () => (shouldBuildArtists ? buildArtistGroups(songs, pickArtwork) : []),
+    [songs, shouldBuildArtists, pickArtwork],
+  );
+  const genres = useMemo(
+    () => (shouldBuildGenres ? buildGenreGroups(songs, pickArtwork) : []),
+    [songs, shouldBuildGenres, pickArtwork],
+  );
 
   const filteredArtists = useMemo(() => {
     const query = artistQuery.trim().toLowerCase();

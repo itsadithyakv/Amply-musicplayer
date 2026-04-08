@@ -7,6 +7,8 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Song } from '@/types/music';
 import { useArtworkReady } from '@/hooks/useArtworkReady';
+import { buildArtworkSet } from '@/services/playlistArtworkService';
+import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 
 const PlaylistDetailPage = () => {
   const { playlistId } = useParams();
@@ -18,6 +20,7 @@ const PlaylistDetailPage = () => {
   const setShuffleEnabled = usePlayerStore((state) => state.setShuffleEnabled);
   const navigate = useNavigate();
   const artworkReady = useArtworkReady();
+  const albumArtFrequency = useAlbumArtFrequency(songs);
 
   const playlist = useMemo(
     () => playlists.find((entry) => entry.id === playlistId),
@@ -29,23 +32,14 @@ const PlaylistDetailPage = () => {
     [playlist, songsById],
   );
   const artworkSet = useMemo(() => {
-    const artSet = new Set<string>();
-    for (const song of playlistSongs) {
-      if (song?.albumArt) {
-        artSet.add(song.albumArt);
-      }
-      if (artSet.size >= 4) {
-        break;
-      }
-    }
-    const list = [...artSet];
+    const list = buildArtworkSet(playlistSongs, albumArtFrequency, 4, playlist?.artwork);
     if (list.length) {
       while (list.length < 4) {
         list.push(list[list.length - 1]);
       }
     }
     return list;
-  }, [playlistSongs]);
+  }, [playlistSongs, albumArtFrequency, playlist?.artwork]);
   const collageBackground = useMemo(() => {
     if (!artworkReady || !artworkSet.length) {
       return undefined;
@@ -88,7 +82,7 @@ const PlaylistDetailPage = () => {
     if (!first) {
       return;
     }
-    setQueue(playlistIds, first.id);
+    setQueue(playlistIds, first.id, { playlistId: playlist.id });
     setShuffleEnabled(false);
     void playSongById(first.id, false);
     void recordPlaylistUse(playlist.id);
@@ -138,7 +132,7 @@ const PlaylistDetailPage = () => {
                   const swap = Math.floor(Math.random() * (i + 1));
                   [shuffled[i], shuffled[swap]] = [shuffled[swap], shuffled[i]];
                 }
-                setQueue(shuffled, shuffled[0]);
+                setQueue(shuffled, shuffled[0], { playlistId: playlist.id });
                 setShuffleEnabled(true);
                 void playSongById(shuffled[0], false);
                 void recordPlaylistUse(playlist.id);

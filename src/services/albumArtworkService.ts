@@ -1,7 +1,7 @@
-import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { invoke } from '@tauri-apps/api/core';
+import { waitForMetadataIdle } from '@/services/metadataActivityGate';
 import { markAlbumCached } from '@/services/metadataCacheIndex';
-
-const cachePath = 'metadata_cache/album_art_cache.json';
+import { isTauri } from '@/services/storageService';
 
 const slugify = (value: string): string => {
   return value
@@ -9,10 +9,6 @@ const slugify = (value: string): string => {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-};
-
-const normalizeArtworkUrl = (url: string): string => {
-  return url.replace(/100x100bb/g, '300x300bb');
 };
 
 const cacheKey = (artist: string, album: string): string => {
@@ -24,94 +20,43 @@ export type AlbumArtworkCache = Record<string, string>;
 export const getAlbumArtworkCacheKey = (artist: string, album: string): string => cacheKey(artist, album);
 
 export const loadAlbumArtworkCache = async (): Promise<AlbumArtworkCache> => {
-  return readStorageJson<AlbumArtworkCache>(cachePath, {});
+  if (!isTauri()) {
+    return {};
+  }
+  return invoke<AlbumArtworkCache>('load_album_artwork_cache_rust');
 };
 
 export const readCachedAlbumArtwork = async (artist: string, album: string): Promise<string | null> => {
+  if (!isTauri()) {
+    return null;
+  }
   if (!artist?.trim() || !album?.trim()) {
     return null;
   }
-  const cache = await readStorageJson<AlbumArtworkCache>(cachePath, {});
-  const key = cacheKey(artist, album);
-  const cached = cache[key] ?? null;
+  const cached = await invoke<string | null>('read_cached_album_artwork_rust', { artist, album });
   if (cached) {
-    void markAlbumCached(key);
+    void markAlbumCached(cacheKey(artist, album));
   }
   return cached;
 };
 
-const compressImageToDataUrl = async (url: string): Promise<string | null> => {
-  try {
-    const response = await fetch(url, { mode: 'cors' });
-    if (!response.ok) {
-      return null;
-    }
-    const blob = await response.blob();
-    const bitmap = await createImageBitmap(blob);
-    const maxSize = 220;
-    const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
-    const targetW = Math.max(1, Math.round(bitmap.width * scale));
-    const targetH = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return null;
-    }
-    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
-    return canvas.toDataURL('image/jpeg', 0.78);
-  } catch {
-    return null;
-  }
-};
-
-const fetchAlbumArtwork = async (artist: string, album: string): Promise<string | null> => {
-  const term = encodeURIComponent(`${artist} ${album}`.trim());
-  const endpoint = `https://itunes.apple.com/search?term=${term}&entity=album&limit=1`;
-  const response = await fetch(endpoint);
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = (await response.json()) as {
-    results?: Array<{ artworkUrl100?: string }>;
-  };
-
-  const artwork = payload.results?.[0]?.artworkUrl100;
-  return artwork ? normalizeArtworkUrl(artwork) : null;
-};
-
 export const loadAlbumArtwork = async (artist: string, album: string): Promise<string | null> => {
+  if (!isTauri()) {
+    return null;
+  }
   if (!artist?.trim() || !album?.trim()) {
     return null;
   }
 
-  const cache = await readStorageJson<AlbumArtworkCache>(cachePath, {});
-  const key = cacheKey(artist, album);
-  const cached = cache[key];
-  if (cached) {
-    void markAlbumCached(key);
-    return cached;
-  }
-
   try {
-    const fetched = await fetchAlbumArtwork(artist, album);
-    if (!fetched) {
-      return null;
-    }
-
-    const compressed = await compressImageToDataUrl(fetched);
-    const stored = compressed ?? fetched;
-
-    await writeStorageJsonDebounced(cachePath, {
-      ...cache,
-      [key]: stored,
-    });
-    void markAlbumCached(key);
-
-    return stored;
+    await waitForMetadataIdle();
   } catch {
-    return null;
+    // Ignore idle wait errors
   }
+
+  const art = await invoke<string | null>('load_album_artwork_rust', { artist, album });
+  if (art) {
+    void markAlbumCached(cacheKey(artist, album));
+  }
+  return art;
 };

@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
+
+const loadedSrcs = new Set<string>();
 
 interface OptimizedImageProps {
   src?: string;
@@ -10,6 +12,7 @@ interface OptimizedImageProps {
   loading?: 'lazy' | 'eager';
   decoding?: 'async' | 'sync' | 'auto';
   onLoad?: () => void;
+  pulse?: boolean;
 }
 
 /**
@@ -28,23 +31,84 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
   loading = 'lazy',
   decoding = 'async',
   onLoad,
+  pulse = true,
 }) => {
+  const normalizedSrc = typeof src === 'string' && src.trim().length > 0 ? src : undefined;
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const notifiedRef = useRef(false);
 
   useEffect(() => {
     // Reset state when src changes
-    if (src) {
+    if (!normalizedSrc) {
       setIsLoaded(false);
       setError(false);
-    } else {
-      setIsLoaded(false);
-      setError(false);
+      notifiedRef.current = false;
+      return;
     }
-  }, [src]);
+    if (loadedSrcs.has(normalizedSrc)) {
+      setIsLoaded(true);
+      setError(false);
+      if (!notifiedRef.current) {
+        notifiedRef.current = true;
+        onLoad?.();
+      }
+      return;
+    }
+    setIsLoaded(false);
+    setError(false);
+    notifiedRef.current = false;
+  }, [normalizedSrc, onLoad]);
+
+  useEffect(() => {
+    if (!normalizedSrc) {
+      return;
+    }
+    let cancelled = false;
+    const handle = window.requestAnimationFrame(() => {
+      const img = imgRef.current;
+      if (img && img.complete && img.naturalWidth > 0) {
+        loadedSrcs.add(normalizedSrc);
+        if (!cancelled) {
+          setIsLoaded(true);
+          if (!notifiedRef.current) {
+            notifiedRef.current = true;
+            onLoad?.();
+          }
+        }
+      }
+    });
+
+    const decodeIfPossible = async () => {
+      const img = imgRef.current;
+      if (!img || typeof img.decode !== 'function') {
+        return;
+      }
+      try {
+        await img.decode();
+        loadedSrcs.add(normalizedSrc);
+        if (!cancelled) {
+          setIsLoaded(true);
+          if (!notifiedRef.current) {
+            notifiedRef.current = true;
+            onLoad?.();
+          }
+        }
+      } catch {
+        // ignore decode errors, onLoad/onError will handle
+      }
+    };
+
+    void decodeIfPossible();
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(handle);
+    };
+  }, [normalizedSrc, onLoad]);
 
   // If no src and placeholder content provided, show it
-  if (!src && placeholderContent) {
+  if (!normalizedSrc && placeholderContent) {
     return (
       <div
         className={clsx(
@@ -59,7 +123,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
     );
   }
 
-  if (!src && error) {
+  if ((!normalizedSrc || error) && !placeholderContent) {
     return (
       <div
         className={clsx(
@@ -85,7 +149,8 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
       {!isLoaded && !error && (
         <div
           className={clsx(
-            'absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-900 to-zinc-950 animate-pulse',
+            'absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-900 to-zinc-950',
+            pulse && 'animate-pulse',
             placeholderClassName,
           )}
           aria-hidden="true"
@@ -93,9 +158,10 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
       )}
 
       {/* Actual image */}
-      {src && (
+      {normalizedSrc && !error && (
         <img
-          src={src}
+          ref={imgRef}
+          src={normalizedSrc}
           alt={alt}
           loading={loading}
           decoding={decoding}
@@ -104,8 +170,14 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
             'opacity-100 transition-opacity': isLoaded,
           })}
           onLoad={() => {
+            if (normalizedSrc) {
+              loadedSrcs.add(normalizedSrc);
+            }
             setIsLoaded(true);
-            onLoad?.();
+            if (!notifiedRef.current) {
+              notifiedRef.current = true;
+              onLoad?.();
+            }
           }}
           onError={() => {
             setError(true);
