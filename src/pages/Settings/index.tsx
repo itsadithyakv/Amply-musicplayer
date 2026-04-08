@@ -697,7 +697,7 @@ const SettingsPage = () => {
           <div className="rounded-lg border border-amply-border/60 bg-amply-surface px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
               <span>Randomness</span>
-              <span>{randomnessPercent}% â€¢ {randomnessLabel}</span>
+              <span>{randomnessPercent}% • {randomnessLabel}</span>
             </div>
             <p className="mt-2 text-[11px] text-amply-textMuted">
               Higher values reduce repeats and bias toward less-played songs.

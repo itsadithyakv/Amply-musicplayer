@@ -5,7 +5,7 @@ use std::{
     fs,
     io::{Cursor, Read, Seek, Write},
     path::{Component, Path, PathBuf},
-    sync::mpsc,
+    sync::{mpsc, OnceLock},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -38,6 +38,7 @@ use windows::{
             AudioSessionStateActive, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
             MMDeviceEnumerator, eMultimedia, eRender,
         },
+        Foundation::{LPARAM, LRESULT, WPARAM},
         System::{
             Com::{CoCreateInstance, CoInitializeEx, COINIT_MULTITHREADED, CLSCTX_ALL},
             Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32},
@@ -50,9 +51,10 @@ use windows::{
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
-        RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT, VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP,
+        CallNextHookEx, KBDLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION,
+        VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP, WH_KEYBOARD_LL,
     },
-    WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY},
+    WindowsAndMessaging::{GetMessageW, HHOOK, MSG, WM_KEYDOWN, WM_SYSKEYDOWN},
 };
 
 
@@ -1692,49 +1694,48 @@ fn generate_smart_playlists_rust(
 
 #[cfg(target_os = "windows")]
 fn start_windows_media_key_listener(app: tauri::AppHandle) {
-    thread::spawn(move || unsafe {
-        let hotkeys = [
-            (1, VK_MEDIA_PLAY_PAUSE.0 as u32, "playpause"),
-            (2, VK_MEDIA_NEXT_TRACK.0 as u32, "next"),
-            (3, VK_MEDIA_PREV_TRACK.0 as u32, "previous"),
-            (4, VK_MEDIA_STOP.0 as u32, "stop"),
-        ];
+    static MEDIA_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-        for (id, vk, _) in hotkeys {
-            if RegisterHotKey(None, id, MOD_NOREPEAT, vk).is_err() {
-                eprintln!("Failed to register media key hotkey id={id}");
-            }
-        }
-
-        let mut msg = MSG::default();
-        loop {
-            let result = GetMessageW(&mut msg, None, 0, 0);
-            if result.0 == 0 {
-                break;
-            }
-            if msg.message == WM_HOTKEY {
-                let id = msg.wParam.0 as i32;
-                let action = match id {
-                    1 => Some("playpause"),
-                    2 => Some("next"),
-                    3 => Some("previous"),
-                    4 => Some("stop"),
+    unsafe extern "system" fn hook_proc(code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+        if code == HC_ACTION {
+            let message = w_param.0 as u32;
+            if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
+                let info = *(l_param.0 as *const KBDLLHOOKSTRUCT);
+                let action = match info.vkCode {
+                    VK_MEDIA_PLAY_PAUSE => Some("playpause"),
+                    VK_MEDIA_NEXT_TRACK => Some("next"),
+                    VK_MEDIA_PREV_TRACK => Some("previous"),
+                    VK_MEDIA_STOP => Some("stop"),
                     _ => None,
                 };
                 if let Some(action) = action {
-                    let _ = app.emit(
-                        "amply://media-key",
-                        MediaKeyEvent {
-                            action: action.to_string(),
-                        },
-                    );
+                    if let Some(app) = MEDIA_APP.get() {
+                        let _ = app.emit(
+                            "amply://media-key",
+                            MediaKeyEvent {
+                                action: action.to_string(),
+                            },
+                        );
+                    }
                 }
             }
         }
 
-        for (id, _, _) in hotkeys {
-            let _ = UnregisterHotKey(None, id);
+        CallNextHookEx(HHOOK(0), code, w_param, l_param)
+    }
+
+    thread::spawn(move || unsafe {
+        let _ = MEDIA_APP.set(app);
+        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0);
+        if hook.is_invalid() {
+            eprintln!("Failed to install media key hook");
+            return;
         }
+
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).0 != 0 {}
+
+        let _ = UnhookWindowsHookEx(hook);
     });
 }
 

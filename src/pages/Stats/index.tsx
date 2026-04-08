@@ -9,7 +9,7 @@ import {
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
-import { buildStats } from '@/services/statsService';
+import { buildStats, type StatsCards } from '@/services/statsService';
 import { formatDuration } from '@/utils/time';
 import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistProfileService';
 import { readCachedAlbumArtwork } from '@/services/albumArtworkService';
@@ -132,7 +132,7 @@ const StatsPage = () => {
   const songs = useLibraryStore((state) => state.songs);
   const metadataFetchDone = useLibraryStore((state) => state.metadataFetch.done);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
-  const [stats, setStats] = useState(() => ({
+  const [stats, setStats] = useState<StatsCards>(() => ({
     totalListeningHours: 0,
     topSongs: [],
     topArtists: [],

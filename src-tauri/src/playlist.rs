@@ -452,6 +452,8 @@ pub fn generate_playlists(
     if songs.is_empty() {
         return Vec::new();
     }
+    let discovery = if discovery.is_finite() { discovery } else { 0.5 }.clamp(0.0, 1.0);
+    let randomness = if randomness.is_finite() { randomness } else { 0.3 }.clamp(0.0, 1.0);
     let now = now_unix();
     let max_per_album = (4.0 - randomness * 2.0).round().max(2.0) as usize;
 
@@ -483,7 +485,7 @@ pub fn generate_playlists(
         let mut list: Vec<SongInput> = songs.iter().cloned().filter(|s| s.last_played.is_some()).collect();
         list.sort_by(|a, b| b.last_played.unwrap_or(0).cmp(&a.last_played.unwrap_or(0)));
         list.truncate(120.min(list.len()));
-        list
+        cap_by_album(list, max_per_album)
     };
 
     let daily_mix = curate_from_pool(daily_seed, "daily-mix", 60, &songs, now, &profile, discovery, randomness, "avoid", 3.0, false, 30.0);

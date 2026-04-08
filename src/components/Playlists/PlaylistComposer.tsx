@@ -40,7 +40,7 @@ const PlaylistSongRow = memo(({ index, style, data }: ListChildComponentProps<Pl
       <div className="min-w-0">
         <p className="truncate text-[13px] text-amply-textPrimary">{song.title}</p>
         <p className="truncate text-[11px] text-amply-textMuted">
-          {song.artist} â€¢ {song.album}
+          {song.artist} • {song.album}
         </p>
       </div>
       <button

@@ -171,7 +171,7 @@ const RightControls = memo(() => {
   );
 });
 
-const SongInfoSection = memo(({ actionBusyRef }: { actionBusyRef: React.MutableRefObject<boolean> }) => {
+const SongInfoSection = memo(() => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const song = useLibraryStore((state) => (currentSongId ? state.getSongById(currentSongId) : undefined));
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
@@ -410,27 +410,31 @@ const SongInfoSection = memo(({ actionBusyRef }: { actionBusyRef: React.MutableR
 const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: React.MutableRefObject<boolean> }) => {
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
-  const positionSec = usePlayerStore((state) => state.positionSec);
-  const durationSec = usePlayerStore((state) => state.durationSec);
   const volume = usePlayerStore((state) => state.volume);
   const pausePlayback = usePlayerStore((state) => state.pausePlayback);
   const resumePlayback = usePlayerStore((state) => state.resumePlayback);
   const playNext = usePlayerStore((state) => state.playNext);
   const playPrevious = usePlayerStore((state) => state.playPrevious);
-  const seekTo = usePlayerStore((state) => state.seekTo);
   const setVolume = usePlayerStore((state) => state.setVolume);
   const song = useLibraryStore((state) => (currentSongId ? state.getSongById(currentSongId) : undefined));
-  const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
 
   return (
     <footer className="relative z-50 h-[84px] border-t border-amply-border/60 bg-amply-surface px-5 py-2 shadow-[0_-12px_30px_rgba(0,0,0,0.5)]">
-      <div className="grid h-full grid-cols-[minmax(0,1.5fr)_auto_minmax(0,1fr)] items-center gap-4">
-        <div className="min-w-0">
-          <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? 'Select a playlist'}</p>
-          <p className="truncate text-[12px] text-amply-textSecondary">{song ? song.artist : 'Lean playback mode'}</p>
-        </div>
+      <div className="grid h-full grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4">
+        <Link to="/now-playing" className="flex min-w-0 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-amply-hover">
+          <ArtworkImage
+            src={song?.albumArt}
+            alt={song?.album ?? 'Unknown Album'}
+            className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800"
+          />
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? 'Select a playlist'}</p>
+            <p className="truncate text-[12px] text-amply-textSecondary">{song ? song.artist : 'Lean playback mode'}</p>
+          </div>
+        </Link>
 
-        <div className="flex items-center justify-center gap-2">
+        <div className="space-y-1">
+          <div className="flex items-center justify-center gap-2">
           <button
             type="button"
             onClick={() => {
@@ -475,36 +479,20 @@ const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: React.MutableRefOb
             <img src={nextIcon} alt="Next" className={darkSurfaceIconClass} />
           </button>
         </div>
+          <ProgressSection />
+        </div>
 
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[11px] text-amply-textMuted">
-            <span className="w-9 text-right">{formatDuration(positionSec)}</span>
-            <div className="relative h-1 flex-1 rounded-full bg-[#3a3a3a]">
-              <div className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent" style={{ width: `${progressPercent}%` }} />
-              <input
-                type="range"
-                min={0}
-                max={durationSec || 1}
-                step={0.1}
-                value={positionSec}
-                onChange={(event) => seekTo(Number(event.target.value))}
-                className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
-              />
-            </div>
-            <span className="w-9">{formatDuration(durationSec)}</span>
-          </div>
-          <div className="flex items-center justify-end gap-2 text-[12px] text-amply-textSecondary">
-            <span>Vol</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={volume}
-              onChange={(event) => setVolume(Number(event.target.value))}
-              className="h-1 w-24 cursor-pointer accent-amply-accent"
-            />
-          </div>
+        <div className="flex items-center justify-end gap-2 text-[12px] text-amply-textSecondary">
+          <span>Vol</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(event) => setVolume(Number(event.target.value))}
+            className="h-1 w-24 cursor-pointer accent-amply-accent"
+          />
         </div>
       </div>
     </footer>
@@ -522,7 +510,7 @@ const PlayerBar = () => {
   return (
     <footer className="relative z-50 h-[84px] border-t border-amply-border/60 bg-amply-surface px-5 py-2 shadow-[0_-12px_30px_rgba(0,0,0,0.5)]">
       <div className="grid h-full grid-cols-[1.6fr_2fr_1.2fr] items-center gap-4">
-        <SongInfoSection actionBusyRef={actionBusyRef} />
+        <SongInfoSection />
 
         <div className="space-y-1">
           <TransportControls actionBusyRef={actionBusyRef} />

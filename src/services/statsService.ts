@@ -3,7 +3,7 @@ import type { Song } from '@/types/music';
 import { splitArtistNames } from '@/utils/artists';
 import { isTauri } from '@/services/storageService';
 
-interface StatsCards {
+export interface StatsCards {
   totalListeningHours: number;
   topSongs: Song[];
   topArtists: { artist: string; count: number }[];

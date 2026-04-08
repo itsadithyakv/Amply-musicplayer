@@ -510,18 +510,6 @@ const refreshSmartPlaylists = async (
   const resolvedSeed = seedOverride ?? (force ? Date.now() : undefined);
   const dailySeed = seedFromDayKey(dayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
-  const dailyCached = force ? null : await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
-  const dailyMatchesSettings =
-    dailyCached &&
-    (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
-    (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
-  const dailyMixOverride =
-    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
-      ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
-      : null;
-  const resolvedDailyOverride =
-    dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
-  const albumTracklistCache = await getCachedAlbumTracklistCache();
   const discoveryFromGlobal =
     typeof window !== 'undefined'
       ? (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__
@@ -541,6 +529,18 @@ const refreshSmartPlaylists = async (
       randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
     }
   }
+  const dailyCached = force ? null : await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const dailyMatchesSettings =
+    dailyCached &&
+    (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
+    (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
+  const dailyMixOverride =
+    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
+      ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
+      : null;
+  const resolvedDailyOverride =
+    dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
+  const albumTracklistCache = await getCachedAlbumTracklistCache();
   const listeningProfile = useLibraryStore.getState().listeningProfile;
   const seedForPost = resolvedSeed ?? seedFromWeekKey(weekKey);
   const rustGenerated = await generateSmartPlaylistsRust(songs, {
@@ -624,17 +624,6 @@ const refreshSmartPlaylistsLite = async (
   const resolvedSeed = seedOverride ?? Date.now();
   const dailySeed = dailySeedOverride ?? seedFromDayKey(dayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
-  const dailyCached = await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
-  const dailyMatchesSettings =
-    dailyCached &&
-    (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
-    (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
-  const dailyMixOverride =
-    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
-      ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
-      : null;
-  const resolvedDailyOverride =
-    dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
   const listeningProfile = useLibraryStore.getState().listeningProfile;
   const discoveryFromGlobal =
     typeof window !== 'undefined'
@@ -655,6 +644,17 @@ const refreshSmartPlaylistsLite = async (
       randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
     }
   }
+  const dailyCached = await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const dailyMatchesSettings =
+    dailyCached &&
+    (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
+    (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
+  const dailyMixOverride =
+    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
+      ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
+      : null;
+  const resolvedDailyOverride =
+    dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
 
   const carryMixes = useLibraryStore
     .getState()

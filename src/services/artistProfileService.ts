@@ -60,7 +60,10 @@ export const readCachedArtistProfile = async (artistNameRaw: string): Promise<Ar
     };
   }
 
-  return { status: result.status, cachePath: result.cachePath };
+  if (result.status === 'no-internet') {
+    return { status: 'no-internet', cachePath: result.cachePath };
+  }
+  return { status: 'missing', cachePath: result.cachePath };
 };
 
 export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistProfileLoadResult> => {
@@ -91,5 +94,8 @@ export const loadArtistProfile = async (artistNameRaw: string): Promise<ArtistPr
     };
   }
 
-  return { status: result.status, cachePath: result.cachePath };
+  if (result.status === 'no-internet') {
+    return { status: 'no-internet', cachePath: result.cachePath };
+  }
+  return { status: 'missing', cachePath: result.cachePath };
 };

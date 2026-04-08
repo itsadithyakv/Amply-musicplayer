@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ComponentType } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
@@ -313,6 +313,8 @@ const genreSortOptions: Array<{ label: string; value: GenreSort }> = [
 
 const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const songs = useLibraryStore((state) => state.songs);
+  const deferredSongs = useDeferredValue(songs);
+  const [isTabPending, startTabTransition] = useTransition();
   const isScanning = useLibraryStore((state) => state.isScanning);
   const scanError = useLibraryStore((state) => state.scanError);
   const libraryPaths = useLibraryStore((state) => state.libraryPaths);
@@ -325,7 +327,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const settings = usePlayerStore((state) => state.settings);
   const albumTrackFetch = useLibraryStore((state) => state.albumTrackFetch);
-  const albumArtFrequency = useAlbumArtFrequency(songs);
+  const albumArtFrequency = useAlbumArtFrequency(deferredSongs);
   const pickArtwork = useMemo(
     () => (groupSongs: Song[]) => pickPlaylistArtwork(groupSongs, albumArtFrequency),
     [albumArtFrequency],
@@ -430,7 +432,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       return [];
     }
     const map = new Map<string, AlbumEntry>();
-    for (const song of songs) {
+    for (const song of deferredSongs) {
       const albumName = song.album?.trim() ?? '';
       const normalizedAlbum = albumName.toLowerCase();
       const isUnknownAlbum = !albumName || normalizedAlbum === 'unknown album' || normalizedAlbum === 'unknown';
@@ -461,7 +463,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       ...entry,
       artwork: entry.artwork ?? pickArtwork(entry.songs),
     }));
-  }, [songs, shouldBuildAlbums, pickArtwork]);
+  }, [deferredSongs, shouldBuildAlbums, pickArtwork]);
 
   const albumsByKey = useMemo(() => new Map(albums.map((album) => [album.key, album])), [albums]);
 
@@ -536,12 +538,12 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     return map;
   }, [albums, albumTracklists, shouldBuildAlbums]);
   const artists = useMemo(
-    () => (shouldBuildArtists ? buildArtistGroups(songs, pickArtwork) : []),
-    [songs, shouldBuildArtists, pickArtwork],
+    () => (shouldBuildArtists ? buildArtistGroups(deferredSongs, pickArtwork) : []),
+    [deferredSongs, shouldBuildArtists, pickArtwork],
   );
   const genres = useMemo(
-    () => (shouldBuildGenres ? buildGenreGroups(songs, pickArtwork) : []),
-    [songs, shouldBuildGenres, pickArtwork],
+    () => (shouldBuildGenres ? buildGenreGroups(deferredSongs, pickArtwork) : []),
+    [deferredSongs, shouldBuildGenres, pickArtwork],
   );
 
   const filteredArtists = useMemo(() => {
@@ -591,13 +593,16 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
         <p className="text-[13px] text-amply-textSecondary">{songs.length.toLocaleString()} songs indexed</p>
       </header>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amply-border/60 bg-amply-surface p-2">
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amply-border/60 bg-amply-surface p-2"
+        aria-busy={isTabPending}
+      >
         <div className="flex flex-wrap gap-2">
           {tabs.map((tab) => (
             <button
               key={tab.value}
               type="button"
-              onClick={() => setActiveTab(tab.value)}
+              onClick={() => startTabTransition(() => setActiveTab(tab.value))}
               className={`rounded-lg px-4 py-2 text-[13px] transition-colors ${
                 activeTab === tab.value
                   ? 'bg-amply-hover text-amply-textPrimary'

@@ -81,6 +81,7 @@ const defaultSettings: AppSettings = {
   lyricsVisualTheme: 'ember',
   metadataFetchPaused: false,
   discoveryIntensity: 0.5,
+  randomnessIntensity: 0.5,
   pauseMixRegenDuringPlayback: false,
   autoPauseOnFocus: false,
   autoPauseIgnoreApps: [],

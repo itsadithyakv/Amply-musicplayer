@@ -114,7 +114,10 @@ export const loadSongGenre = async (song: Song): Promise<SongGenreLoadResult> =>
     };
   }
 
-  return { status: result.status, cachePath: result.cachePath };
+  if (result.status === 'no-internet') {
+    return { status: 'no-internet', cachePath: result.cachePath };
+  }
+  return { status: 'missing', cachePath: result.cachePath };
 };
 
 export { cachePath };
