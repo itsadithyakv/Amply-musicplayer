@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, ListeningProfile, Playlist, Song, TasteProfile } from '@/types/music';
+import type { AppSettings, ListeningActivity, ListeningProfile, Playlist, Song, TasteProfile } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
 import { generateSmartPlaylists, generateSmartPlaylistsLite, isHeavyMixPlaylistId, postProcessGeneratedPlaylists } from '@/services/playlistGenerator';
@@ -82,6 +82,7 @@ interface LibraryState {
     message: string | null;
   };
   listeningProfile: ListeningProfile;
+  listeningActivity: ListeningActivity;
   tasteProfile: TasteProfile | null;
   startMetadataFetch: (options?: { allowWhenActive?: boolean }) => void;
   startAlbumTracklistFetch: () => void;
@@ -128,6 +129,7 @@ const smartLiteCachePath = 'playlists/smart_cache_lite.json';
 const dailyMixCachePath = 'playlists/daily_mix_cache.json';
 const playlistUsagePath = 'playlists/playlist_usage.json';
 const listeningProfilePath = 'playlists/listening_profile.json';
+const listeningActivityPath = 'playlists/listening_activity.json';
 const tasteProfilePath = 'playlists/taste_profile.json';
 
 type SmartCache = {
@@ -171,6 +173,12 @@ const createDefaultListeningProfile = (): ListeningProfile => ({
   weekday: Array.from({ length: 7 }, () => 0),
   recentArtists: {},
   recentGenres: {},
+  updatedAt: undefined,
+});
+
+const createDefaultListeningActivity = (): ListeningActivity => ({
+  dailySeconds: {},
+  updatedAt: undefined,
 });
 
 const hydrateSongsWithCachedAlbumArt = async (songs: Song[]): Promise<Song[]> => {
@@ -208,6 +216,17 @@ const normalizeProfile = (profile: ListeningProfile | null): ListeningProfile =>
     recentArtists: profile.recentArtists ?? {},
     recentGenres: profile.recentGenres ?? {},
     updatedAt: profile.updatedAt,
+  };
+};
+
+const normalizeActivity = (activity: ListeningActivity | null): ListeningActivity => {
+  const base = createDefaultListeningActivity();
+  if (!activity) {
+    return base;
+  }
+  return {
+    dailySeconds: activity.dailySeconds ?? base.dailySeconds,
+    updatedAt: activity.updatedAt,
   };
 };
 
@@ -864,6 +883,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         message: null,
       },
       listeningProfile: createDefaultListeningProfile(),
+      listeningActivity: createDefaultListeningActivity(),
       tasteProfile: null,
 
   startMetadataFetch: (options) => {
@@ -1713,7 +1733,18 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     await ensureStorageDirs();
 
-    const [settings, cache, customPlaylists, smartOverrides, playlistUsage, cachedSmartPlaylists, cachedLitePlaylists, storedProfile, storedTaste] = await Promise.all([
+    const [
+      settings,
+      cache,
+      customPlaylists,
+      smartOverrides,
+      playlistUsage,
+      cachedSmartPlaylists,
+      cachedLitePlaylists,
+      storedProfile,
+      storedTaste,
+      storedActivity,
+    ] = await Promise.all([
       readStorageJson<{ libraryPath?: string; libraryPaths?: string[] }>('settings.json', {}),
       readStorageJson<LibraryPersisted>(libraryCachePath, { songs: [] }),
       readStorageJson<Playlist[]>(customPlaylistsPath, []),
@@ -1723,8 +1754,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       readStorageJson<LiteSmartCache | null>(smartLiteCachePath, null),
       readStorageJson<ListeningProfile | null>(listeningProfilePath, null),
       readStorageJson<TasteProfile | null>(tasteProfilePath, null),
+      readStorageJson<ListeningActivity | null>(listeningActivityPath, null),
     ]);
     const listeningProfile = normalizeProfile(storedProfile);
+    const listeningActivity = normalizeActivity(storedActivity);
     const hydratedSongs = await hydrateSongsWithCachedAlbumArt(cache.songs);
     const libraryPaths = normalizeLibraryPaths([
       ...(settings.libraryPaths ?? []),
@@ -1767,6 +1800,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         pending: hydratedSongs.length > 0,
       },
       listeningProfile,
+      listeningActivity,
       tasteProfile: storedTaste,
     });
 
@@ -1978,8 +2012,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       return;
     }
 
-    const customPlaylists = get().customPlaylists;
     set({ songs });
+    const customPlaylists = get().customPlaylists;
     scheduleSmartPlaylistRefresh(songs, 1200);
     await persistLibrary(songs, customPlaylists);
   },

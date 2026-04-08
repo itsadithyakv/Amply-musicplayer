@@ -50,11 +50,11 @@ use windows::{
 
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::{
-    Input::KeyboardAndMouse::{
-        CallNextHookEx, KBDLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION,
-        VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP, WH_KEYBOARD_LL,
+    Input::KeyboardAndMouse::{VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP},
+    WindowsAndMessaging::{
+        CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx, GetMessageW, MSG, WH_KEYBOARD_LL,
+        WM_KEYDOWN, WM_SYSKEYDOWN, HC_ACTION,
     },
-    WindowsAndMessaging::{GetMessageW, HHOOK, MSG, WM_KEYDOWN, WM_SYSKEYDOWN},
 };
 
 
@@ -1697,15 +1697,15 @@ fn start_windows_media_key_listener(app: tauri::AppHandle) {
     static MEDIA_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
     unsafe extern "system" fn hook_proc(code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-        if code == HC_ACTION {
+        if code == HC_ACTION as i32 {
             let message = w_param.0 as u32;
             if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
                 let info = *(l_param.0 as *const KBDLLHOOKSTRUCT);
                 let action = match info.vkCode {
-                    VK_MEDIA_PLAY_PAUSE => Some("playpause"),
-                    VK_MEDIA_NEXT_TRACK => Some("next"),
-                    VK_MEDIA_PREV_TRACK => Some("previous"),
-                    VK_MEDIA_STOP => Some("stop"),
+                    vk if vk == VK_MEDIA_PLAY_PAUSE.0 as u32 => Some("playpause"),
+                    vk if vk == VK_MEDIA_NEXT_TRACK.0 as u32 => Some("next"),
+                    vk if vk == VK_MEDIA_PREV_TRACK.0 as u32 => Some("previous"),
+                    vk if vk == VK_MEDIA_STOP.0 as u32 => Some("stop"),
                     _ => None,
                 };
                 if let Some(action) = action {
@@ -1721,12 +1721,18 @@ fn start_windows_media_key_listener(app: tauri::AppHandle) {
             }
         }
 
-        CallNextHookEx(HHOOK(0), code, w_param, l_param)
+        CallNextHookEx(HHOOK(std::ptr::null_mut()), code, w_param, l_param)
     }
 
     thread::spawn(move || unsafe {
         let _ = MEDIA_APP.set(app);
-        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0);
+        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) {
+            Ok(hook) => hook,
+            Err(_) => {
+                eprintln!("Failed to install media key hook");
+                return;
+            }
+        };
         if hook.is_invalid() {
             eprintln!("Failed to install media key hook");
             return;

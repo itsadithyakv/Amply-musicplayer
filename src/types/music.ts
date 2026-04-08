@@ -37,6 +37,11 @@ export interface ListeningProfile {
   updatedAt?: number;
 }
 
+export interface ListeningActivity {
+  dailySeconds: Record<string, number>;
+  updatedAt?: number;
+}
+
 export interface TasteProfile {
   updatedAt: number;
   topArtists: Array<{ name: string; count: number }>;

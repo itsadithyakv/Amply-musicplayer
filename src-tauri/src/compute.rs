@@ -28,6 +28,7 @@ pub struct StatsArtistCount {
 #[serde(rename_all = "camelCase")]
 pub struct StatsAlbumCount {
     pub album: String,
+    pub artist: String,
     pub count: u32,
 }
 
@@ -164,7 +165,7 @@ pub fn build_stats_rust(songs: Vec<StatsSongInput>) -> Result<StatsResult, Strin
     sorted.sort_by(|a, b| b.play_count.cmp(&a.play_count));
 
     let mut artist_map: HashMap<String, u32> = HashMap::new();
-    let mut album_map: HashMap<String, u32> = HashMap::new();
+    let mut album_map: HashMap<String, StatsAlbumCount> = HashMap::new();
     let mut listening_seconds = 0.0_f64;
 
     for song in &songs {
@@ -173,8 +174,14 @@ pub fn build_stats_rust(songs: Vec<StatsSongInput>) -> Result<StatsResult, Strin
             let entry = artist_map.entry(artist_name).or_insert(0);
             *entry += song.play_count;
         }
-        let entry = album_map.entry(song.album.clone()).or_insert(0);
-        *entry += song.play_count;
+        let artist = get_primary_artist_name(&song.artist);
+        let key = format!("{}::{}", artist.to_lowercase(), song.album.to_lowercase());
+        let entry = album_map.entry(key).or_insert_with(|| StatsAlbumCount {
+            album: song.album.clone(),
+            artist,
+            count: 0,
+        });
+        entry.count += song.play_count;
     }
 
     let mut top_artists: Vec<StatsArtistCount> = artist_map
@@ -185,8 +192,7 @@ pub fn build_stats_rust(songs: Vec<StatsSongInput>) -> Result<StatsResult, Strin
     top_artists.truncate(8);
 
     let mut top_albums: Vec<StatsAlbumCount> = album_map
-        .into_iter()
-        .map(|(album, count)| StatsAlbumCount { album, count })
+        .into_values()
         .collect();
     top_albums.sort_by(|a, b| b.count.cmp(&a.count));
     top_albums.truncate(8);
