@@ -1,6 +1,6 @@
 [package]
 name = "amply"
-version = "1.5.3"
+version = "1.5.4"
 edition = "2021"
 description = "Amply Music Player"
 authors = ["Adithya KV <adithyakrishnan.vinod@gmail.com>"]
@@ -9,6 +9,7 @@ authors = ["Adithya KV <adithyakrishnan.vinod@gmail.com>"]
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }
 base64 = "0.22"
 dirs = "6.0"
 lofty = "0.21"

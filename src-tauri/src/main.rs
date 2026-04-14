@@ -9,6 +9,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use std::io::ErrorKind;
 use std::f32::consts::PI;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -21,7 +22,9 @@ use lofty::{
 use serde::Serialize;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri::image::Image;
+use tokio::fs as async_fs;
 use walkdir::WalkDir;
+use rusqlite::{params, Connection};
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use rodio::cpal;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
@@ -848,6 +851,64 @@ fn extract_text_metadata(tagged_file: &TaggedFile, filename_fallback: &str) -> (
     (title, artist, album, genre, track, year, replay_gain)
 }
 
+fn clean_title(raw: &str) -> String {
+    let mut title = raw.to_string();
+    if let Some((left, _)) = title.split_once(" - ") {
+        title = left.to_string();
+    }
+    if let Some((left, _)) = title.split_once(" — ") {
+        title = left.to_string();
+    }
+    if let Some((left, _)) = title.split_once(" | ") {
+        title = left.to_string();
+    }
+    for (open, close) in [('[', ']'), ('(', ')'), ('{', '}')] {
+        loop {
+            let Some(start) = title.find(open) else { break };
+            let Some(end) = title[start + 1..].find(close) else { break };
+            let end = start + 1 + end;
+            title.replace_range(start..=end, "");
+        }
+    }
+    let lowered = title.to_lowercase();
+    let cut = [" feat.", " ft.", " featuring ", " prod.", " produced by "]
+        .iter()
+        .filter_map(|token| lowered.find(token))
+        .min();
+    if let Some(idx) = cut {
+        title = title[..idx].to_string();
+    }
+    let noise = [
+        "official", "audio", "video", "lyrics", "lyric", "visualizer", "hq", "hd",
+        "high quality", "remaster", "remastered", "instrumental", "acapella",
+        "slowed", "reverb", "speed up", "sped up", "clean", "explicit",
+    ];
+    let lowered = title.to_lowercase();
+    if let Some(pos) = noise.iter().filter_map(|token| lowered.find(token)).min() {
+        title = title[..pos].to_string();
+    }
+    title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
+fn split_artist_title(raw: &str) -> Option<(String, String)> {
+    let separators = [" - ", " – ", " — ", " -- "];
+    for sep in separators {
+        if let Some((left, right)) = raw.split_once(sep) {
+            let artist = left.trim();
+            let title = right.trim();
+            if !artist.is_empty() && !title.is_empty() {
+                return Some((artist.to_string(), clean_title(title)));
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -889,7 +950,7 @@ async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> 
                 .and_then(|name| name.to_str())
                 .unwrap_or("Unknown Title");
 
-            let (title, artist, album, genre, track, year, replay_gain, duration, album_art) =
+            let (mut title, mut artist, mut album, genre, track, year, replay_gain, duration, album_art) =
                 match Probe::open(path).and_then(|probe| probe.read()) {
                     Ok(tagged_file) => {
                         let (title, artist, album, genre, track, year, replay_gain) =
@@ -910,6 +971,20 @@ async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> 
                         None,
                     ),
                 };
+
+            if artist.trim().eq_ignore_ascii_case("unknown artist") || title.trim() == filename_no_ext {
+                if let Some((parsed_artist, parsed_title)) = split_artist_title(filename_no_ext) {
+                    if artist.trim().eq_ignore_ascii_case("unknown artist") {
+                        artist = parsed_artist;
+                    }
+                    if title.trim() == filename_no_ext {
+                        title = parsed_title;
+                    }
+                    if album.trim().eq_ignore_ascii_case("unknown album") {
+                        album = "Single".to_string();
+                    }
+                }
+            }
 
             let full_path = path.to_string_lossy().to_string();
             songs.push(ScannedSong {
@@ -947,19 +1022,132 @@ async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> 
     .map_err(|err| err.to_string())?
 }
 
-pub(crate) fn storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let root = app
+pub(crate) fn storage_root_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
         .path()
         .app_data_dir()
         .map_err(|err| err.to_string())?
-        .join("storage");
+        .join("storage"))
+}
 
+pub(crate) fn storage_db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(storage_root_path(app)?.join("amply_cache.db"))
+}
+
+fn ensure_storage_dirs_blocking(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let root = storage_root_path(app)?;
     fs::create_dir_all(root.join("lyrics_cache")).map_err(|err| err.to_string())?;
     fs::create_dir_all(root.join("playlists")).map_err(|err| err.to_string())?;
     fs::create_dir_all(root.join("artist_cache")).map_err(|err| err.to_string())?;
     fs::create_dir_all(root.join("metadata_cache")).map_err(|err| err.to_string())?;
-
     Ok(root)
+}
+
+async fn ensure_storage_dirs_async(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let root = storage_root_path(app)?;
+    async_fs::create_dir_all(root.join("lyrics_cache"))
+        .await
+        .map_err(|err| err.to_string())?;
+    async_fs::create_dir_all(root.join("playlists"))
+        .await
+        .map_err(|err| err.to_string())?;
+    async_fs::create_dir_all(root.join("artist_cache"))
+        .await
+        .map_err(|err| err.to_string())?;
+    async_fs::create_dir_all(root.join("metadata_cache"))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(root)
+}
+
+fn init_storage_db(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS kv (
+            path TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn read_storage_kv_blocking(app: &tauri::AppHandle, relative_path: &str) -> Result<Option<String>, String> {
+    let _ = ensure_storage_dirs_blocking(app)?;
+    let db_path = storage_db_path(app)?;
+    let conn = Connection::open(db_path).map_err(|err| err.to_string())?;
+    init_storage_db(&conn)?;
+    let mut stmt = conn
+        .prepare("SELECT value FROM kv WHERE path = ?1")
+        .map_err(|err| err.to_string())?;
+    let mut rows = stmt.query(params![relative_path]).map_err(|err| err.to_string())?;
+    if let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        let value: String = row.get(0).map_err(|err| err.to_string())?;
+        Ok(Some(value))
+    } else {
+        // Backfill from legacy file cache if present.
+        if let Ok(target) = resolve_storage_path(app, relative_path) {
+            if let Ok(content) = fs::read_to_string(&target) {
+                let _ = write_storage_kv_blocking(app, relative_path, &content);
+                return Ok(Some(content));
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn write_storage_kv_blocking(app: &tauri::AppHandle, relative_path: &str, content: &str) -> Result<(), String> {
+    let _ = ensure_storage_dirs_blocking(app)?;
+    let db_path = storage_db_path(app)?;
+    let conn = Connection::open(db_path).map_err(|err| err.to_string())?;
+    init_storage_db(&conn)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.execute(
+        "INSERT INTO kv (path, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(path) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params![relative_path, content, now],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn delete_storage_kv_blocking(app: &tauri::AppHandle, relative_path: &str) -> Result<(), String> {
+    let _ = ensure_storage_dirs_blocking(app)?;
+    let db_path = storage_db_path(app)?;
+    let conn = Connection::open(db_path).map_err(|err| err.to_string())?;
+    init_storage_db(&conn)?;
+    conn.execute("DELETE FROM kv WHERE path = ?1", params![relative_path])
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn read_storage_kv(app: &tauri::AppHandle, relative_path: &str) -> Result<Option<String>, String> {
+    let app_handle = app.clone();
+    let key = relative_path.to_string();
+    tauri::async_runtime::spawn_blocking(move || read_storage_kv_blocking(&app_handle, &key))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+pub(crate) async fn write_storage_kv(app: &tauri::AppHandle, relative_path: &str, content: &str) -> Result<(), String> {
+    let app_handle = app.clone();
+    let key = relative_path.to_string();
+    let value = content.to_string();
+    tauri::async_runtime::spawn_blocking(move || write_storage_kv_blocking(&app_handle, &key, &value))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+pub(crate) async fn delete_storage_kv(app: &tauri::AppHandle, relative_path: &str) -> Result<(), String> {
+    let app_handle = app.clone();
+    let key = relative_path.to_string();
+    tauri::async_runtime::spawn_blocking(move || delete_storage_kv_blocking(&app_handle, &key))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 pub(crate) fn resolve_storage_path(app: &tauri::AppHandle, relative_path: &str) -> Result<PathBuf, String> {
@@ -975,7 +1163,7 @@ pub(crate) fn resolve_storage_path(app: &tauri::AppHandle, relative_path: &str) 
         }
     }
 
-    Ok(storage_root(app)?.join(candidate))
+    Ok(storage_root_path(app)?.join(candidate))
 }
 
 fn biquad_peaking(sample_rate: u32, freq: f32, q: f32, gain_db: f32) -> BiquadCoeffs {
@@ -1003,30 +1191,19 @@ fn biquad_peaking(sample_rate: u32, freq: f32, q: f32, gain_db: f32) -> BiquadCo
 }
 
 #[tauri::command]
-fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
-    let root = storage_root(&app)?;
+async fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
+    let root = ensure_storage_dirs_async(&app).await?;
     Ok(root.to_string_lossy().to_string())
-}
-
-fn count_files(path: &Path) -> usize {
-    if !path.exists() {
-        return 0;
-    }
-    WalkDir::new(path)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-        .count()
 }
 
 #[tauri::command]
 async fn get_storage_stats(app: tauri::AppHandle) -> Result<StorageStats, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let root = storage_root(&app)?;
-        let lyrics_files = count_files(&root.join("lyrics_cache"));
-        let artist_files = count_files(&root.join("artist_cache"));
-        let metadata_files = count_files(&root.join("metadata_cache"));
-        let playlists_files = count_files(&root.join("playlists"));
+        let root = storage_root_path(&app)?;
+        let lyrics_files = count_storage_prefix(&app, "lyrics_cache/").unwrap_or(0);
+        let artist_files = count_storage_prefix(&app, "artist_cache/").unwrap_or(0);
+        let metadata_files = count_storage_prefix(&app, "metadata_cache/").unwrap_or(0);
+        let playlists_files = count_storage_prefix(&app, "playlists/").unwrap_or(0);
         let total_files = lyrics_files + artist_files + metadata_files + playlists_files;
 
         Ok(StorageStats {
@@ -1043,8 +1220,8 @@ async fn get_storage_stats(app: tauri::AppHandle) -> Result<StorageStats, String
 }
 
 #[tauri::command]
-fn open_storage_dir(app: tauri::AppHandle) -> Result<(), String> {
-    let root = storage_root(&app)?;
+async fn open_storage_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let root = ensure_storage_dirs_async(&app).await?;
     let target = root.to_string_lossy().to_string();
 
     #[cfg(target_os = "windows")]
@@ -1081,15 +1258,32 @@ fn open_storage_dir(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn clear_storage_cache(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let root = storage_root(&app)?;
-        if root.exists() {
-            fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        let db_path = storage_db_path(&app)?;
+        if db_path.exists() {
+            let conn = Connection::open(&db_path).map_err(|err| err.to_string())?;
+            init_storage_db(&conn)?;
+            let _ = conn.execute("DELETE FROM kv", []);
         }
-        let _ = storage_root(&app)?;
+        let _ = ensure_storage_dirs_blocking(&app)?;
         Ok(())
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+fn count_storage_prefix(app: &tauri::AppHandle, prefix: &str) -> Result<usize, String> {
+    let db_path = storage_db_path(app)?;
+    let conn = Connection::open(db_path).map_err(|err| err.to_string())?;
+    init_storage_db(&conn)?;
+    let like = format!("{prefix}%");
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM kv WHERE path LIKE ?1",
+            params![like],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(count.max(0) as usize)
 }
 
 #[tauri::command]
@@ -1116,22 +1310,7 @@ async fn read_storage_file(
     app: tauri::AppHandle,
     relative_path: String,
 ) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let target = resolve_storage_path(&app, &relative_path)?;
-
-        if !target.exists() {
-            return Ok(None);
-        }
-
-        let mut file = fs::File::open(target).map_err(|err| err.to_string())?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)
-            .map_err(|err| err.to_string())?;
-
-        Ok(Some(content))
-    })
-    .await
-    .map_err(|err| err.to_string())?
+    read_storage_kv(&app, &relative_path).await
 }
 
 #[tauri::command]
@@ -1140,21 +1319,7 @@ async fn write_storage_file(
     relative_path: String,
     content: String,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let target = resolve_storage_path(&app, &relative_path)?;
-
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-
-        let mut file = fs::File::create(target).map_err(|err| err.to_string())?;
-        file.write_all(content.as_bytes())
-            .map_err(|err| err.to_string())?;
-
-        Ok(())
-    })
-    .await
-    .map_err(|err| err.to_string())?
+    write_storage_kv(&app, &relative_path, &content).await
 }
 
 fn send_audio_command<F>(
@@ -1356,7 +1521,10 @@ fn main() {
     tauri::Builder::default()
         .manage(AudioState::new(audio_tx.clone()))
         .setup(|app| {
-            let _ = storage_root(&app.handle());
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = ensure_storage_dirs_async(&handle).await;
+            });
             #[cfg(desktop)]
             {
                 use tauri_plugin_autostart::MacosLauncher;

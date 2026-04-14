@@ -2,7 +2,13 @@ import { create } from 'zustand';
 import type { AppSettings, ListeningActivity, ListeningProfile, Playlist, Song, TasteProfile } from '@/types/music';
 import { ensureStorageDirs, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { scanMusicFolder } from '@/services/musicScanner';
-import { generateSmartPlaylists, generateSmartPlaylistsLite, isHeavyMixPlaylistId, postProcessGeneratedPlaylists } from '@/services/playlistGenerator';
+import {
+  applyOverridesOnly,
+  generateSmartPlaylists,
+  generateSmartPlaylistsLite,
+  isHeavyMixPlaylistId,
+  postProcessGeneratedPlaylists,
+} from '@/services/playlistGenerator';
 import { generateSmartPlaylistsRust } from '@/services/rustPlaylistService';
 import { hydrateSongsWithCachedGenres, loadSongGenre } from '@/services/songMetadataService';
 import { hydrateSongsWithCachedLoudness } from '@/services/loudnessService';
@@ -561,7 +567,6 @@ const refreshSmartPlaylists = async (
     dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
   const albumTracklistCache = await getCachedAlbumTracklistCache();
   const listeningProfile = useLibraryStore.getState().listeningProfile;
-  const seedForPost = resolvedSeed ?? seedFromWeekKey(weekKey);
   const rustGenerated = await generateSmartPlaylistsRust(songs, {
     seed: resolvedSeed,
     dailySeed,
@@ -571,7 +576,7 @@ const refreshSmartPlaylists = async (
     lite: false,
   });
   const generated = rustGenerated
-    ? await postProcessGeneratedPlaylists(rustGenerated as Playlist[], songs, overrides, seedForPost)
+    ? applyOverridesOnly(rustGenerated as Playlist[], songs, overrides)
     : generateSmartPlaylists(
         songs,
         overrides,
@@ -687,12 +692,7 @@ const refreshSmartPlaylistsLite = async (
     lite: true,
   });
   const generated = rustGenerated
-    ? await postProcessGeneratedPlaylists(
-        [...(rustGenerated as Playlist[]), ...carryMixes],
-        songs,
-        overrides,
-        resolvedSeed,
-      )
+    ? applyOverridesOnly([...(rustGenerated as Playlist[]), ...carryMixes], songs, overrides)
     : generateSmartPlaylistsLite(
         songs,
         overrides,
@@ -990,6 +990,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const seenAlbums = new Set<string>();
       const pendingGenreUpdates = new Map<string, string>();
       const pendingAlbumArtUpdates = new Map<string, string>();
+      const pendingArtistArtUpdates = new Map<string, string>();
 
       const pendingEntries: Array<{
         song: Song;
@@ -997,6 +998,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         needsGenre: boolean;
         needsArtist: boolean;
         needsAlbumArt: boolean;
+        needsArtistArt: boolean;
         artistKey: string | null;
         albumKey: string | null;
       }> = [];
@@ -1035,14 +1037,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           !artistCached && artistKey ? !shouldSkipMetadata(attemptsCache, 'artist', artistKey) : false;
         const needsAlbumArt =
           albumKey && !albumCached ? !shouldSkipMetadata(attemptsCache, 'album', albumKey) : false;
+        const needsArtistArt =
+          !song.albumArt &&
+          artistKey !== undefined &&
+          artistKey !== null &&
+          (!song.album || song.album.trim().toLowerCase() === 'unknown album');
 
-        if (needsLyrics || needsGenre || needsArtist || needsAlbumArt) {
+        if (needsLyrics || needsGenre || needsArtist || needsAlbumArt || needsArtistArt) {
           pendingEntries.push({
             song,
             needsLyrics,
             needsGenre,
             needsArtist,
             needsAlbumArt,
+            needsArtistArt,
             artistKey: artistKey ?? null,
             albumKey,
           });
@@ -1170,9 +1178,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
         pendingGenreUpdates.clear();
 
-        if (pendingAlbumArtUpdates.size) {
+        if (pendingAlbumArtUpdates.size || pendingArtistArtUpdates.size) {
           const updates = pendingAlbumArtUpdates;
           pendingAlbumArtUpdates.clear();
+          const artistUpdates = pendingArtistArtUpdates;
+          pendingArtistArtUpdates.clear();
           const updated = nextSongs.map((song) => {
             if (!song.album?.trim() || !song.artist?.trim()) {
               return song;
@@ -1180,7 +1190,16 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             const key = getAlbumArtworkCacheKey(song.artist, song.album);
             const art = updates.get(key);
             if (!art) {
-              return song;
+              const primaryArtist = getPrimaryArtistName(song.artist).trim().toLowerCase();
+              const artistArt = artistUpdates.get(primaryArtist);
+              if (!artistArt) {
+                return song;
+              }
+              if (song.albumArt || (song.album && song.album.trim().toLowerCase() !== 'unknown album')) {
+                return song;
+              }
+              changed = true;
+              return { ...song, albumArt: artistArt };
             }
             if (song.albumArt === art) {
               return song;
@@ -1275,6 +1294,35 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
               if (artistResult.status === 'ready') {
                 artistCount += 1;
                 noteMetadataSuccess(attemptsCache, 'artist', artistKey);
+                if (artistResult.profile?.imageUrl) {
+                  pendingArtistArtUpdates.set(artistKey, artistResult.profile.imageUrl);
+                }
+              } else {
+                if (artistResult.status === 'missing' && isOnline) {
+                  noteMetadataFailure(attemptsCache, 'artist', artistKey);
+                }
+              }
+              releaseMetadata('artist', artistKey);
+            }
+          }
+
+          if (
+            entry.needsArtistArt &&
+            allowHeavy &&
+            heavyBudgetOk &&
+            artistKey &&
+            !pendingArtistArtUpdates.has(artistKey) &&
+            !seenArtists.has(artistKey)
+          ) {
+            seenArtists.add(artistKey);
+            if (tryAcquireMetadata('artist', artistKey)) {
+              const artistResult = await loadArtistProfile(primaryArtist);
+              if (artistResult.status === 'ready') {
+                artistCount += 1;
+                noteMetadataSuccess(attemptsCache, 'artist', artistKey);
+                if (artistResult.profile?.imageUrl) {
+                  pendingArtistArtUpdates.set(artistKey, artistResult.profile.imageUrl);
+                }
               } else {
                 if (artistResult.status === 'missing' && isOnline) {
                   noteMetadataFailure(attemptsCache, 'artist', artistKey);

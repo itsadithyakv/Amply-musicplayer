@@ -1,4 +1,4 @@
-Amply v1.5.3 Release Notes
+Amply v1.5.4 Release Notes
 
 Highlights
 - Improved large-library responsiveness across startup, search, metadata fetch, and library navigation.

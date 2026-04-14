@@ -20,6 +20,7 @@ pub struct SongInput {
     pub play_count: u32,
     pub last_played: Option<i64>,
     pub favorite: bool,
+    pub album_art: Option<String>,
     pub skip_count: Option<u32>,
     pub total_play_seconds: Option<f64>,
     pub manual_queue_adds: Option<u32>,
@@ -53,6 +54,7 @@ pub struct PlaylistOutput {
     #[serde(rename = "type")]
     pub playlist_type: String,
     pub song_ids: Vec<String>,
+    pub artwork: Option<String>,
     pub updated_at: i64,
 }
 
@@ -341,6 +343,29 @@ fn cap_by_album(songs: Vec<SongInput>, max_per_album: usize) -> Vec<SongInput> {
     }
 }
 
+fn cap_by_artist(songs: Vec<SongInput>, max_per_artist: usize) -> Vec<SongInput> {
+    if max_per_artist == 0 || songs.len() <= 2 {
+        return songs;
+    }
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut kept = Vec::new();
+    for song in songs.iter() {
+        let key = artist_key(song);
+        let used = *counts.get(&key).unwrap_or(&0);
+        if used >= max_per_artist {
+            continue;
+        }
+        counts.insert(key, used + 1);
+        kept.push(song.clone());
+    }
+    let min_keep = (songs.len() as f32 * 0.6).ceil().min(20.0) as usize;
+    if kept.len() < min_keep {
+        songs
+    } else {
+        kept
+    }
+}
+
 fn shuffle_with_spacing(songs: Vec<SongInput>, seed: u64, salt: &str) -> Vec<SongInput> {
     let shuffled = seeded_shuffle(songs, seed, salt);
     let mut buckets: HashMap<String, Vec<SongInput>> = HashMap::new();
@@ -436,8 +461,614 @@ fn map_playlist(id: &str, name: &str, description: &str, songs: Vec<SongInput>) 
         description: description.to_string(),
         playlist_type: "smart".to_string(),
         song_ids: songs.into_iter().map(|s| s.id).collect(),
+        artwork: None,
         updated_at: now_unix(),
     }
+}
+
+fn clamp_count(total: usize, ratio: f32, min_count: usize, max_count: usize) -> usize {
+    let target = ((total as f32) * ratio).ceil() as usize;
+    target.clamp(min_count, max_count).min(total.max(1))
+}
+
+fn cap_variety(songs: Vec<SongInput>, max_per_album: usize, max_per_artist: usize, cap_artists: bool) -> Vec<SongInput> {
+    let capped = cap_by_album(songs, max_per_album);
+    if cap_artists {
+        cap_by_artist(capped, max_per_artist)
+    } else {
+        capped
+    }
+}
+
+fn generate_small_library_playlists(
+    songs: Vec<SongInput>,
+    seed: u64,
+    daily_seed: u64,
+    profile: Option<ListeningProfileInput>,
+    discovery: f32,
+    randomness: f32,
+) -> Vec<PlaylistOutput> {
+    let total = songs.len();
+    if total == 0 {
+        return Vec::new();
+    }
+    let now = now_unix();
+    let playlist_len = clamp_count(total, 0.65, 16, 42);
+    let max_per_album = (3.0 - randomness).round().max(2.0) as usize;
+    let max_per_artist = (3.0 - randomness * 0.8).round().max(2.0) as usize;
+
+    let all_mix = shuffle_with_spacing(songs.clone(), seed, "small-library");
+    let all_mix = cap_variety(all_mix, max_per_album, max_per_artist, true);
+
+    let favorites_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.favorite).collect();
+    let favorites = if favorites_pool.is_empty() {
+        Vec::new()
+    } else {
+        let picks = curate_from_pool(
+            seed,
+            "small-favorites",
+            playlist_len,
+            &favorites_pool,
+            now,
+            &profile,
+            discovery * 0.6,
+            randomness * 0.5,
+            "avoid",
+            3.0,
+            false,
+            30.0,
+        );
+        cap_variety(picks, max_per_album, max_per_artist, true)
+    };
+
+    let recently_added_pool: Vec<SongInput> = {
+        let mut list = songs.clone();
+        list.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+        list.truncate(120.min(list.len()));
+        list
+    };
+    let recently_added = cap_variety(
+        curate_from_pool(
+            seed,
+            "small-recently-added",
+            playlist_len,
+            &recently_added_pool,
+            now,
+            &profile,
+            discovery,
+            randomness,
+            "neutral",
+            4.0,
+            true,
+            21.0,
+        ),
+        max_per_album,
+        max_per_artist,
+        true,
+    );
+
+    let on_repeat_pool: Vec<SongInput> = {
+        let threshold = now - 21 * DAY_SEC;
+        let recent: Vec<SongInput> = songs
+            .iter()
+            .cloned()
+            .filter(|s| s.last_played.unwrap_or(0) >= threshold)
+            .collect();
+        if recent.len() >= 12 {
+            recent
+        } else {
+            songs.iter().cloned().filter(|s| s.play_count > 0).collect()
+        }
+    };
+    let on_repeat = cap_variety(
+        curate_from_pool(
+            seed,
+            "small-on-repeat",
+            playlist_len,
+            &on_repeat_pool,
+            now,
+            &profile,
+            0.15,
+            randomness * 0.6,
+            "prefer",
+            10.0,
+            false,
+            30.0,
+        ),
+        max_per_album,
+        max_per_artist,
+        true,
+    );
+
+    let rediscover_pool: Vec<SongInput> = {
+        let cutoff = now - 30 * DAY_SEC;
+        let mut list: Vec<SongInput> = songs
+            .iter()
+            .cloned()
+            .filter(|s| s.last_played.unwrap_or(0) < cutoff)
+            .collect();
+        list.sort_by(|a, b| a.last_played.unwrap_or(0).cmp(&b.last_played.unwrap_or(0)));
+        list.truncate(120.min(list.len()));
+        list
+    };
+    let rediscover = cap_variety(
+        curate_from_pool(
+            seed,
+            "small-rediscover",
+            playlist_len,
+            &rediscover_pool,
+            now,
+            &profile,
+            discovery,
+            randomness,
+            "avoid",
+            25.0,
+            false,
+            30.0,
+        ),
+        max_per_album,
+        max_per_artist,
+        true,
+    );
+
+    let explore_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.play_count <= 2).collect();
+    let explore = cap_variety(
+        curate_from_pool(
+            seed,
+            "small-explore",
+            playlist_len,
+            &explore_pool,
+            now,
+            &profile,
+            (discovery * 0.9).clamp(0.2, 0.9),
+            (randomness * 1.1).clamp(0.2, 0.95),
+            "avoid",
+            4.0,
+            false,
+            30.0,
+        ),
+        max_per_album,
+        max_per_artist,
+        true,
+    );
+
+    let daily_mix = cap_variety(
+        curate_from_pool(
+            daily_seed,
+            "small-daily-mix",
+            playlist_len,
+            &songs,
+            now,
+            &profile,
+            discovery,
+            randomness,
+            "avoid",
+            2.5,
+            false,
+            21.0,
+        ),
+        max_per_album,
+        max_per_artist,
+        true,
+    );
+
+    let mut playlists = vec![
+        map_playlist("smart_small_library_mix", "Library Mix", "Balanced mix with extra artist variety.", all_mix),
+        map_playlist("smart_daily_mix", "Daily Mix", "Fresh mix tuned for smaller libraries.", daily_mix),
+        map_playlist("smart_on_repeat", "On Repeat", "Your most played tracks recently.", on_repeat),
+        map_playlist("smart_recently_added", "Recently Added", "Latest tracks in your library.", recently_added),
+        map_playlist("smart_rediscover", "Rediscover", "Tracks you have not played in a while.", rediscover),
+        map_playlist("smart_explore", "Explore", "Lower-played tracks to keep things fresh.", explore),
+    ];
+
+    if !favorites.is_empty() {
+        playlists.push(map_playlist("smart_favorites", "Favorites", "Your favorited songs.", favorites));
+    }
+
+    playlists.retain(|p| !p.song_ids.is_empty());
+    post_process_playlists(playlists, &songs, seed)
+}
+
+fn album_key_from_song(song: &SongInput) -> Option<String> {
+    album_key(song)
+}
+
+fn artist_key_from_song(song: &SongInput) -> String {
+    artist_key(song)
+}
+
+fn diversify_first_tracks(
+    playlists: Vec<PlaylistOutput>,
+    songs_by_id: &HashMap<String, SongInput>,
+    seed: u64,
+) -> Vec<PlaylistOutput> {
+    let mut used_albums: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut used_artists: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut used_songs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut used_artworks: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    playlists
+        .into_iter()
+        .map(|playlist| {
+            if playlist.song_ids.len() <= 1 || playlist.id == "smart_album_spotlight" {
+                return playlist;
+            }
+
+            let candidate_limit = 25.min(playlist.song_ids.len());
+            let extra_limit = 8.min(playlist.song_ids.len().saturating_sub(candidate_limit));
+            let mut rng = rng_for(seed, &format!("front:{}", playlist.id));
+            let mut candidates: Vec<String> = playlist.song_ids[..candidate_limit].to_vec();
+
+            if extra_limit > 0 {
+                let mut tail: Vec<String> = playlist.song_ids[candidate_limit..].to_vec();
+                for _ in 0..extra_limit {
+                    if tail.is_empty() {
+                        break;
+                    }
+                    let pick = (rng.next_f32() * tail.len() as f32).floor() as usize;
+                    candidates.push(tail.swap_remove(pick));
+                }
+            }
+
+            let mut best_id: Option<String> = None;
+            let mut best_score = f32::MIN;
+            for id in candidates.iter() {
+                let song = match songs_by_id.get(id) {
+                    Some(song) => song,
+                    None => continue,
+                };
+                let album_key = album_key_from_song(song);
+                let artist_key = artist_key_from_song(song);
+                let art = song.album_art.as_deref().unwrap_or("");
+
+                let mut score = 0.0;
+                if let Some(key) = album_key.as_ref() {
+                    if !used_albums.contains(key) {
+                        score += 3.2;
+                    } else {
+                        score -= 2.2;
+                    }
+                }
+                if !artist_key.is_empty() {
+                    if !used_artists.contains(&artist_key) {
+                        score += 1.4;
+                    } else {
+                        score -= 0.8;
+                    }
+                }
+                if !art.is_empty() && !used_artworks.contains(art) {
+                    score += 1.2;
+                }
+                if !used_songs.contains(&song.id) {
+                    score += 0.6;
+                }
+                score += rng.next_f32() * 0.2;
+
+                if score > best_score {
+                    best_score = score;
+                    best_id = Some(song.id.clone());
+                }
+            }
+
+            let best_id = match best_id {
+                Some(id) => id,
+                None => {
+                    if let Some(first) = playlist.song_ids.first().and_then(|id| songs_by_id.get(id)) {
+                        if let Some(key) = album_key_from_song(first) {
+                            used_albums.insert(key);
+                        }
+                        let artist = artist_key_from_song(first);
+                        if !artist.is_empty() {
+                            used_artists.insert(artist);
+                        }
+                        if let Some(art) = first.album_art.as_ref() {
+                            used_artworks.insert(art.clone());
+                        }
+                        used_songs.insert(first.id.clone());
+                    }
+                    return playlist;
+                }
+            };
+
+            if playlist.song_ids.first().map(|id| id == &best_id).unwrap_or(false) {
+                if let Some(first) = songs_by_id.get(&best_id) {
+                    if let Some(key) = album_key_from_song(first) {
+                        used_albums.insert(key);
+                    }
+                    let artist = artist_key_from_song(first);
+                    if !artist.is_empty() {
+                        used_artists.insert(artist);
+                    }
+                    if let Some(art) = first.album_art.as_ref() {
+                        used_artworks.insert(art.clone());
+                    }
+                    used_songs.insert(first.id.clone());
+                }
+                return playlist;
+            }
+
+            let mut reordered = Vec::with_capacity(playlist.song_ids.len());
+            reordered.push(best_id.clone());
+            for id in playlist.song_ids.iter() {
+                if id != &best_id {
+                    reordered.push(id.clone());
+                }
+            }
+
+            if let Some(picked) = songs_by_id.get(&best_id) {
+                if let Some(key) = album_key_from_song(picked) {
+                    used_albums.insert(key);
+                }
+                let artist = artist_key_from_song(picked);
+                if !artist.is_empty() {
+                    used_artists.insert(artist);
+                }
+                if let Some(art) = picked.album_art.as_ref() {
+                    used_artworks.insert(art.clone());
+                }
+                used_songs.insert(picked.id.clone());
+            }
+
+            PlaylistOutput {
+                song_ids: reordered,
+                ..playlist
+            }
+        })
+        .collect()
+}
+
+fn ensure_unique_first_albums(
+    playlists: Vec<PlaylistOutput>,
+    songs_by_id: &HashMap<String, SongInput>,
+) -> Vec<PlaylistOutput> {
+    let mut used_albums: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    playlists
+        .into_iter()
+        .map(|playlist| {
+            if playlist.song_ids.len() <= 1 || playlist.id == "smart_album_spotlight" {
+                return playlist;
+            }
+
+            let first_song = playlist.song_ids.first().and_then(|id| songs_by_id.get(id));
+            let first_album = first_song.and_then(album_key_from_song);
+            if let Some(album) = first_album.as_ref() {
+                if !used_albums.contains(album) {
+                    used_albums.insert(album.clone());
+                    return playlist;
+                }
+            }
+
+            let mut pick_index: isize = -1;
+            let mut pick_album: Option<String> = None;
+            for (idx, id) in playlist.song_ids.iter().enumerate().skip(1) {
+                let song = match songs_by_id.get(id) {
+                    Some(song) => song,
+                    None => continue,
+                };
+                if song.track == 1 {
+                    continue;
+                }
+                let album = match album_key_from_song(song) {
+                    Some(key) => key,
+                    None => continue,
+                };
+                if !used_albums.contains(&album) {
+                    pick_index = idx as isize;
+                    pick_album = Some(album);
+                    break;
+                }
+            }
+
+            if pick_index == -1 {
+                for (idx, id) in playlist.song_ids.iter().enumerate().skip(1) {
+                    let song = match songs_by_id.get(id) {
+                        Some(song) => song,
+                        None => continue,
+                    };
+                    let album = match album_key_from_song(song) {
+                        Some(key) => key,
+                        None => continue,
+                    };
+                    if !used_albums.contains(&album) {
+                        pick_index = idx as isize;
+                        pick_album = Some(album);
+                        break;
+                    }
+                }
+            }
+
+            if pick_index <= 0 || pick_album.is_none() {
+                if let Some(album) = first_album {
+                    used_albums.insert(album);
+                }
+                return playlist;
+            }
+
+            let pick_index = pick_index as usize;
+            let mut reordered = Vec::with_capacity(playlist.song_ids.len());
+            reordered.push(playlist.song_ids[pick_index].clone());
+            for (idx, id) in playlist.song_ids.iter().enumerate() {
+                if idx == pick_index {
+                    continue;
+                }
+                reordered.push(id.clone());
+            }
+            if let Some(album) = pick_album {
+                used_albums.insert(album);
+            }
+            PlaylistOutput {
+                song_ids: reordered,
+                ..playlist
+            }
+        })
+        .collect()
+}
+
+fn build_album_art_frequency(songs: &[SongInput]) -> HashMap<String, u32> {
+    let mut freq = HashMap::new();
+    for song in songs {
+        let art = match song.album_art.as_ref() {
+            Some(art) if !art.trim().is_empty() => art,
+            _ => continue,
+        };
+        *freq.entry(art.clone()).or_insert(0) += 1;
+    }
+    freq
+}
+
+fn artwork_album_key(song: &SongInput) -> String {
+    let artist = get_primary_artist(&song.artist).to_lowercase();
+    let album = song.album.trim().to_lowercase();
+    format!("{artist}::{album}")
+}
+
+fn build_artwork_set(
+    songs: &[SongInput],
+    freq: &HashMap<String, u32>,
+    desired: usize,
+    preferred: Option<&str>,
+) -> Vec<String> {
+    let mut candidates: Vec<(String, String, i32)> = songs
+        .iter()
+        .filter_map(|song| {
+            let art = song.album_art.as_ref()?.trim();
+            if art.is_empty() {
+                return None;
+            }
+            let frequency = *freq.get(art).unwrap_or(&0) as i32;
+            let track_penalty = if song.track == 1 { -18 } else { 0 };
+            let album_bonus = if song.album.trim().is_empty() { 0 } else { 2 };
+            let favorite_bonus = if song.favorite { 3 } else { 0 };
+            let diversity_boost = (hash_str(&format!("{}:{}", song.id, art)) % 7) as i32 - 3;
+            let score = 100 - frequency * 2 + track_penalty + album_bonus + favorite_bonus + diversity_boost;
+            Some((art.to_string(), artwork_album_key(song), score))
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+
+    let mut seen_art = std::collections::HashSet::new();
+    let mut seen_album = std::collections::HashSet::new();
+    let mut picked: Vec<String> = Vec::new();
+
+    if let Some(preferred) = preferred {
+        if !preferred.trim().is_empty() {
+            picked.push(preferred.to_string());
+            seen_art.insert(preferred.to_string());
+            if let Some((_, album_key, _)) = candidates.iter().find(|(art, _, _)| art == preferred) {
+                seen_album.insert(album_key.clone());
+            }
+        }
+    }
+
+    for (art, album_key, _) in candidates.iter() {
+        if seen_art.contains(art) {
+            continue;
+        }
+        if seen_album.contains(album_key) && candidates.len() > desired * 2 {
+            continue;
+        }
+        seen_art.insert(art.clone());
+        seen_album.insert(album_key.clone());
+        picked.push(art.clone());
+        if picked.len() >= desired {
+            break;
+        }
+    }
+
+    if picked.len() < desired {
+        for (art, _, _) in candidates.iter() {
+            if seen_art.contains(art) {
+                continue;
+            }
+            seen_art.insert(art.clone());
+            picked.push(art.clone());
+            if picked.len() >= desired {
+                break;
+            }
+        }
+    }
+
+    picked
+}
+
+fn apply_artwork_from_first_song(
+    playlists: Vec<PlaylistOutput>,
+    songs_by_id: &HashMap<String, SongInput>,
+) -> Vec<PlaylistOutput> {
+    playlists
+        .into_iter()
+        .map(|playlist| {
+            if playlist.song_ids.is_empty() {
+                return playlist;
+            }
+            let first = playlist.song_ids.first().and_then(|id| songs_by_id.get(id));
+            match first.and_then(|song| song.album_art.clone()) {
+                Some(art) => PlaylistOutput {
+                    artwork: Some(art),
+                    ..playlist
+                },
+                None => playlist,
+            }
+        })
+        .collect()
+}
+
+fn assign_unique_smart_artwork(
+    playlists: Vec<PlaylistOutput>,
+    songs_by_id: &HashMap<String, SongInput>,
+) -> Vec<PlaylistOutput> {
+    let freq = build_album_art_frequency(&songs_by_id.values().cloned().collect::<Vec<_>>());
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    playlists
+        .into_iter()
+        .map(|playlist| {
+            if playlist.song_ids.is_empty() {
+                return playlist;
+            }
+            let songs: Vec<SongInput> = playlist
+                .song_ids
+                .iter()
+                .filter_map(|id| songs_by_id.get(id))
+                .cloned()
+                .collect();
+            if songs.is_empty() {
+                return playlist;
+            }
+
+            let candidates = build_artwork_set(&songs, &freq, 4, None);
+            let mut artwork = playlist.artwork.clone();
+            if artwork.as_ref().map(|art| used.contains(art)).unwrap_or(true) {
+                if let Some(pick) = candidates.iter().find(|art| !used.contains(*art)) {
+                    artwork = Some(pick.clone());
+                }
+            }
+            if let Some(ref art) = artwork {
+                used.insert(art.clone());
+                return PlaylistOutput {
+                    artwork,
+                    ..playlist
+                };
+            }
+            playlist
+        })
+        .collect()
+}
+
+fn post_process_playlists(
+    playlists: Vec<PlaylistOutput>,
+    songs: &[SongInput],
+    seed: u64,
+) -> Vec<PlaylistOutput> {
+    if playlists.is_empty() || songs.is_empty() {
+        return playlists;
+    }
+    let songs_by_id: HashMap<String, SongInput> = songs.iter().cloned().map(|s| (s.id.clone(), s)).collect();
+    let ordered = ensure_unique_first_albums(playlists, &songs_by_id);
+    let diversified = diversify_first_tracks(ordered, &songs_by_id, seed);
+    let with_art = apply_artwork_from_first_song(diversified, &songs_by_id);
+    assign_unique_smart_artwork(with_art, &songs_by_id)
 }
 
 pub fn generate_playlists(
@@ -452,10 +1083,65 @@ pub fn generate_playlists(
     if songs.is_empty() {
         return Vec::new();
     }
+    if songs.len() < 100 {
+        return generate_small_library_playlists(songs, seed, daily_seed, profile, discovery, randomness);
+    }
     let discovery = if discovery.is_finite() { discovery } else { 0.5 }.clamp(0.0, 1.0);
     let randomness = if randomness.is_finite() { randomness } else { 0.3 }.clamp(0.0, 1.0);
     let now = now_unix();
-    let max_per_album = (4.0 - randomness * 2.0).round().max(2.0) as usize;
+    let library_size = songs.len();
+    let (playlist_len, daily_len, max_per_album, max_per_artist, cap_artists, genre_mix_limit, mood_mix_limit) =
+        if library_size < 220 {
+            (
+                clamp_count(library_size, 0.55, 28, 64),
+                clamp_count(library_size, 0.45, 22, 52),
+                (3.0 - randomness).round().max(2.0) as usize,
+                (3.0 - randomness * 0.6).round().max(2.0) as usize,
+                true,
+                3,
+                3,
+            )
+        } else if library_size < 600 {
+            (
+                clamp_count(library_size, 0.42, 40, 90),
+                clamp_count(library_size, 0.36, 34, 80),
+                (4.0 - randomness * 1.2).round().max(2.0) as usize,
+                (4.0 - randomness).round().max(2.0) as usize,
+                library_size < 360,
+                4,
+                4,
+            )
+        } else if library_size < 1200 {
+            (
+                clamp_count(library_size, 0.32, 50, 110),
+                clamp_count(library_size, 0.27, 42, 95),
+                (5.0 - randomness).round().max(2.0) as usize,
+                (4.0 - randomness * 0.8).round().max(2.0) as usize,
+                false,
+                6,
+                5,
+            )
+        } else if library_size < 2000 {
+            (
+                clamp_count(library_size, 0.26, 60, 120),
+                clamp_count(library_size, 0.22, 50, 105),
+                (6.0 - randomness).round().max(3.0) as usize,
+                (5.0 - randomness * 0.6).round().max(3.0) as usize,
+                false,
+                7,
+                5,
+            )
+        } else {
+            (
+                clamp_count(library_size, 0.23, 65, 130),
+                clamp_count(library_size, 0.2, 55, 110),
+                (7.0 - randomness).round().max(3.0) as usize,
+                (6.0 - randomness * 0.5).round().max(3.0) as usize,
+                false,
+                8,
+                6,
+            )
+        };
 
     let recently_added_pool: Vec<SongInput> = {
         let mut list = songs.clone();
@@ -488,48 +1174,48 @@ pub fn generate_playlists(
         cap_by_album(list, max_per_album)
     };
 
-    let daily_mix = curate_from_pool(daily_seed, "daily-mix", 60, &songs, now, &profile, discovery, randomness, "avoid", 3.0, false, 30.0);
-    let daily_mix = cap_by_album(daily_mix, max_per_album);
+    let daily_mix = curate_from_pool(daily_seed, "daily-mix", daily_len, &songs, now, &profile, discovery, randomness, "avoid", 3.0, false, 30.0);
+    let daily_mix = cap_variety(daily_mix, max_per_album, max_per_artist, cap_artists);
 
     let on_repeat_pool: Vec<SongInput> = {
         let threshold = now - 14 * DAY_SEC;
         let recent: Vec<SongInput> = songs.iter().cloned().filter(|s| s.last_played.unwrap_or(0) >= threshold).collect();
         if recent.len() >= 20 { recent } else { songs.iter().cloned().filter(|s| s.play_count > 0).collect() }
     };
-    let on_repeat = curate_from_pool(seed, "on-repeat", 80, &on_repeat_pool, now, &profile, 0.2, randomness, "prefer", 7.0, false, 30.0);
-    let on_repeat = cap_by_album(on_repeat, (4.0 - randomness).round().max(2.0) as usize);
+    let on_repeat = curate_from_pool(seed, "on-repeat", playlist_len, &on_repeat_pool, now, &profile, 0.2, randomness, "prefer", 7.0, false, 30.0);
+    let on_repeat = cap_variety(on_repeat, max_per_album, max_per_artist, cap_artists);
 
-    let recently_added = curate_from_pool(seed, "recently-added", 80, &recently_added_pool, now, &profile, discovery, randomness, "neutral", 5.0, true, 30.0);
-    let recently_added = cap_by_album(recently_added, max_per_album);
+    let recently_added = curate_from_pool(seed, "recently-added", playlist_len, &recently_added_pool, now, &profile, discovery, randomness, "neutral", 5.0, true, 30.0);
+    let recently_added = cap_variety(recently_added, max_per_album, max_per_artist, cap_artists);
 
-    let most_played = curate_from_pool(seed, "most-played", 80, &most_played_pool, now, &profile, discovery, randomness, "avoid", 5.0, false, 30.0);
-    let most_played = cap_by_album(most_played, max_per_album);
+    let most_played = curate_from_pool(seed, "most-played", playlist_len, &most_played_pool, now, &profile, discovery, randomness, "avoid", 5.0, false, 30.0);
+    let most_played = cap_variety(most_played, max_per_album, max_per_artist, cap_artists);
 
-    let rediscover = curate_from_pool(seed, "rediscover", 80, &rediscover_pool, now, &profile, discovery, randomness, "avoid", 30.0, false, 30.0);
-    let rediscover = cap_by_album(rediscover, max_per_album);
+    let rediscover = curate_from_pool(seed, "rediscover", playlist_len, &rediscover_pool, now, &profile, discovery, randomness, "avoid", 30.0, false, 30.0);
+    let rediscover = cap_variety(rediscover, max_per_album, max_per_artist, cap_artists);
 
-    let favorites = curate_from_pool(seed, "favorites", 80, &favorites_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
-    let favorites = cap_by_album(favorites, max_per_album);
+    let favorites = curate_from_pool(seed, "favorites", playlist_len, &favorites_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
+    let favorites = cap_variety(favorites, max_per_album, max_per_artist, cap_artists);
 
     let quick_hits_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.duration > 0.0 && s.duration <= 180.0).collect();
-    let quick_hits = curate_from_pool(seed, "quick-hits", 80, &quick_hits_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
-    let quick_hits = cap_by_album(quick_hits, max_per_album);
+    let quick_hits = curate_from_pool(seed, "quick-hits", playlist_len, &quick_hits_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
+    let quick_hits = cap_variety(quick_hits, max_per_album, max_per_artist, cap_artists);
 
     let long_sessions_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.duration >= 360.0).collect();
-    let long_sessions = curate_from_pool(seed, "long-sessions", 80, &long_sessions_pool, now, &profile, discovery, randomness, "avoid", 5.0, false, 30.0);
-    let long_sessions = cap_by_album(long_sessions, max_per_album);
+    let long_sessions = curate_from_pool(seed, "long-sessions", playlist_len, &long_sessions_pool, now, &profile, discovery, randomness, "avoid", 5.0, false, 30.0);
+    let long_sessions = cap_variety(long_sessions, max_per_album, max_per_artist, cap_artists);
 
     let deep_cuts_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.play_count <= 1 && s.added_at < now - 21 * DAY_SEC).collect();
-    let deep_cuts = curate_from_pool(seed, "deep-cuts", 80, &deep_cuts_pool, now, &profile, discovery, randomness, "avoid", 45.0, false, 30.0);
-    let deep_cuts = cap_by_album(deep_cuts, max_per_album);
+    let deep_cuts = curate_from_pool(seed, "deep-cuts", playlist_len, &deep_cuts_pool, now, &profile, discovery, randomness, "avoid", 45.0, false, 30.0);
+    let deep_cuts = cap_variety(deep_cuts, max_per_album, max_per_artist, cap_artists);
 
     let loved_played_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.favorite && s.play_count > 0).collect();
-    let loved_played = curate_from_pool(seed, "loved-played", 80, &loved_played_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
-    let loved_played = cap_by_album(loved_played, max_per_album);
+    let loved_played = curate_from_pool(seed, "loved-played", playlist_len, &loved_played_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
+    let loved_played = cap_variety(loved_played, max_per_album, max_per_artist, cap_artists);
 
     let explore_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.play_count <= 4).collect();
-    let explore = curate_from_pool(seed, "explore", 80, &explore_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
-    let explore = cap_by_album(explore, max_per_album);
+    let explore = curate_from_pool(seed, "explore", playlist_len, &explore_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
+    let explore = cap_variety(explore, max_per_album, max_per_artist, cap_artists);
 
     let mut playlists = vec![
         map_playlist("smart_daily_mix", "Daily Mix", "Fresh daily mix with genre balance.", daily_mix),
@@ -572,9 +1258,9 @@ pub fn generate_playlists(
             })
             .collect();
         ranked.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.1.len().cmp(&a.1.len())));
-        for (genre, list, _) in ranked.into_iter().take(6) {
-            let curated = curate_from_pool(seed, &format!("genre:{genre}"), 80, &list, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
-            let capped = cap_by_album(curated, max_per_album);
+        for (genre, list, _) in ranked.into_iter().take(genre_mix_limit) {
+            let curated = curate_from_pool(seed, &format!("genre:{genre}"), playlist_len, &list, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
+            let capped = cap_variety(curated, max_per_album, max_per_artist, cap_artists);
             playlists.push(map_playlist(&format!("smart_genre_mix_{}", genre.to_lowercase().replace(' ', "-")), &format!("{genre} Mix"), &format!("Mix based on your {genre} tracks."), capped));
         }
 
@@ -586,7 +1272,10 @@ pub fn generate_playlists(
             ("chill", "Chill Mix", "Laid-back tracks for winding down.", &["chill","ambient","lofi","lo-fi","acoustic","indie"], &["chill","slow","late","night","blue"]),
             ("workout", "Workout Mix", "High-intensity tracks to keep you moving.", &["edm","electronic","rock","hip hop","hip-hop","metal"], &["run","burn","power","move","energy"]),
         ];
-        for (id, name, desc, genre_hints, title_hints) in moods {
+        for (index, (id, name, desc, genre_hints, title_hints)) in moods.into_iter().enumerate() {
+            if index >= mood_mix_limit {
+                break;
+            }
             let mut scored: Vec<(SongInput, f32)> = Vec::new();
             for song in songs.iter().cloned() {
                 let raw_genre = song.genre.to_lowercase();
@@ -601,9 +1290,9 @@ pub fn generate_playlists(
                 scored.push((song, score));
             }
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            let picked: Vec<SongInput> = scored.into_iter().take(80).map(|s| s.0).collect();
+            let picked: Vec<SongInput> = scored.into_iter().take(playlist_len).map(|s| s.0).collect();
             if !picked.is_empty() {
-                let capped = cap_by_album(picked, max_per_album);
+                let capped = cap_variety(picked, max_per_album, max_per_artist, cap_artists);
                 playlists.push(map_playlist(&format!("smart_{id}_mix"), name, desc, capped));
             }
         }
@@ -611,5 +1300,5 @@ pub fn generate_playlists(
 
     // remove empties
     playlists.retain(|p| !p.song_ids.is_empty());
-    playlists
+    post_process_playlists(playlists, &songs, seed)
 }

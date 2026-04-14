@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,7 +12,7 @@ use tokio::sync::Mutex;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use crate::resolve_storage_path;
+use crate::{delete_storage_kv, read_storage_kv, write_storage_kv};
 
 static TIME_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]").unwrap());
 
@@ -322,6 +321,64 @@ fn normalize_title(value: &str) -> String {
     normalize_text(cleaned)
 }
 
+fn is_unknown_album(value: &str) -> bool {
+    let normalized = value.trim().to_lowercase();
+    normalized.is_empty()
+        || normalized == "unknown album"
+        || normalized == "unknown"
+        || normalized == "n/a"
+        || normalized == "na"
+        || normalized == "none"
+        || normalized == "unspecified"
+        || normalized == "single"
+}
+
+fn split_artist_title_hint(value: &str) -> Option<(String, String)> {
+    let separators = [" - ", " — ", " – ", " | ", " -- "];
+    for sep in separators {
+        if let Some((left, right)) = value.split_once(sep) {
+            let artist = left.trim();
+            let title = right.trim();
+            if !artist.is_empty() && !title.is_empty() {
+                return Some((artist.to_string(), title.to_string()));
+            }
+        }
+    }
+    None
+}
+
+fn clean_lyrics_title(raw: &str, artist_hint: Option<&str>) -> String {
+    let mut title = raw.to_string();
+    if let Some((left, right)) = split_artist_title_hint(&title) {
+        if let Some(artist) = artist_hint {
+            if normalize_artist(&left) == normalize_artist(artist) {
+                title = right;
+            }
+        }
+    }
+    let lowered = title.to_lowercase();
+    let cut = [" feat.", " ft.", " featuring ", " prod.", " produced by "]
+        .iter()
+        .filter_map(|token| lowered.find(token))
+        .min();
+    if let Some(idx) = cut {
+        title = title[..idx].to_string();
+    }
+    let noise = [
+        "official", "audio", "video", "lyrics", "lyric", "visualizer", "hq", "hd",
+        "high quality", "remaster", "remastered", "instrumental", "acapella",
+        "slowed", "reverb", "speed up", "sped up", "clean", "explicit",
+        "vocals", "orchestral", "intro", "outro", "thefloridaman",
+    ];
+    let lowered = title.to_lowercase();
+    if let Some(pos) = noise.iter().filter_map(|token| lowered.find(token)).min() {
+        title = title[..pos].to_string();
+    }
+    let stripped = PARENS_RE.replace_all(&title, " ");
+    let stripped = TRACK_CLEAN_RE.replace_all(&stripped, " ");
+    normalize_whitespace(&stripped)
+}
+
 fn is_close_match(candidate: &str, target: &str) -> bool {
     let left = normalize_title(candidate);
     let right = normalize_title(target);
@@ -460,34 +517,24 @@ fn is_unknown_genre(value: &str) -> bool {
         || normalized == "other"
 }
 
-fn read_text(app: &tauri::AppHandle, relative_path: &str) -> Result<Option<String>, String> {
-    let target = resolve_storage_path(app, relative_path)?;
-    if !target.exists() {
-        return Ok(None);
-    }
-    fs::read_to_string(&target)
-        .map(Some)
-        .map_err(|err| err.to_string())
+async fn read_text(app: &tauri::AppHandle, relative_path: &str) -> Result<Option<String>, String> {
+    read_storage_kv(app, relative_path).await
 }
 
-fn write_text(app: &tauri::AppHandle, relative_path: &str, content: &str) -> Result<(), String> {
-    let target = resolve_storage_path(app, relative_path)?;
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
-    fs::write(target, content).map_err(|err| err.to_string())
+async fn write_text(app: &tauri::AppHandle, relative_path: &str, content: &str) -> Result<(), String> {
+    write_storage_kv(app, relative_path, content).await
 }
 
-fn read_json<T: for<'de> Deserialize<'de>>(
+async fn read_json<T: for<'de> Deserialize<'de>>(
     app: &tauri::AppHandle,
     relative_path: &str,
 ) -> Result<Option<T>, String> {
-    if let Some(text) = read_text(app, relative_path)? {
+    if let Some(text) = read_text(app, relative_path).await? {
         match serde_json::from_str::<T>(&text) {
             Ok(parsed) => return Ok(Some(parsed)),
             Err(_) => {
                 if let Ok(target) = resolve_storage_path(app, relative_path) {
-                    let _ = fs::remove_file(target);
+                    let _ = delete_storage_kv(app, relative_path).await;
                 }
                 return Ok(None);
             }
@@ -513,9 +560,9 @@ async fn musicbrainz_throttle() {
     *guard = Some(now);
 }
 
-fn write_json<T: Serialize>(app: &tauri::AppHandle, relative_path: &str, value: &T) -> Result<(), String> {
+async fn write_json<T: Serialize>(app: &tauri::AppHandle, relative_path: &str, value: &T) -> Result<(), String> {
     let serialized = serde_json::to_string_pretty(value).map_err(|err| err.to_string())?;
-    write_text(app, relative_path, &serialized)
+    write_text(app, relative_path, &serialized).await
 }
 
 fn to_storage_cache_path(relative_path: &str) -> String {
@@ -769,7 +816,7 @@ pub async fn has_cached_artist_profile_rust(app: tauri::AppHandle, artist_name: 
         return Ok(true);
     }
     let cache_key = cache_key_for_artist(&name);
-    let cached: Option<ArtistProfile> = read_json(&app, &cache_key)?;
+    let cached: Option<ArtistProfile> = read_json(&app, &cache_key).await?;
     Ok(cached
         .as_ref()
         .map(|profile| is_valid_cached_summary(&profile.summary))
@@ -794,7 +841,7 @@ pub async fn read_cached_artist_profile_rust(
         });
     }
 
-    let cached: Option<ArtistProfile> = read_json(&app, &cache_key)?;
+    let cached: Option<ArtistProfile> = read_json(&app, &cache_key).await?;
     if let Some(profile) = cached {
         if is_valid_cached_summary(&profile.summary) {
             return Ok(ArtistProfileLoadResult {
@@ -832,7 +879,7 @@ pub async fn load_artist_profile_rust(
         });
     }
 
-    if let Some(cached) = read_json::<ArtistProfile>(&app, &cache_key)? {
+    if let Some(cached) = read_json::<ArtistProfile>(&app, &cache_key).await? {
         if is_valid_cached_summary(&cached.summary) {
             return Ok(ArtistProfileLoadResult {
                 status: "ready".to_string(),
@@ -845,7 +892,7 @@ pub async fn load_artist_profile_rust(
 
     match fetch_artist_profile(&name).await {
         Ok(Some(profile)) => {
-            write_json(&app, &cache_key, &profile)?;
+            write_json(&app, &cache_key, &profile).await?;
             Ok(ArtistProfileLoadResult {
                 status: "ready".to_string(),
                 profile: Some(profile),
@@ -872,7 +919,9 @@ pub async fn load_artist_profile_rust(
 pub async fn load_album_artwork_cache_rust(
     app: tauri::AppHandle,
 ) -> Result<HashMap<String, String>, String> {
-    Ok(read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)?.unwrap_or_default())
+    Ok(read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)
+        .await?
+        .unwrap_or_default())
 }
 
 #[tauri::command]
@@ -884,7 +933,9 @@ pub async fn read_cached_album_artwork_rust(
     if artist.trim().is_empty() || album.trim().is_empty() {
         return Ok(None);
     }
-    let cache = read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)?.unwrap_or_default();
+    let cache = read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)
+        .await?
+        .unwrap_or_default();
     let key = cache_key_for_album_art(&artist, &album);
     Ok(cache.get(&key).cloned())
 }
@@ -963,7 +1014,9 @@ pub async fn load_album_artwork_rust(
     if artist.trim().is_empty() || album.trim().is_empty() {
         return Ok(None);
     }
-    let mut cache = read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)?.unwrap_or_default();
+    let mut cache = read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)
+        .await?
+        .unwrap_or_default();
     let key = cache_key_for_album_art(&artist, &album);
     if let Some(cached) = cache.get(&key) {
         return Ok(Some(cached.clone()));
@@ -975,7 +1028,7 @@ pub async fn load_album_artwork_rust(
     };
     if let Some(value) = fetched.clone() {
         cache.insert(key, value.clone());
-        write_json(&app, ALBUM_ART_CACHE_PATH, &cache)?;
+        write_json(&app, ALBUM_ART_CACHE_PATH, &cache).await?;
     }
     Ok(fetched)
 }
@@ -1069,7 +1122,9 @@ fn parse_release_tracks(payload: &MbReleaseLookup) -> Vec<AlbumTrack> {
 pub async fn load_album_tracklist_cache_rust(
     app: tauri::AppHandle,
 ) -> Result<HashMap<String, AlbumTracklist>, String> {
-    Ok(read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)?.unwrap_or_default())
+    Ok(read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
+        .await?
+        .unwrap_or_default())
 }
 
 #[tauri::command]
@@ -1081,7 +1136,9 @@ pub async fn read_cached_album_tracklist_rust(
     if artist.trim().is_empty() || album.trim().is_empty() {
         return Ok(None);
     }
-    let cache = read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)?.unwrap_or_default();
+    let cache = read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
+        .await?
+        .unwrap_or_default();
     let key = get_album_tracklist_key(&artist, &album);
     Ok(cache.get(&key).cloned())
 }
@@ -1095,7 +1152,9 @@ pub async fn load_album_tracklist_rust(
     if artist.trim().is_empty() || album.trim().is_empty() {
         return Ok(None);
     }
-    let mut cache = read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)?.unwrap_or_default();
+    let mut cache = read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
+        .await?
+        .unwrap_or_default();
     let key = get_album_tracklist_key(&artist, &album);
     if let Some(cached) = cache.get(&key) {
         if !cached.tracks.is_empty() {
@@ -1150,7 +1209,7 @@ pub async fn load_album_tracklist_rust(
         fetched_at: now_unix(),
     };
     cache.insert(key, entry.clone());
-    write_json(&app, ALBUM_TRACKLIST_CACHE_PATH, &cache)?;
+    write_json(&app, ALBUM_TRACKLIST_CACHE_PATH, &cache).await?;
     Ok(Some(entry))
 }
 
@@ -1158,7 +1217,9 @@ pub async fn load_album_tracklist_rust(
 pub async fn load_song_genre_cache_rust(
     app: tauri::AppHandle,
 ) -> Result<HashMap<String, SongGenreCacheEntry>, String> {
-    Ok(read_json::<HashMap<String, SongGenreCacheEntry>>(&app, SONG_GENRE_CACHE_PATH)?.unwrap_or_default())
+    Ok(read_json::<HashMap<String, SongGenreCacheEntry>>(&app, SONG_GENRE_CACHE_PATH)
+        .await?
+        .unwrap_or_default())
 }
 
 fn cache_key_for_song_genre(song: &SongInput) -> String {
@@ -1266,7 +1327,9 @@ pub async fn load_song_genre_rust(
         }
     }
 
-    let mut cache = read_json::<HashMap<String, SongGenreCacheEntry>>(&app, SONG_GENRE_CACHE_PATH)?.unwrap_or_default();
+    let mut cache = read_json::<HashMap<String, SongGenreCacheEntry>>(&app, SONG_GENRE_CACHE_PATH)
+        .await?
+        .unwrap_or_default();
     let key = cache_key_for_song_genre(&song);
     if let Some(entry) = cache.get(&key) {
         if !is_unknown_genre(&entry.genre) {
@@ -1288,7 +1351,7 @@ pub async fn load_song_genre_rust(
                     fetched_at: now_unix(),
                 },
             );
-            write_json(&app, SONG_GENRE_CACHE_PATH, &cache)?;
+            write_json(&app, SONG_GENRE_CACHE_PATH, &cache).await?;
             Ok(SongGenreLoadResult {
                 status: "ready".to_string(),
                 genre: Some(genre),
@@ -1333,30 +1396,32 @@ fn legacy_cache_keys_for_song(song: &SongInput) -> Vec<String> {
     keys.into_iter().filter(|key| key != &cache_key_for_song(song)).collect()
 }
 
-fn read_lyrics_index(app: &tauri::AppHandle) -> Result<HashMap<String, String>, String> {
-    Ok(read_json::<HashMap<String, String>>(app, LYRICS_INDEX_PATH)?.unwrap_or_default())
+async fn read_lyrics_index(app: &tauri::AppHandle) -> Result<HashMap<String, String>, String> {
+    Ok(read_json::<HashMap<String, String>>(app, LYRICS_INDEX_PATH)
+        .await?
+        .unwrap_or_default())
 }
 
-fn write_lyrics_index(app: &tauri::AppHandle, index: &HashMap<String, String>) -> Result<(), String> {
-    write_json(app, LYRICS_INDEX_PATH, index)
+async fn write_lyrics_index(app: &tauri::AppHandle, index: &HashMap<String, String>) -> Result<(), String> {
+    write_json(app, LYRICS_INDEX_PATH, index).await
 }
 
-fn read_cached_lyrics_text(
+async fn read_cached_lyrics_text(
     app: &tauri::AppHandle,
     song: &SongInput,
 ) -> Result<Option<(String, String)>, String> {
     let key = cache_key_for_song(song);
-    if let Some(text) = read_text(app, &key)? {
+    if let Some(text) = read_text(app, &key).await? {
         if !text.trim().is_empty() {
             return Ok(Some((key, text)));
         }
     }
 
     if let Some(song_id) = song.id.as_deref() {
-        let index = read_lyrics_index(app)?;
+        let index = read_lyrics_index(app).await?;
         if let Some(mapped) = index.get(song_id) {
             if mapped != &key {
-                if let Some(text) = read_text(app, mapped)? {
+                if let Some(text) = read_text(app, mapped).await? {
                     if !text.trim().is_empty() {
                         return Ok(Some((mapped.clone(), text)));
                     }
@@ -1366,7 +1431,7 @@ fn read_cached_lyrics_text(
     }
 
     for legacy in legacy_cache_keys_for_song(song) {
-        if let Some(text) = read_text(app, &legacy)? {
+        if let Some(text) = read_text(app, &legacy).await? {
             if !text.trim().is_empty() {
                 return Ok(Some((legacy, text)));
             }
@@ -1585,15 +1650,18 @@ impl IfEmptyElse for String {
     }
 }
 
-async fn fetch_lyrics_search_candidates(song: &SongInput) -> Result<Vec<LyricsCandidate>, String> {
-    let artist = get_primary_artist_name(&song.artist);
-    let title = song.title.trim();
-    if artist.trim().is_empty() || title.is_empty() {
+async fn fetch_lyrics_search_candidates_for(
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    song: &SongInput,
+) -> Result<Vec<LyricsCandidate>, String> {
+    if artist.trim().is_empty() || title.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let mut params = vec![("artist_name", artist.as_str()), ("track_name", title)];
-    if let Some(album) = song.album.as_deref() {
-        if !album.trim().is_empty() {
+    let mut params = vec![("artist_name", artist), ("track_name", title)];
+    if let Some(album) = album {
+        if !album.trim().is_empty() && !is_unknown_album(album) {
             params.push(("album_name", album));
         }
     }
@@ -1624,15 +1692,18 @@ async fn fetch_lyrics_search_candidates(song: &SongInput) -> Result<Vec<LyricsCa
     Ok(dedupe_candidates(parsed))
 }
 
-async fn fetch_lyrics_single_candidate(song: &SongInput) -> Result<Vec<LyricsCandidate>, String> {
-    let artist = get_primary_artist_name(&song.artist);
-    let title = song.title.trim();
-    if artist.trim().is_empty() || title.is_empty() {
+async fn fetch_lyrics_single_candidate_for(
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    song: &SongInput,
+) -> Result<Vec<LyricsCandidate>, String> {
+    if artist.trim().is_empty() || title.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let mut params = vec![("artist_name", artist.as_str()), ("track_name", title)];
-    if let Some(album) = song.album.as_deref() {
-        if !album.trim().is_empty() {
+    let mut params = vec![("artist_name", artist), ("track_name", title)];
+    if let Some(album) = album {
+        if !album.trim().is_empty() && !is_unknown_album(album) {
             params.push(("album_name", album));
         }
     }
@@ -1663,11 +1734,50 @@ async fn fetch_lyrics_single_candidate(song: &SongInput) -> Result<Vec<LyricsCan
 }
 
 async fn fetch_lyrics_candidates(song: &SongInput) -> Result<Vec<LyricsCandidate>, String> {
-    let mut candidates = fetch_lyrics_search_candidates(song).await?;
-    if candidates.is_empty() {
-        candidates = fetch_lyrics_single_candidate(song).await?;
+    let artist = get_primary_artist_name(&song.artist);
+    let title = song.title.trim().to_string();
+    if artist.trim().is_empty() || title.trim().is_empty() {
+        return Ok(Vec::new());
     }
-    Ok(candidates)
+
+    let cleaned_title = clean_lyrics_title(&title, Some(&artist));
+    let parsed = split_artist_title_hint(&title);
+    let mut queries: Vec<(String, String, Option<String>)> = Vec::new();
+    let album = song.album.as_deref();
+
+    queries.push((artist.clone(), title.clone(), album.map(|v| v.to_string())));
+    if cleaned_title != title {
+        queries.push((artist.clone(), cleaned_title.clone(), None));
+    }
+    if let Some((parsed_artist, parsed_title)) = parsed {
+        if normalize_artist(&parsed_artist) == normalize_artist(&artist) {
+            let cleaned = clean_lyrics_title(&parsed_title, Some(&artist));
+            if cleaned != title {
+                queries.push((artist.clone(), cleaned, None));
+            }
+        } else if song.artist.trim().eq_ignore_ascii_case("unknown artist") {
+            let cleaned = clean_lyrics_title(&parsed_title, Some(&parsed_artist));
+            queries.push((parsed_artist, cleaned, None));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let mut all_candidates = Vec::new();
+    for (artist, title, album) in &queries {
+        let key = format!("{}::{}", normalize_artist(artist), normalize_title(title));
+        if !seen.insert(key) {
+            continue;
+        }
+        let results = fetch_lyrics_search_candidates_for(artist, title, album.as_deref(), song).await?;
+        all_candidates.extend(results);
+    }
+    if all_candidates.is_empty() {
+        for (artist, title, album) in &queries {
+            let results = fetch_lyrics_single_candidate_for(artist, title, album.as_deref(), song).await?;
+            all_candidates.extend(results);
+        }
+    }
+    Ok(dedupe_candidates(all_candidates))
 }
 
 fn build_lyrics_result(raw: &str, cache_key: &str, from_cache: bool) -> LyricsLoadResult {
@@ -1694,7 +1804,7 @@ pub async fn lyrics_read_cached_rust(
     song: SongInput,
 ) -> Result<LyricsLoadResult, String> {
     let key = cache_key_for_song(&song);
-    if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song)? {
+    if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
         if !text.trim().is_empty() {
             return Ok(build_lyrics_result(&text, &cache_key, true));
         }
@@ -1714,12 +1824,12 @@ pub async fn lyrics_save_selection_rust(
     candidate: LyricsCandidate,
 ) -> Result<LyricsSaveResult, String> {
     let key = cache_key_for_song(&song);
-    write_text(&app, &key, &candidate.raw)?;
+    write_text(&app, &key, &candidate.raw).await?;
     if let Some(song_id) = song.id.as_ref() {
-        let mut index = read_lyrics_index(&app)?;
+        let mut index = read_lyrics_index(&app).await?;
         if index.get(song_id) != Some(&key) {
             index.insert(song_id.clone(), key.clone());
-            write_lyrics_index(&app, &index)?;
+            write_lyrics_index(&app, &index).await?;
         }
     }
     Ok(LyricsSaveResult {
@@ -1735,21 +1845,21 @@ pub async fn lyrics_load_rust(
     song: SongInput,
 ) -> Result<LyricsLoadResult, String> {
     let key = cache_key_for_song(&song);
-    if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song)? {
+    if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
         if validate_lyrics_quality(&text) {
             if let Some(song_id) = song.id.as_ref() {
-                let mut index = read_lyrics_index(&app)?;
+                let mut index = read_lyrics_index(&app).await?;
                 if index.get(song_id) != Some(&key) {
                     index.insert(song_id.clone(), key.clone());
-                    write_lyrics_index(&app, &index)?;
+                    write_lyrics_index(&app, &index).await?;
                 }
             }
             if cache_key != key {
-                let _ = write_text(&app, &key, &text);
+                let _ = write_text(&app, &key, &text).await;
             }
             return Ok(build_lyrics_result(&text, &cache_key, true));
         } else {
-            let _ = write_text(&app, &cache_key, "");
+            let _ = write_text(&app, &cache_key, "").await;
         }
     }
 
@@ -1785,12 +1895,12 @@ pub async fn lyrics_load_rust(
         });
     }
 
-    write_text(&app, &key, &best.raw)?;
+    write_text(&app, &key, &best.raw).await?;
     if let Some(song_id) = song.id.as_ref() {
-        let mut index = read_lyrics_index(&app)?;
+        let mut index = read_lyrics_index(&app).await?;
         if index.get(song_id) != Some(&key) {
             index.insert(song_id.clone(), key.clone());
-            write_lyrics_index(&app, &index)?;
+            write_lyrics_index(&app, &index).await?;
         }
     }
 

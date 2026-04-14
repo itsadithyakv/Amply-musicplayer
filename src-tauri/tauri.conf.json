@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Amply Music Player",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "identifier": "AdithyaKV.AmplyMusicPlayer",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -19,6 +19,7 @@
         "minHeight": 700,
         "resizable": true,
         "fullscreen": false,
+        "devtools": false,
         "maximized": true
       }
     ],

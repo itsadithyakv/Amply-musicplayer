@@ -1241,6 +1241,12 @@ const applyOverrides = (
   });
 };
 
+export const applyOverridesOnly = (
+  playlists: Playlist[],
+  songs: Song[],
+  overrides: Record<string, string[]>,
+): Playlist[] => applyOverrides(playlists, overrides, songs);
+
 export const postProcessGeneratedPlaylists = async (
   playlists: Playlist[],
   songs: Song[],

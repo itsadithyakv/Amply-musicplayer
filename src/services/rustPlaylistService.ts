@@ -8,6 +8,7 @@ type RustPlaylist = {
   description: string;
   type: Playlist['type'];
   songIds: string[];
+  artwork?: string | null;
   updatedAt: number;
 };
 
@@ -23,6 +24,7 @@ const toRustSong = (song: Song) => ({
   playCount: song.playCount ?? 0,
   lastPlayed: song.lastPlayed ?? null,
   favorite: song.favorite ?? false,
+  albumArt: song.albumArt ?? null,
   skipCount: song.skipCount ?? 0,
   totalPlaySeconds: song.totalPlaySeconds ?? 0,
   manualQueueAdds: song.manualQueueAdds ?? 0,

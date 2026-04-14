@@ -10,6 +10,7 @@
     "core:default",
     "core:webview:allow-create-webview-window",
     "core:webview:allow-set-webview-background-color",
+    "core:webview:deny-internal-toggle-devtools",
     "core:window:allow-create",
     "core:window:allow-get-all-windows",
     "core:window:allow-show",
