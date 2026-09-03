@@ -1,3 +1,4 @@
+import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import { useSyncExternalStore } from 'react';
 import { endPerfMeasure, markPerf, recordPerfEvent } from '@/services/perfDiagnostics';
 
@@ -206,21 +207,14 @@ export const scheduleNonCriticalTask = (task: () => void, options: NonCriticalTa
   const { delayMs = 0, timeoutMs = 1200, reason } = options;
   const effectiveDelay = getNonCriticalDelay(delayMs);
   let timeoutHandle: number | null = null;
-  let idleHandle: number | null = null;
-  const idle = (globalThis as typeof globalThis & {
-    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    cancelIdleCallback?: (handle: number) => void;
-  }).requestIdleCallback;
-  const cancelIdle = (globalThis as typeof globalThis & {
-    cancelIdleCallback?: (handle: number) => void;
-  }).cancelIdleCallback;
+  let idleHandle: IdleHandle | null = null;
 
   const run = () => {
     if (reason) {
       recordPerfEvent('scheduler.task.run', { reason, phase: getPhase() });
     }
-    if (typeof idle === 'function' && !isSchedulerBackgroundHidden()) {
-      idleHandle = idle(task, { timeout: timeoutMs });
+    if (!isSchedulerBackgroundHidden()) {
+      idleHandle = requestIdle(task, { timeout: timeoutMs, fallbackDelayMs: 0 });
       return;
     }
     timeoutHandle = window.setTimeout(task, 0);
@@ -232,8 +226,6 @@ export const scheduleNonCriticalTask = (task: () => void, options: NonCriticalTa
     if (timeoutHandle !== null) {
       window.clearTimeout(timeoutHandle);
     }
-    if (idleHandle !== null && typeof cancelIdle === 'function') {
-      cancelIdle(idleHandle);
-    }
+    cancelIdle(idleHandle);
   };
 };

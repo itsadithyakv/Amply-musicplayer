@@ -1,3 +1,5 @@
+import { djb2 as hash } from '@/utils/hash';
+import { normalizeSlug as normalizeKey, normalizeToken } from '@/utils/text';
 import type { Playlist, Song } from '@/types/music';
 import { recordPerfEvent, recordSelectorCacheHit, recordSelectorRebuild } from '@/services/perfDiagnostics';
 import { writeStorageJsonDebounced } from '@/services/storageService';
@@ -77,28 +79,7 @@ const current = {
 };
 const surfacedRotation = new Map<string, string[]>();
 
-const normalizeToken = (value: string | undefined | null): string =>
-  (value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const normalizeKey = (value: string | undefined | null): string =>
-  normalizeToken(value).replace(/\s+/g, '-');
-
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
-
-const hash = (value: string): number => {
-  let h = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    h = (h << 5) - h + value.charCodeAt(index);
-    h |= 0;
-  }
-  return Math.abs(h);
-};
 
 const compactSongSignal = (song: Song): string =>
   [

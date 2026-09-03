@@ -1,11 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     io::{Cursor, Read, Seek},
     path::{Component, Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc, Arc, OnceLock,
@@ -26,9 +25,10 @@ use lofty::{
     probe::Probe,
     tag::Tag,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri::image::Image;
+use tauri_plugin_opener::OpenerExt;
 use tokio::fs as async_fs;
 use walkdir::WalkDir;
 use rusqlite::{params, Connection};
@@ -67,9 +67,6 @@ use windows::Win32::UI::{
     },
 };
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 
 trait ReadSeek: Read + Seek + Send + Sync {}
 impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
@@ -97,59 +94,9 @@ struct ScannedSong {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StorageStats {
-    storage_path: String,
-    lyrics_files: usize,
-    artist_files: usize,
-    metadata_files: usize,
-    playlists_files: usize,
-    total_files: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct OutputDeviceInfo {
     name: String,
     is_default: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AudioFileFingerprint {
-    size: u64,
-    modified_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OnlineTrackResult {
-    id: String,
-    provider: String,
-    title: String,
-    artist: String,
-    album: Option<String>,
-    year: Option<String>,
-    duration: Option<f64>,
-    license: Option<String>,
-    source_url: String,
-    artwork_url: Option<String>,
-    download_label: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OnlineDownloadRequest {
-    id: String,
-    title: String,
-    artist: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OnlineDownloadedTrack {
-    path: String,
-    filename: String,
-    folder: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -169,12 +116,6 @@ struct MediaKeyEvent {
 }
 
 const EQ_BAND_FREQUENCIES: [f32; 5] = [60.0, 250.0, 1000.0, 4000.0, 12000.0];
-#[cfg(target_os = "windows")]
-const WINDOWS_AUTOSTART_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-#[cfg(target_os = "windows")]
-const WINDOWS_AUTOSTART_VALUE_NAME: &str = "Amply Music Player";
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone, Copy, Debug)]
 struct BiquadCoeffs {
@@ -454,7 +395,6 @@ struct NativeAudio {
     start_instant: Option<Instant>,
     is_playing: bool,
     loop_current: bool,
-    device_name: Option<String>,
     eq_gains: [f32; 5],
     rate: f32,
     volume: f32,
@@ -478,7 +418,6 @@ impl Default for NativeAudio {
             start_instant: None,
             is_playing: false,
             loop_current: false,
-            device_name: None,
             eq_gains: [0.0; 5],
             rate: 1.0,
             volume: 0.85,
@@ -553,7 +492,6 @@ impl NativeAudio {
                 start_instant: None,
                 is_playing: false,
                 loop_current: false,
-                    device_name: None,
                     eq_gains: [0.0; 5],
                     rate: 1.0,
                 volume: 0.85,
@@ -953,7 +891,6 @@ impl NativeAudio {
 
         self.stream = Some(stream);
         self.handle = Some(handle);
-        self.device_name = name;
 
         if self.sink.is_some() {
             self.rebuild_sink(position, was_playing)?;
@@ -968,7 +905,7 @@ fn is_supported_audio(path: &Path) -> bool {
         Some(ext) => {
             matches!(
                 ext.to_ascii_lowercase().as_str(),
-                "mp3" | "mp4" | "m4a" | "aac" | "wav" | "flac" | "ogg" | "opus" | "aif" | "aiff" | "wma" | "webm"
+                "mp3" | "mp4" | "m4a" | "aac" | "wav" | "flac" | "ogg" | "aif" | "aiff"
             )
         }
         None => false,
@@ -976,14 +913,6 @@ fn is_supported_audio(path: &Path) -> bool {
 }
 
 fn default_music_path() -> PathBuf {
-    let cwd_music = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("music");
-
-    if cwd_music.exists() {
-        return cwd_music;
-    }
-
     if let Some(music_dir) = dirs::audio_dir() {
         return music_dir;
     }
@@ -1203,326 +1132,6 @@ fn is_low_confidence_scan_artist(artist: &str) -> bool {
     ]
     .iter()
     .any(|term| normalized.contains(term))
-}
-
-fn json_string(value: &serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::String(text) => {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-        serde_json::Value::Array(items) => items.iter().find_map(json_string),
-        _ => None,
-    }
-}
-
-fn json_number(value: &serde_json::Value) -> Option<f64> {
-    match value {
-        serde_json::Value::Number(number) => number.as_f64(),
-        serde_json::Value::String(text) => text.parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-fn first_year(value: Option<String>) -> Option<String> {
-    let text = value?;
-    let year = text
-        .chars()
-        .collect::<Vec<_>>()
-        .windows(4)
-        .find_map(|window| {
-            let candidate: String = window.iter().collect();
-            if candidate.chars().all(|ch| ch.is_ascii_digit()) {
-                Some(candidate)
-            } else {
-                None
-            }
-        })?;
-    Some(year)
-}
-
-fn internet_archive_file_url(identifier: &str, file_name: &str) -> String {
-    let encoded_name = file_name
-        .split('/')
-        .map(urlencoding::encode)
-        .map(|part| part.into_owned())
-        .collect::<Vec<_>>()
-        .join("/");
-    format!("https://archive.org/download/{identifier}/{encoded_name}")
-}
-
-fn internet_archive_artwork_url(identifier: &str) -> String {
-    format!("https://archive.org/services/img/{identifier}")
-}
-
-fn is_downloadable_archive_audio_file(file: &serde_json::Value) -> bool {
-    let name = json_string(&file["name"]).unwrap_or_default();
-    if name.is_empty() || name.starts_with("__") {
-        return false;
-    }
-    if name.ends_with("_files.xml") || name.ends_with("_meta.xml") || name.ends_with("_reviews.xml") {
-        return false;
-    }
-    if !is_supported_audio(Path::new(&name)) {
-        return false;
-    }
-    let source = json_string(&file["source"]).unwrap_or_default();
-    if source.eq_ignore_ascii_case("metadata") {
-        return false;
-    }
-    true
-}
-
-fn archive_audio_file_rank(file: &serde_json::Value) -> i32 {
-    let name = json_string(&file["name"]).unwrap_or_default().to_ascii_lowercase();
-    let format = json_string(&file["format"]).unwrap_or_default().to_ascii_lowercase();
-    if name.ends_with(".mp3") || format.contains("mp3") {
-        100
-    } else if name.ends_with(".m4a") || name.ends_with(".aac") {
-        90
-    } else if name.ends_with(".ogg") || name.ends_with(".opus") {
-        80
-    } else if name.ends_with(".flac") {
-        70
-    } else if name.ends_with(".wav") {
-        60
-    } else {
-        10
-    }
-}
-
-fn pick_archive_audio_file(metadata: &serde_json::Value) -> Option<(String, String)> {
-    let files = metadata["files"].as_array()?;
-    files
-        .iter()
-        .filter(|file| is_downloadable_archive_audio_file(file))
-        .max_by(|a, b| {
-            archive_audio_file_rank(a)
-                .cmp(&archive_audio_file_rank(b))
-                .then_with(|| {
-                    let a_size = json_string(&a["size"]).and_then(|value| value.parse::<u64>().ok()).unwrap_or(0);
-                    let b_size = json_string(&b["size"]).and_then(|value| value.parse::<u64>().ok()).unwrap_or(0);
-                    a_size.cmp(&b_size)
-                })
-        })
-        .and_then(|file| {
-            let name = json_string(&file["name"])?;
-            let format = json_string(&file["format"]).unwrap_or_else(|| "Audio".to_string());
-            Some((name, format))
-        })
-}
-
-fn sanitize_download_filename(input: &str) -> String {
-    let mut output = String::new();
-    let mut last_space = false;
-    for ch in input.chars() {
-        let next = match ch {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => ' ',
-            ch if ch.is_control() => ' ',
-            ch => ch,
-        };
-        if next.is_whitespace() {
-            if !last_space {
-                output.push(' ');
-                last_space = true;
-            }
-        } else {
-            output.push(next);
-            last_space = false;
-        }
-    }
-    let trimmed = output.trim().trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        "Amply Download".to_string()
-    } else {
-        trimmed.chars().take(140).collect()
-    }
-}
-
-fn unique_download_path(folder: &Path, base_name: &str, extension: &str) -> PathBuf {
-    let mut candidate = folder.join(format!("{base_name}.{extension}"));
-    if !candidate.exists() {
-        return candidate;
-    }
-    for index in 2..1000 {
-        candidate = folder.join(format!("{base_name} ({index}).{extension}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    folder.join(format!("{base_name}-{}.{}", chrono::Utc::now().timestamp(), extension))
-}
-
-fn resolve_download_root(library_path: Option<String>) -> PathBuf {
-    let trimmed = library_path.unwrap_or_default().trim().to_string();
-    if trimmed.is_empty() {
-        return default_music_path();
-    }
-    let path = PathBuf::from(trimmed);
-    if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    }
-}
-
-#[tauri::command]
-async fn online_search_tracks(query: String) -> Result<Vec<OnlineTrackResult>, String> {
-    let trimmed = query.trim();
-    if trimmed.len() < 2 {
-        return Ok(Vec::new());
-    }
-
-    let client = reqwest::Client::new();
-    let archive_query = format!(
-        "mediatype:audio AND (title:({0}) OR creator:({0}) OR description:({0}))",
-        trimmed
-    );
-    let response = client
-        .get("https://archive.org/advancedsearch.php")
-        .query(&[
-            ("q", archive_query.as_str()),
-            ("fl[]", "identifier"),
-            ("fl[]", "title"),
-            ("fl[]", "creator"),
-            ("fl[]", "date"),
-            ("fl[]", "licenseurl"),
-            ("fl[]", "downloads"),
-            ("fl[]", "description"),
-            ("sort[]", "downloads desc"),
-            ("rows", "24"),
-            ("page", "1"),
-            ("output", "json"),
-        ])
-        .send()
-        .await
-        .map_err(|err| err.to_string())?
-        .error_for_status()
-        .map_err(|err| err.to_string())?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let docs = response["response"]["docs"]
-        .as_array()
-        .ok_or_else(|| "Online search returned an unexpected response".to_string())?;
-
-    let mut results = Vec::new();
-    for doc in docs {
-        let Some(identifier) = json_string(&doc["identifier"]) else {
-            continue;
-        };
-        let title = json_string(&doc["title"]).unwrap_or_else(|| identifier.clone());
-        let artist = json_string(&doc["creator"]).unwrap_or_else(|| "Internet Archive".to_string());
-        let year = first_year(json_string(&doc["date"]));
-        let license = json_string(&doc["licenseurl"]);
-        let source_url = format!("https://archive.org/details/{identifier}");
-        results.push(OnlineTrackResult {
-            id: identifier.clone(),
-            provider: "Internet Archive".to_string(),
-            title,
-            artist,
-            album: None,
-            year,
-            duration: json_number(&doc["runtime"]),
-            license,
-            source_url,
-            artwork_url: Some(internet_archive_artwork_url(&identifier)),
-            download_label: "Download audio".to_string(),
-        });
-    }
-
-    Ok(results)
-}
-
-#[tauri::command]
-async fn online_download_track(
-    item: OnlineDownloadRequest,
-    library_path: Option<String>,
-) -> Result<OnlineDownloadedTrack, String> {
-    let identifier = item.id.trim().to_string();
-    if identifier.is_empty() {
-        return Err("Missing online track identifier".to_string());
-    }
-
-    let client = reqwest::Client::new();
-    let metadata_url = format!("https://archive.org/metadata/{identifier}");
-    let metadata = client
-        .get(&metadata_url)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?
-        .error_for_status()
-        .map_err(|err| err.to_string())?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let (remote_name, format_label) = pick_archive_audio_file(&metadata)
-        .ok_or_else(|| "No downloadable audio file was found for this result".to_string())?;
-    let download_url = internet_archive_file_url(&identifier, &remote_name);
-    let bytes = client
-        .get(&download_url)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?
-        .error_for_status()
-        .map_err(|err| err.to_string())?
-        .bytes()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if bytes.is_empty() {
-        return Err("Downloaded file was empty".to_string());
-    }
-    if bytes.len() > 250 * 1024 * 1024 {
-        return Err("Downloaded file is too large for Amply's quick downloader".to_string());
-    }
-
-    let root = resolve_download_root(library_path);
-    let download_folder = root.join("Amply Downloads");
-    async_fs::create_dir_all(&download_folder)
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let remote_ext = Path::new(&remote_name)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .filter(|ext| !ext.trim().is_empty())
-        .unwrap_or_else(|| {
-            let lowered = format_label.to_ascii_lowercase();
-            if lowered.contains("mp3") {
-                "mp3"
-            } else if lowered.contains("flac") {
-                "flac"
-            } else if lowered.contains("ogg") {
-                "ogg"
-            } else {
-                "mp3"
-            }
-        })
-        .to_ascii_lowercase();
-    let base = sanitize_download_filename(&format!("{} - {}", item.artist.trim(), item.title.trim()));
-    let target = unique_download_path(&download_folder, &base, &remote_ext);
-    async_fs::write(&target, bytes)
-        .await
-        .map_err(|err| err.to_string())?;
-
-    Ok(OnlineDownloadedTrack {
-        filename: target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Downloaded audio")
-            .to_string(),
-        folder: download_folder.to_string_lossy().to_string(),
-        path: target.to_string_lossy().to_string(),
-    })
 }
 
 #[tauri::command]
@@ -1824,62 +1433,12 @@ async fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn get_storage_stats(app: tauri::AppHandle) -> Result<StorageStats, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = storage_root_path(&app)?;
-        let lyrics_files = count_storage_prefix_with_suffix(&app, "lyrics_cache/", Some(".lrc")).unwrap_or(0);
-        let artist_files = count_storage_prefix(&app, "artist_cache/").unwrap_or(0);
-        let metadata_files = count_storage_prefix(&app, "metadata_cache/").unwrap_or(0);
-        let playlists_files = count_storage_prefix(&app, "playlists/").unwrap_or(0);
-        let total_files = lyrics_files + artist_files + metadata_files + playlists_files;
-
-        Ok(StorageStats {
-            storage_path: root.to_string_lossy().to_string(),
-            lyrics_files,
-            artist_files,
-            metadata_files,
-            playlists_files,
-            total_files,
-        })
-    })
-    .await
-    .map_err(|err| err.to_string())?
-}
-
-#[tauri::command]
 async fn open_storage_dir(app: tauri::AppHandle) -> Result<(), String> {
     let root = ensure_storage_dirs_async(&app).await?;
     let target = root.to_string_lossy().to_string();
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&target)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&target)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&target)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Ok(())
+    app.opener()
+        .open_path(target, None::<&str>)
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -1924,62 +1483,6 @@ async fn delete_song_file(path: String) -> Result<bool, String> {
     })
     .await
     .map_err(|err| err.to_string())?
-}
-
-fn count_storage_prefix(app: &tauri::AppHandle, prefix: &str) -> Result<usize, String> {
-    count_storage_prefix_with_suffix(app, prefix, None)
-}
-
-fn count_storage_prefix_with_suffix(
-    app: &tauri::AppHandle,
-    prefix: &str,
-    suffix: Option<&str>,
-) -> Result<usize, String> {
-    let mut paths = HashSet::new();
-    let db_path = storage_db_path(app)?;
-    let conn = Connection::open(db_path).map_err(|err| err.to_string())?;
-    init_storage_db(&conn)?;
-    let like = format!("{prefix}%");
-    let mut stmt = conn
-        .prepare("SELECT path FROM kv WHERE path LIKE ?1")
-        .map_err(|err| err.to_string())?;
-    let rows = stmt
-        .query_map(params![like], |row| row.get::<_, String>(0))
-        .map_err(|err| err.to_string())?;
-    for row in rows {
-        if let Ok(path) = row {
-            let normalized = path.replace('\\', "/");
-            if suffix.map(|value| normalized.ends_with(value)).unwrap_or(true) {
-                paths.insert(normalized);
-            }
-        }
-    }
-
-    let root = storage_root_path(app)?;
-    let prefix_path = root.join(prefix.trim_end_matches('/'));
-    if prefix_path.exists() {
-        for entry in WalkDir::new(&prefix_path).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            if let Ok(relative) = entry.path().strip_prefix(&root) {
-                let normalized = relative.to_string_lossy().replace('\\', "/");
-                if suffix.map(|value| normalized.ends_with(value)).unwrap_or(true) {
-                    paths.insert(normalized);
-                }
-            }
-        }
-    }
-
-    Ok(paths.len())
-}
-
-#[tauri::command]
-fn pick_music_folder() -> Option<String> {
-    rfd::FileDialog::new()
-        .set_title("Select Music Folder")
-        .pick_folder()
-        .map(|path| path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -2180,25 +1683,6 @@ fn audio_list_output_devices() -> Result<Vec<OutputDeviceInfo>, String> {
 }
 
 #[tauri::command]
-async fn audio_file_fingerprint(path: String) -> Result<AudioFileFingerprint, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let metadata = fs::metadata(&path).map_err(|err| err.to_string())?;
-        let modified_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
-
-        Ok(AudioFileFingerprint {
-            size: metadata.len(),
-            modified_ms,
-        })
-    })
-    .await
-    .map_err(|err| err.to_string())?
-}
-
-#[tauri::command]
 async fn load_embedded_artwork(path: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let tagged_file = Probe::open(Path::new(&path))
@@ -2208,112 +1692,6 @@ async fn load_embedded_artwork(path: String) -> Result<Option<String>, String> {
     })
     .await
     .map_err(|err| err.to_string())?
-}
-
-#[cfg(target_os = "windows")]
-fn windows_current_exe_string() -> Result<String, String> {
-    std::env::current_exe()
-        .map_err(|err| err.to_string())
-        .map(|path| path.to_string_lossy().to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn run_hidden_reg_command(args: &[&str]) -> Result<std::process::Output, String> {
-    let mut command = Command::new("reg");
-    command.args(args).creation_flags(CREATE_NO_WINDOW);
-    command.output().map_err(|err| err.to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn windows_launch_on_startup_is_enabled() -> Result<bool, String> {
-    let current_exe = windows_current_exe_string()?.to_lowercase();
-    let output = run_hidden_reg_command(&[
-        "query",
-        WINDOWS_AUTOSTART_RUN_KEY,
-        "/v",
-        WINDOWS_AUTOSTART_VALUE_NAME,
-    ])?;
-
-    if !output.status.success() {
-        return Ok(false);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
-    Ok(stdout.contains(&current_exe))
-}
-
-#[cfg(target_os = "windows")]
-fn windows_set_launch_on_startup(enabled: bool) -> Result<(), String> {
-    if enabled {
-        let current_exe = windows_current_exe_string()?;
-        let command = format!("\"{}\"", current_exe);
-        let output = run_hidden_reg_command(&[
-            "add",
-            WINDOWS_AUTOSTART_RUN_KEY,
-            "/v",
-            WINDOWS_AUTOSTART_VALUE_NAME,
-            "/t",
-            "REG_SZ",
-            "/d",
-            &command,
-            "/f",
-        ])?;
-        if output.status.success() {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let message = stderr.trim();
-        return Err(if message.is_empty() {
-            "Failed to enable startup".to_string()
-        } else {
-            message.to_string()
-        });
-    }
-
-    let output = run_hidden_reg_command(&[
-        "delete",
-        WINDOWS_AUTOSTART_RUN_KEY,
-        "/v",
-        WINDOWS_AUTOSTART_VALUE_NAME,
-        "/f",
-    ])?;
-    if output.status.success() || !windows_launch_on_startup_is_enabled()? {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let message = stderr.trim();
-    Err(if message.is_empty() {
-        "Failed to disable startup".to_string()
-    } else {
-        message.to_string()
-    })
-}
-
-#[tauri::command]
-fn launch_on_startup_is_enabled() -> Result<bool, String> {
-    #[cfg(target_os = "windows")]
-    {
-        windows_launch_on_startup_is_enabled()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(false)
-    }
-}
-
-#[tauri::command]
-fn launch_on_startup_set_enabled(enabled: bool) -> Result<bool, String> {
-    #[cfg(target_os = "windows")]
-    {
-        windows_set_launch_on_startup(enabled)?;
-        windows_launch_on_startup_is_enabled()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(false)
-    }
 }
 
 fn main() {
@@ -2494,17 +1872,13 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             ensure_storage_dirs,
-            get_storage_stats,
             open_storage_dir,
             clear_storage_cache,
             delete_song_file,
-            pick_music_folder,
             pick_music_folders,
             read_storage_file,
             write_storage_file,
             scan_music,
-            online_search_tracks,
-            online_download_track,
             audio_preload,
             audio_load_song,
             audio_play,
@@ -2519,20 +1893,13 @@ fn main() {
             audio_set_visualizer_enabled,
             audio_set_output_device,
             audio_list_output_devices,
-            audio_file_fingerprint,
             load_embedded_artwork,
-            launch_on_startup_is_enabled,
-            launch_on_startup_set_enabled,
             generate_smart_playlists_rust,
             metadata::has_cached_artist_profile_rust,
             metadata::read_cached_artist_profile_rust,
             metadata::load_artist_profile_rust,
-            metadata::load_album_artwork_cache_rust,
-            metadata::read_cached_album_artwork_rust,
-            metadata::load_album_artwork_rust,
             metadata::load_track_artwork_rust,
             metadata::load_album_tracklist_cache_rust,
-            metadata::read_cached_album_tracklist_rust,
             metadata::load_album_tracklist_rust,
             metadata::load_song_genre_cache_rust,
             metadata::load_song_genre_rust,
@@ -2540,9 +1907,7 @@ fn main() {
             metadata::lyrics_read_cached_rust,
             metadata::lyrics_save_selection_rust,
             metadata::lyrics_load_rust,
-            compute::search_filter_rank_rust,
-            compute::build_album_art_frequency_rust,
-            compute::build_artwork_set_rust
+            compute::build_album_art_frequency_rust
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {

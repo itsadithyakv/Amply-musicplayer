@@ -1,3 +1,4 @@
+import { shuffle } from '@/utils/random';
 import { lazy, Suspense, useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
@@ -115,11 +116,7 @@ const PlaylistDetailPage = () => {
                 if (playlistIds.length === 0) {
                   return;
                 }
-                const shuffled = [...playlistIds];
-                for (let i = shuffled.length - 1; i > 0; i -= 1) {
-                  const swap = Math.floor(Math.random() * (i + 1));
-                  [shuffled[i], shuffled[swap]] = [shuffled[swap], shuffled[i]];
-                }
+                const shuffled = shuffle(playlistIds);
                 setQueue(shuffled, shuffled[0], { playlistId: playlist.id });
                 setShuffleEnabled(true);
                 void playSongById(shuffled[0], false);

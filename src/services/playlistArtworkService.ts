@@ -1,16 +1,8 @@
+import { djb2 as hash } from '@/utils/hash';
 import { invoke } from '@tauri-apps/api/core';
 import type { Song } from '@/types/music';
 import { getPrimaryArtistName } from '@/utils/artists';
 import { isTauri } from '@/services/storageService';
-
-const hash = (value: string): number => {
-  let h = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    h = (h << 5) - h + value.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h);
-};
 
 const buildAlbumArtFrequencyLocal = (songs: Song[]): Map<string, number> => {
   const freq = new Map<string, number>();

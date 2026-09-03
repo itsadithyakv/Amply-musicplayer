@@ -7,26 +7,25 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use tokio::sync::Mutex;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use crate::{delete_storage_kv, read_storage_kv, resolve_storage_path, write_storage_kv};
 
-static TIME_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]").unwrap());
+static TIME_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]").unwrap());
 
-static FEAT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bfeat\.?\b|\bft\.?\b|\bfeaturing\b").unwrap());
-static PARENS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s*[\(\[].*?[\)\]]").unwrap());
-static NON_ALNUM_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
-static MULTISPACE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
-static TRACK_CLEAN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(remaster(ed)?|mono|stereo|bonus track|explicit|clean)\b").unwrap());
-static MB_LAST_REQUEST: Lazy<Mutex<Option<std::time::Instant>>> = Lazy::new(|| Mutex::new(None));
+static FEAT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bfeat\.?\b|\bft\.?\b|\bfeaturing\b").unwrap());
+static PARENS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*[\(\[].*?[\)\]]").unwrap());
+static NON_ALNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
+static MULTISPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+static TRACK_CLEAN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(remaster(ed)?|mono|stereo|bonus track|explicit|clean)\b").unwrap());
+static MB_LAST_REQUEST: LazyLock<Mutex<Option<std::time::Instant>>> = LazyLock::new(|| Mutex::new(None));
 
 const ARTIST_CACHE_FOLDER: &str = "artist_cache";
 const LYRICS_CACHE_FOLDER: &str = "lyrics_cache";
 const LYRICS_INDEX_PATH: &str = "lyrics_cache/index.json";
-const ALBUM_ART_CACHE_PATH: &str = "metadata_cache/album_art_cache.json";
 const TRACK_ARTWORK_CACHE_PATH: &str = "metadata_cache/track_artwork_cache.json";
 const ALBUM_TRACKLIST_CACHE_PATH: &str = "metadata_cache/album_tracklist_cache.json";
 const SONG_GENRE_CACHE_PATH: &str = "metadata_cache/song_genre_cache.json";
@@ -408,14 +407,6 @@ fn cache_keys_for_artist(artist_name: &str) -> Vec<String> {
         keys.push(legacy);
     }
     keys
-}
-
-fn cache_key_for_album_art(artist: &str, album: &str) -> String {
-    format!(
-        "{}--{}",
-        slugify(if artist.trim().is_empty() { "unknown-artist" } else { artist }),
-        slugify(if album.trim().is_empty() { "unknown-album" } else { album })
-    )
 }
 
 fn normalize_track_title(value: &str) -> String {
@@ -852,9 +843,16 @@ struct WikipediaExtractPage {
     extract: Option<String>,
 }
 
+fn wikipedia_summary_url(title: &str) -> Result<Url, String> {
+    let mut url = Url::parse("https://en.wikipedia.org/api/rest_v1/page/summary/").map_err(|err| err.to_string())?;
+    url.path_segments_mut()
+        .map_err(|_| "bad url".to_string())?
+        .push(title);
+    Ok(url)
+}
+
 async fn fetch_wikipedia_summary(title: &str) -> Result<Option<WikipediaSummaryPayload>, String> {
-    let endpoint = format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}", urlencoding::encode(title));
-    let url = Url::parse(&endpoint).map_err(|err| err.to_string())?;
+    let url = wikipedia_summary_url(title)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
@@ -1174,61 +1172,8 @@ pub async fn load_artist_profile_rust(
     }
 }
 
-#[tauri::command]
-pub async fn load_album_artwork_cache_rust(
-    app: tauri::AppHandle,
-) -> Result<HashMap<String, String>, String> {
-    Ok(read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)
-        .await?
-        .unwrap_or_default())
-}
-
-#[tauri::command]
-pub async fn read_cached_album_artwork_rust(
-    app: tauri::AppHandle,
-    artist: String,
-    album: String,
-) -> Result<Option<String>, String> {
-    if artist.trim().is_empty() || album.trim().is_empty() {
-        return Ok(None);
-    }
-    let cache = read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)
-        .await?
-        .unwrap_or_default();
-    let key = cache_key_for_album_art(&artist, &album);
-    Ok(cache.get(&key).cloned())
-}
-
 fn normalize_artwork_url(url: &str) -> String {
     url.replace("100x100bb", "300x300bb")
-}
-
-async fn fetch_album_artwork_url(artist: &str, album: &str) -> Result<Option<String>, String> {
-    let term = format!("{} {}", artist, album);
-    let url = Url::parse_with_params(
-        "https://itunes.apple.com/search",
-        &[
-            ("term", term.as_str()),
-            ("entity", "album"),
-            ("limit", "1"),
-        ],
-    )
-    .map_err(|err| err.to_string())?;
-    #[derive(Deserialize)]
-    struct ItunesAlbumPayload {
-        results: Option<Vec<ItunesAlbumHit>>,
-    }
-    #[derive(Deserialize)]
-    struct ItunesAlbumHit {
-        #[serde(rename = "artworkUrl100")]
-        artwork_url_100: Option<String>,
-    }
-    let payload: ItunesAlbumPayload = fetch_json(url, None).await?;
-    let artwork = payload
-        .results
-        .and_then(|results| results.into_iter().next())
-        .and_then(|hit| hit.artwork_url_100);
-    Ok(artwork.map(|url| normalize_artwork_url(&url)))
 }
 
 fn compress_image_to_data_url(image: DynamicImage) -> Option<String> {
@@ -1243,14 +1188,6 @@ fn compress_image_to_data_url(image: DynamicImage) -> Option<String> {
     encoder.encode_image(&resized).ok()?;
     let b64 = BASE64_STANDARD.encode(buffer);
     Some(format!("data:image/jpeg;base64,{b64}"))
-}
-
-async fn fetch_album_artwork_data_url(artist: &str, album: &str) -> Result<Option<String>, String> {
-    let url = match fetch_album_artwork_url(artist, album).await? {
-        Some(url) => url,
-        None => return Ok(None),
-    };
-    fetch_image_data_url(&url).await
 }
 
 async fn fetch_image_data_url(url: &str) -> Result<Option<String>, String> {
@@ -1271,34 +1208,6 @@ async fn fetch_image_data_url(url: &str) -> Result<Option<String>, String> {
     let image = image::load_from_memory(&bytes).map_err(|err| err.to_string())?;
     let compressed = compress_image_to_data_url(image);
     Ok(Some(compressed.unwrap_or_else(|| url.to_string())))
-}
-
-#[tauri::command]
-pub async fn load_album_artwork_rust(
-    app: tauri::AppHandle,
-    artist: String,
-    album: String,
-) -> Result<Option<String>, String> {
-    if artist.trim().is_empty() || album.trim().is_empty() {
-        return Ok(None);
-    }
-    let mut cache = read_json::<HashMap<String, String>>(&app, ALBUM_ART_CACHE_PATH)
-        .await?
-        .unwrap_or_default();
-    let key = cache_key_for_album_art(&artist, &album);
-    if let Some(cached) = cache.get(&key) {
-        return Ok(Some(cached.clone()));
-    }
-
-    let fetched = match fetch_album_artwork_data_url(&artist, &album).await {
-        Ok(value) => value,
-        Err(_) => None,
-    };
-    if let Some(value) = fetched.clone() {
-        cache.insert(key, value.clone());
-        write_json(&app, ALBUM_ART_CACHE_PATH, &cache).await?;
-    }
-    Ok(fetched)
 }
 
 async fn fetch_itunes_track_artwork_url(song: &SongInput) -> Result<Option<String>, String> {
@@ -1332,56 +1241,8 @@ async fn fetch_itunes_track_artwork_url(song: &SongInput) -> Result<Option<Strin
         .find_map(|(_, hit)| hit.artwork_url_100.map(|url| normalize_artwork_url(&url))))
 }
 
-#[derive(Debug, Deserialize)]
-struct SoundCloudOembedPayload {
-    thumbnail_url: Option<String>,
-}
-
-fn soundcloud_track_url_hints(artist: &str, title: &str) -> Vec<&'static str> {
-    let artist_key = normalize_text(artist);
-    let title_key = normalize_text(title);
-    let mut urls = Vec::new();
-
-    if artist_key == "kanye west" && title_key.contains("never see me again") {
-        urls.push("https://soundcloud.com/iphone1212/never-see-me-again");
-    }
-
-    urls
-}
-
-async fn fetch_soundcloud_oembed_artwork_url(soundcloud_url: &str) -> Result<Option<String>, String> {
-    let url = Url::parse_with_params(
-        "https://soundcloud.com/oembed",
-        &[
-            ("format", "json"),
-            ("url", soundcloud_url),
-        ],
-    )
-    .map_err(|err| err.to_string())?;
-    let payload: SoundCloudOembedPayload = fetch_json(url, Some(METADATA_USER_AGENT)).await?;
-    Ok(payload.thumbnail_url)
-}
-
-async fn fetch_soundcloud_track_artwork_url(song: &SongInput) -> Result<Option<String>, String> {
-    let primary_artist = metadata_artist_for_song(song);
-    let title = clean_lyrics_title(&song.title, Some(&primary_artist));
-    for url in soundcloud_track_url_hints(&primary_artist, &title) {
-        if let Some(artwork_url) = fetch_soundcloud_oembed_artwork_url(url).await? {
-            return Ok(Some(artwork_url));
-        }
-    }
-    Ok(None)
-}
-
 async fn fetch_track_artwork_data_url(song: &SongInput) -> Result<Option<String>, String> {
     if let Ok(Some(url)) = fetch_itunes_track_artwork_url(song).await {
-        if let Ok(Some(data_url)) = fetch_image_data_url(&url).await {
-            return Ok(Some(data_url));
-        }
-        return Ok(Some(url));
-    }
-
-    if let Ok(Some(url)) = fetch_soundcloud_track_artwork_url(song).await {
         if let Ok(Some(data_url)) = fetch_image_data_url(&url).await {
             return Ok(Some(data_url));
         }
@@ -1511,22 +1372,6 @@ pub async fn load_album_tracklist_cache_rust(
     Ok(read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
         .await?
         .unwrap_or_default())
-}
-
-#[tauri::command]
-pub async fn read_cached_album_tracklist_rust(
-    app: tauri::AppHandle,
-    artist: String,
-    album: String,
-) -> Result<Option<AlbumTracklist>, String> {
-    if artist.trim().is_empty() || album.trim().is_empty() {
-        return Ok(None);
-    }
-    let cache = read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
-        .await?
-        .unwrap_or_default();
-    let key = get_album_tracklist_key(&artist, &album);
-    Ok(cache.get(&key).cloned())
 }
 
 #[tauri::command]
@@ -2993,6 +2838,15 @@ pub async fn lyrics_load_rust(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wikipedia_summary_url_percent_encodes_title_segment() {
+        let url = wikipedia_summary_url("Guns N' Roses/Live").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://en.wikipedia.org/api/rest_v1/page/summary/Guns%20N'%20Roses%2FLive"
+        );
+    }
 
     #[test]
     fn artist_match_handles_apostrophe_variants() {

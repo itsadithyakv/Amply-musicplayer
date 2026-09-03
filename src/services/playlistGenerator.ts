@@ -1,3 +1,6 @@
+import { djb2 as hash } from '@/utils/hash';
+import { rngFor, seededShuffle } from '@/utils/random';
+import { dailySeed, weeklySeed } from '@/utils/dateSeed';
 import type { ListeningProfile, Playlist, Song } from '@/types/music';
 import { getPrimaryArtistName } from '@/utils/artists';
 import {
@@ -15,59 +18,6 @@ import {
 const byPlayCount = (a: Song, b: Song) => b.playCount - a.playCount;
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 const DAY_SEC = 86_400;
-
-const hash = (value: string): number => {
-  let h = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    h = (h << 5) - h + value.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h);
-};
-
-const mulberry32 = (seed: number): (() => number) => {
-  let t = seed >>> 0;
-  return () => {
-    t += 0x6d2b79f5;
-    let r = Math.imul(t ^ (t >>> 15), 1 | t);
-    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-const rngFor = (seed: number, salt: string): (() => number) => mulberry32(hash(`${salt}:${seed}`));
-
-const seededShuffle = (songs: Song[], seed: number, salt = 'shuffle'): Song[] => {
-  const rng = rngFor(seed, salt);
-  const shuffled = [...songs];
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-};
-
-const getIsoWeek = (date: Date): { year: number; week: number } => {
-  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const day = target.getUTCDay() || 7;
-  target.setUTCDate(target.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return { year: target.getUTCFullYear(), week };
-};
-
-const weeklySeed = (): number => {
-  const { year, week } = getIsoWeek(new Date());
-  return Number(`${year}${String(week).padStart(2, '0')}`);
-};
-
-const dailySeed = (): number => {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(now.getUTCDate()).padStart(2, '0');
-  return Number(`${year}${month}${day}`);
-};
 
 const resolveDiscoveryLevel = (value?: number): number => clamp(value ?? 0.35, 0, 1);
 const resolveRandomnessLevel = (value?: number): number => clamp(value ?? 0.3, 0, 1);

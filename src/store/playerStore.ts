@@ -1,3 +1,4 @@
+import { pickRandom, shuffle } from '@/utils/random';
 import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, OnlineRecommendationProvider, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
@@ -448,7 +449,7 @@ const resolveNextSongId = (state: PlayerState): string | null => {
     if (!candidates.length) {
       return state.currentSongId;
     }
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    return pickRandom(candidates) ?? state.currentSongId;
   }
 
   const nextIndex = state.queueCursor + 1;
@@ -516,10 +517,9 @@ const buildUpcomingSongIds = (state: PlayerState, count = 3): string[] => {
   if (state.shuffleEnabled && state.queueSongIds.length > 0) {
     const candidates = state.queueSongIds.filter((id) => id !== currentId && !seen.has(id));
     const maxShuffle = Math.min(count - upcoming.length, candidates.length);
+    const shuffledCandidates = shuffle(candidates);
     for (let i = 0; i < maxShuffle; i += 1) {
-      const swapIndex = i + Math.floor(Math.random() * (candidates.length - i));
-      [candidates[i], candidates[swapIndex]] = [candidates[swapIndex], candidates[i]];
-      enqueue(candidates[i]);
+      enqueue(shuffledCandidates[i]);
       if (upcoming.length >= count) {
         break;
       }
@@ -1612,11 +1612,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       const currentId = state.currentSongId;
       const hasCurrent = currentId ? base.includes(currentId) : false;
-      const rest = hasCurrent ? base.filter((id) => id !== currentId) : base;
-      for (let i = rest.length - 1; i > 0; i -= 1) {
-        const swap = Math.floor(Math.random() * (i + 1));
-        [rest[i], rest[swap]] = [rest[swap], rest[i]];
-      }
+      const rest = shuffle(hasCurrent ? base.filter((id) => id !== currentId) : base);
       const nextQueue = hasCurrent && currentId ? [currentId, ...rest] : rest;
       if (usingManual) {
         return { manualQueueSongIds: nextQueue, albumQueueView: null };

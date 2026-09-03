@@ -1,3 +1,4 @@
+import { beginControlInteraction } from '@/services/controlInteraction';
 import clsx from 'clsx';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import prevIcon from '@/assets/icons/prev.svg';
@@ -15,27 +16,12 @@ import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { usePlayerStore } from '@/store/playerStore';
 import { formatDuration } from '@/utils/time';
 import { beginInteractionFeedback } from '@/services/interactionFeedback';
-import { beginPerfInteraction } from '@/services/perfDiagnostics';
 import { beginTrackedInteraction, cancelTrackedInteraction, scheduleAfterPaint, settleTrackedInteraction } from '@/services/interactionTrace';
 import { usePlaybackProgress } from '@/store/playbackProgressStore';
 import { useLyricsView, useNowPlayingView, useQueueView } from '@/hooks/useLibraryViews';
 
 const darkSurfaceIconClass = 'ui-icon h-5 w-5';
 
-const beginPageControlInteraction = (name: string, message: string) => {
-  const perf = beginPerfInteraction(name);
-  const endFeedback = beginInteractionFeedback({
-    delayMs: 140,
-    minVisibleMs: 150,
-    message,
-  });
-  return () => {
-    scheduleAfterPaint(() => {
-      perf.end();
-      endFeedback();
-    });
-  };
-};
 
 const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
   const { song, isPlaying, shuffleEnabled, repeatMode } = useNowPlayingView();
@@ -110,7 +96,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
             <button
               type="button"
               onClick={() => {
-                const finishInteraction = beginPageControlInteraction('previous', 'Opening previous track...');
+                const finishInteraction = beginControlInteraction('previous', 'Opening previous track...');
                 void playPrevious().finally(() => {
                   finishInteraction();
                 });
@@ -122,7 +108,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
             <button
               type="button"
               onClick={() => {
-                const finishInteraction = beginPageControlInteraction('play-pause', isPlaying ? 'Pausing...' : 'Resuming...');
+                const finishInteraction = beginControlInteraction('play-pause', isPlaying ? 'Pausing...' : 'Resuming...');
                 togglePlayPause();
                 finishInteraction();
               }}
@@ -133,7 +119,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
             <button
               type="button"
               onClick={() => {
-                const finishInteraction = beginPageControlInteraction('next', 'Opening next track...');
+                const finishInteraction = beginControlInteraction('next', 'Opening next track...');
                 void playNext(true).finally(() => {
                   finishInteraction();
                 });
@@ -220,7 +206,7 @@ const QueuePanel = memo(({ active }: { active: boolean }) => {
                       className="min-w-0 text-left"
                       onClick={() => {
                         if (queuedSong.available && queuedSong.id) {
-                          const finishInteraction = beginPageControlInteraction('queue-item-play', 'Opening track...');
+                          const finishInteraction = beginControlInteraction('queue-item-play', 'Opening track...');
                           void playSongById(queuedSong.id).finally(() => {
                             finishInteraction();
                           });

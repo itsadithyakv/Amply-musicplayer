@@ -1,17 +1,10 @@
+import { fnv1a36 as hashString } from '@/utils/hash';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 
 const MAX_LOADED_SRC_KEYS = 1200;
 const loadedSrcKeys = new Set<string>();
 
-const hashString = (value: string): string => {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-};
 
 const getSrcCacheKey = (src: string): string => {
   if (src.length <= 512) {

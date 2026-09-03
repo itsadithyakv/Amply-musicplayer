@@ -1,3 +1,4 @@
+import { beginControlInteraction } from '@/services/controlInteraction';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -16,9 +17,7 @@ import addIcon from '@/assets/icons/add.svg';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { formatDuration } from '@/utils/time';
-import { beginInteractionFeedback } from '@/services/interactionFeedback';
-import { beginPerfInteraction } from '@/services/perfDiagnostics';
-import { beginTrackedInteraction, scheduleAfterPaint } from '@/services/interactionTrace';
+import { beginTrackedInteraction } from '@/services/interactionTrace';
 import { usePlaybackProgress } from '@/store/playbackProgressStore';
 import { usePlayerBarView } from '@/hooks/useLibraryViews';
 
@@ -26,24 +25,6 @@ const iconButtonClass = 'rounded-full p-2.5 text-amply-textSecondary transition-
 const darkSurfaceIconClass = 'ui-icon h-5 w-5';
 const panelIconClass = 'ui-icon h-4 w-4';
 
-const settleVisualInteraction = (done: () => void): void => {
-  scheduleAfterPaint(done);
-};
-
-const beginControlInteraction = (name: string, message: string) => {
-  const perf = beginPerfInteraction(name);
-  const endFeedback = beginInteractionFeedback({
-    delayMs: 140,
-    minVisibleMs: 150,
-    message,
-  });
-  return () => {
-    settleVisualInteraction(() => {
-      perf.end();
-      endFeedback();
-    });
-  };
-};
 
 const ProgressSection = memo(() => {
   const positionSec = usePlaybackProgress((progress) => progress.positionSec);

@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use chrono::{DateTime, Timelike, Utc};
 
 const DAY_SEC: i64 = 86_400;
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SongInput {
@@ -26,20 +24,16 @@ pub struct SongInput {
     pub manual_queue_adds: Option<u32>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentEntry {
     pub count: u32,
-    pub last_played: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListeningProfileInput {
     pub hourly: Vec<u32>,
-    pub weekday: Vec<u32>,
     pub recent_artists: HashMap<String, RecentEntry>,
     pub recent_genres: HashMap<String, RecentEntry>,
 }
@@ -219,6 +213,10 @@ fn get_daypart(hour: u32) -> u32 {
     }
 }
 
+fn utc_hour(ts: i64) -> u32 {
+    (ts.rem_euclid(DAY_SEC) / 3_600) as u32
+}
+
 fn get_time_of_day_boost(song: &SongInput, profile: &Option<ListeningProfileInput>, now: i64) -> f32 {
     let profile = match profile {
         Some(p) => p,
@@ -228,12 +226,8 @@ fn get_time_of_day_boost(song: &SongInput, profile: &Option<ListeningProfileInpu
         Some(lp) => lp,
         None => return 0.0,
     };
-    let now_hour = DateTime::<Utc>::from_timestamp(now, 0)
-        .map(|dt| dt.hour() as u32)
-        .unwrap_or(0);
-    let last_hour = DateTime::<Utc>::from_timestamp(last_played, 0)
-        .map(|dt| dt.hour() as u32)
-        .unwrap_or(0);
+    let now_hour = utc_hour(now);
+    let last_hour = utc_hour(last_played);
     if get_daypart(now_hour) != get_daypart(last_hour) {
         return 0.0;
     }

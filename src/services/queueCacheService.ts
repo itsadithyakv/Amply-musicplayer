@@ -1,3 +1,5 @@
+import { djb2Xor as hashString } from '@/utils/hash';
+import { normalizeLooseKey as normalizeKey } from '@/utils/text';
 import type { Song } from '@/types/music';
 import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { getAlbumTracklistKey } from '@/services/albumTracklistService';
@@ -23,15 +25,7 @@ const emptyCache = (libraryHash = ''): QueueCache => ({
   genres: {},
 });
 
-const normalizeKey = (value: string): string => value.trim().toLowerCase();
 
-const hashString = (value: string): number => {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
-  }
-  return hash >>> 0;
-};
 
 const computeLibraryHash = (songs: Song[]): string => {
   let hash = 0;

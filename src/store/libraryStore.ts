@@ -1,3 +1,5 @@
+import { dayKey, isoWeekKey, seedFromKey } from '@/utils/dateSeed';
+import { yieldToIdle } from '@/utils/idle';
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AppSettings, ListeningActivity, ListeningProfile, Playlist, Song, TasteProfile } from '@/types/music';
@@ -614,38 +616,6 @@ const findSameArtistGenre = (song: Song, songs: Song[]): string | null => {
   return [...genreCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 };
 
-const seedFromWeekKey = (weekKey: string): number => {
-  const [yearPart, weekPart] = weekKey.split('-W');
-  const year = Number(yearPart);
-  const week = Number(weekPart);
-  if (!Number.isFinite(year) || !Number.isFinite(week)) {
-    return Date.now();
-  }
-  return Number(`${year}${String(week).padStart(2, '0')}`);
-};
-
-const getIsoWeekKey = (date = new Date()): string => {
-  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const day = target.getUTCDay() || 7;
-  target.setUTCDate(target.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
-};
-
-const getIsoDayKey = (date = new Date()): string => {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
-const seedFromDayKey = (dayKey: string): number => {
-  const cleaned = dayKey.replace(/-/g, '');
-  const seed = Number(cleaned);
-  return Number.isFinite(seed) ? seed : Date.now();
-};
-
 const applySmartOverrides = (
   playlists: Playlist[],
   overrides: Record<string, string[]>,
@@ -680,23 +650,23 @@ const refreshSmartPlaylists = async (
   } = {},
 ): Promise<Playlist[]> => {
   const { force = false, seedOverride, persist = true } = options;
-  const weekKey = getIsoWeekKey();
-  const dayKey = getIsoDayKey();
+  const weekKey = isoWeekKey();
+  const todayKey = dayKey();
   const cachedSmart = useLibraryStore.getState().smartPlaylists;
   if (!force && smartCacheWeek === weekKey && cachedSmart.length) {
-    return enhanceSmartPlaylistsWithCachedSignals(cachedSmart, songs, { seed: seedFromWeekKey(weekKey) });
+    return enhanceSmartPlaylistsWithCachedSignals(cachedSmart, songs, { seed: seedFromKey(weekKey) });
   }
 
   const cached = force ? null : await readStorageJson<SmartCache | null>(smartCachePath, null);
   if (!force && cached?.weekKey === weekKey && cached.playlists?.length) {
     smartCacheWeek = cached.weekKey;
     return enhanceSmartPlaylistsWithCachedSignals(applySmartOverrides(cached.playlists, overrides, songs), songs, {
-      seed: seedFromWeekKey(weekKey),
+      seed: seedFromKey(weekKey),
     });
   }
 
   const resolvedSeed = seedOverride ?? (force ? Date.now() : undefined);
-  const dailySeed = seedFromDayKey(dayKey);
+  const dailySeed = seedFromKey(todayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
   const discoveryFromGlobal =
     typeof window !== 'undefined'
@@ -723,7 +693,7 @@ const refreshSmartPlaylists = async (
     (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
     (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
   const dailyMixOverride =
-    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
+    dailyCached && dailyCached.dayKey === todayKey && dailyMatchesSettings
       ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
       : null;
   const resolvedDailyOverride =
@@ -755,7 +725,7 @@ const refreshSmartPlaylists = async (
       );
   const generated = rustGenerated
     ? await enhanceSmartPlaylistsWithCachedSignals(generatedBase, songs, {
-        seed: resolvedSeed ?? seedFromWeekKey(weekKey),
+        seed: resolvedSeed ?? seedFromKey(weekKey),
         discoveryIntensity,
         randomnessIntensity,
         onlineSignals,
@@ -774,7 +744,7 @@ const refreshSmartPlaylists = async (
     const daily = generated.find((playlist) => playlist.id === 'smart_daily_mix');
     if (daily?.songIds?.length) {
       await writeStorageJson(dailyMixCachePath, {
-        dayKey,
+        dayKey: todayKey,
         songIds: daily.songIds,
         discoveryIntensity,
         randomnessIntensity,
@@ -817,9 +787,9 @@ const refreshSmartPlaylistsLite = async (
   } = {},
 ): Promise<Playlist[]> => {
   const { seedOverride, dailySeedOverride, persist = false } = options;
-  const dayKey = getIsoDayKey();
+  const todayKey = dayKey();
   const resolvedSeed = seedOverride ?? Date.now();
-  const dailySeed = dailySeedOverride ?? seedFromDayKey(dayKey);
+  const dailySeed = dailySeedOverride ?? seedFromKey(todayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
   const listeningProfile = useLibraryStore.getState().listeningProfile;
   const discoveryFromGlobal =
@@ -847,7 +817,7 @@ const refreshSmartPlaylistsLite = async (
     (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
     (dailyCached.randomnessIntensity === undefined || dailyCached.randomnessIntensity === randomnessIntensity);
   const dailyMixOverride =
-    dailyCached && dailyCached.dayKey === dayKey && dailyMatchesSettings
+    dailyCached && dailyCached.dayKey === todayKey && dailyMatchesSettings
       ? dailyCached.songIds.map((id) => songsById.get(id)).filter((song): song is Song => Boolean(song))
       : null;
   const resolvedDailyOverride =
@@ -1110,7 +1080,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   customPlaylists: [],
   smartPlaylistOverrides: {},
   playlistUsage: {},
-  smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
+  smartPlaylistSeed: seedFromKey(isoWeekKey()),
   libraryVersion: 0,
   activityVersion: 0,
   artworkVersion: 0,
@@ -1211,19 +1181,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         },
       });
 
-      const yieldToMain = () =>
-        new Promise<void>((resolve) => {
-          const idle = (globalThis as typeof globalThis & {
-            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-          }).requestIdleCallback;
-
-          if (typeof idle === 'function') {
-            idle(() => resolve(), { timeout: 300 });
-            return;
-          }
-
-          setTimeout(() => resolve(), 0);
-        });
+      const yieldToMain = () => yieldToIdle(300);
 
       const seenArtists = new Set<string>();
       let artistCount = 0;
@@ -1824,7 +1782,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         ...(settings.libraryPaths ?? []),
         ...(settings.libraryPath ? [settings.libraryPath] : []),
       ]);
-      const currentWeekKey = getIsoWeekKey();
+      const currentWeekKey = isoWeekKey();
       let initialSmartPlaylists: Playlist[] = [];
       const hasFreshSmartCache = Boolean(
         cachedSmartPlaylists?.weekKey === currentWeekKey && cachedSmartPlaylists?.playlists?.length,
@@ -1840,7 +1798,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         smartCacheWeek = cachedSmartPlaylists?.weekKey ?? null;
         initialSmartPlaylists = [];
       }
-      const initialSeed = seedFromWeekKey(currentWeekKey);
+      const initialSeed = seedFromKey(currentWeekKey);
 
       recordSongArrayReplacement('library-initialize', { songs: hydratedSongs.length });
       set({
@@ -1883,7 +1841,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             useLibraryStore.setState({
               smartPlaylists: generated,
               playlists: buildPlaylists(generated, state.customPlaylists),
-              smartPlaylistSeed: seedFromWeekKey(getIsoWeekKey()),
+              smartPlaylistSeed: seedFromKey(isoWeekKey()),
               playlistVersion: state.playlistVersion + 1,
             });
           })();
@@ -1934,19 +1892,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     recordPerfEvent('library.scan.start', { paths: targetPaths.length, runId });
 
     try {
-      const yieldToMain = () =>
-        new Promise<void>((resolve) => {
-          const idle = (globalThis as typeof globalThis & {
-            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-          }).requestIdleCallback;
-
-          if (typeof idle === 'function') {
-            idle(() => resolve(), { timeout: 200 });
-            return;
-          }
-
-          setTimeout(() => resolve(), 0);
-        });
+      const yieldToMain = () => yieldToIdle(200);
 
       const scannedByFolder = await measurePerfAsync('library.scan.native-folders', () =>
         Promise.all(targetPaths.map((path) => scanMusicFolder(path))),
@@ -2002,7 +1948,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       await yieldToMain();
 
       const customPlaylists = get().customPlaylists;
-      const weeklySeed = seedFromWeekKey(getIsoWeekKey());
+      const weeklySeed = seedFromKey(isoWeekKey());
       const playlists = buildPlaylists(get().smartPlaylists, customPlaylists);
 
       if (runId !== scanRunId) {

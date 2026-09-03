@@ -1,16 +1,11 @@
+import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 const LOCAL_PREFIX = 'amply-storage:';
 const SORT_PREFIX = 'amply-songlist-sort:';
 
 const inMemoryTextCache = new Map<string, string>();
-const browserWriteQueue = new Map<
-  string,
-  {
-    handle: number;
-    useIdleCallback: boolean;
-  }
->();
+const browserWriteQueue = new Map<string, IdleHandle>();
 
 const getBrowserStorageKey = (relativePath: string): string => `${LOCAL_PREFIX}${relativePath}`;
 
@@ -20,16 +15,7 @@ const cancelBrowserWrite = (relativePath: string): void => {
     return;
   }
   browserWriteQueue.delete(relativePath);
-  if (entry.useIdleCallback) {
-    const cancelIdle = (globalThis as typeof globalThis & {
-      cancelIdleCallback?: (handle: number) => void;
-    }).cancelIdleCallback;
-    if (typeof cancelIdle === 'function') {
-      cancelIdle(entry.handle);
-    }
-  } else {
-    window.clearTimeout(entry.handle);
-  }
+  cancelIdle(entry);
 };
 
 const scheduleBrowserWrite = (relativePath: string): void => {
@@ -51,18 +37,7 @@ const scheduleBrowserWrite = (relativePath: string): void => {
     }
   };
 
-  const idle = (globalThis as typeof globalThis & {
-    requestIdleCallback?: (callback: () => void, opts?: { timeout: number }) => number;
-  }).requestIdleCallback;
-
-  if (typeof idle === 'function') {
-    const handle = idle(flush, { timeout: 500 });
-    browserWriteQueue.set(relativePath, { handle, useIdleCallback: true });
-    return;
-  }
-
-  const timeout = window.setTimeout(flush, 200);
-  browserWriteQueue.set(relativePath, { handle: timeout, useIdleCallback: false });
+  browserWriteQueue.set(relativePath, requestIdle(flush, { timeout: 500, fallbackDelayMs: 200 }));
 };
 
 const flushBrowserWrites = (): void => {

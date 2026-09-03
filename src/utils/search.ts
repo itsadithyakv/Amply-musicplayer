@@ -1,14 +1,8 @@
+import { normalizeSearchText, tokenizeSearchText } from '@/utils/text';
 import type { Song } from '@/types/music';
 
-const normalize = (value: string): string =>
-  value
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^\w\s-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const tokenize = (value: string): string[] => normalize(value).split(' ').filter(Boolean);
+const normalize = normalizeSearchText;
+const tokenize = tokenizeSearchText;
 
 type NormalizedSongFields = {
   title: string;

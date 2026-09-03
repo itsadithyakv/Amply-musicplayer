@@ -1,3 +1,4 @@
+import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Song } from '@/types/music';
@@ -349,15 +350,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     let alive = true;
     const cachePath = 'lyrics_bg_cache.json';
 
-    const idle = (globalThis as typeof globalThis & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    }).requestIdleCallback;
-    const cancelIdle = (globalThis as typeof globalThis & {
-      cancelIdleCallback?: (handle: number) => void;
-    }).cancelIdleCallback;
-    let idleHandle: number | null = null;
-    let timeoutHandle: number | null = null;
+    let idleHandle: IdleHandle | null = null;
 
     const loadBackdrop = async () => {
       try {
@@ -425,29 +418,17 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
       }
     };
 
-    const scheduleBackdrop = () => {
-      if (typeof idle === 'function') {
-        idleHandle = idle(() => {
-          void loadBackdrop();
-        }, { timeout: 1500 });
-      } else {
-        timeoutHandle = window.setTimeout(() => {
-          void loadBackdrop();
-        }, 180);
-      }
-    };
-
-    scheduleBackdrop();
+    idleHandle = requestIdle(
+      () => {
+        void loadBackdrop();
+      },
+      { timeout: 1500, fallbackDelayMs: 180 },
+    );
 
     return () => {
       alive = false;
       abortController.abort();
-      if (idleHandle !== null && typeof cancelIdle === 'function') {
-        cancelIdle(idleHandle);
-      }
-      if (timeoutHandle !== null) {
-        window.clearTimeout(timeoutHandle);
-      }
+      cancelIdle(idleHandle);
     };
   }, [song?.id, song?.albumArt, gameMode, active, surfaceReady, idleReady]);
 

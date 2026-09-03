@@ -1,3 +1,5 @@
+import { djb2 as hash } from '@/utils/hash';
+import { cancelIdle, requestIdle, yieldToIdle } from '@/utils/idle';
 import clsx from 'clsx';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -102,15 +104,6 @@ const smartPlaylistUiCache = new Map<string, SmartPlaylistCardItem[]>();
 const smartPlaylistHighlightCache = new Map<string, SmartPlaylistCardItem[]>();
 const SMART_PLAYLIST_UI_CACHE_LIMIT = 6;
 
-const hash = (value: string): number => {
-  let h = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    h = (h << 5) - h + value.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h);
-};
-
 const unknownGenreValues = new Set(['', 'unknown genre', 'unknown', 'other']);
 
 const getMadeForYouRefreshSeed = (nowMs = Date.now()): number => {
@@ -177,31 +170,8 @@ const pickUniqueAlbumSongs = (songs: Song[], seed: number, limit: number): Song[
 };
 
 const scheduleIdleTask = (task: () => void, timeoutMs = 300): (() => void) => {
-  const idle = (globalThis as typeof globalThis & {
-    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    cancelIdleCallback?: (handle: number) => void;
-  }).requestIdleCallback;
-  const cancelIdle = (globalThis as typeof globalThis & {
-    cancelIdleCallback?: (handle: number) => void;
-  }).cancelIdleCallback;
-
-  let idleHandle: number | null = null;
-  let timeoutHandle: number | null = null;
-
-  if (typeof idle === 'function') {
-    idleHandle = idle(task, { timeout: timeoutMs });
-  } else {
-    timeoutHandle = window.setTimeout(task, timeoutMs);
-  }
-
-  return () => {
-    if (idleHandle !== null && typeof cancelIdle === 'function') {
-      cancelIdle(idleHandle);
-    }
-    if (timeoutHandle !== null) {
-      window.clearTimeout(timeoutHandle);
-    }
-  };
+  const handle = requestIdle(task, { timeout: timeoutMs, fallbackDelayMs: timeoutMs });
+  return () => cancelIdle(handle);
 };
 
 const setBoundedCache = <T,>(cache: Map<string, T>, key: string, value: T) => {
@@ -638,17 +608,7 @@ const HomePage = () => {
 
   useEffect(() => {
     let alive = true;
-    const idle = (globalThis as typeof globalThis & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    }).requestIdleCallback;
-    const idleWait = () =>
-      new Promise<void>((resolve) => {
-        if (typeof idle === 'function') {
-          idle(() => resolve(), { timeout: 300 });
-          return;
-        }
-        setTimeout(() => resolve(), 0);
-      });
+    const idleWait = () => yieldToIdle(300);
     const load = async () => {
       const next: Record<string, string | undefined> = {};
       let handled = 0;

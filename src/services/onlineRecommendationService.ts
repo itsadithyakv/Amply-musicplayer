@@ -1,3 +1,4 @@
+import { normalizeSlug as normalizeKey, normalizeToken } from '@/utils/text';
 import type { AppSettings, OnlineRecommendationProvider, Song } from '@/types/music';
 import {
   type OnlineRecommendationSignal,
@@ -126,16 +127,6 @@ let musicBrainzLastRequestAt = 0;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-const normalizeToken = (value: string | undefined | null): string =>
-  (value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const normalizeKey = (value: string | undefined | null): string => normalizeToken(value).replace(/\s+/g, '-');
 
 const isCloseMetadataMatch = (candidate: string | undefined | null, target: string | undefined | null): boolean => {
   const left = normalizeArtistLookupText(candidate ?? '');
