@@ -22,7 +22,6 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { flushPendingWrites, hasPendingDebouncedWrites, readStorageText, writeStorageText } from '@/services/storageService';
 import { isTauri } from '@/services/storageService';
-import { warmSearchIndex } from '@/utils/search';
 import {
   markWindowRestored,
   noteUserInteraction,
@@ -41,7 +40,6 @@ import {
   markPerf,
   recordBudgetLatency,
   recordPerfEvent,
-  recordRenderCount,
   subscribePerformanceSnapshot,
 } from '@/services/perfDiagnostics';
 import { beginInteractionFeedback, useInteractionFeedback } from '@/services/interactionFeedback';
@@ -81,7 +79,6 @@ const MainApp = () => {
   const initializeLibrary = useLibraryStore((state) => state.initialize);
   const libraryInitialized = useLibraryStore((state) => state.initialized);
   const libraryScanning = useLibraryStore((state) => state.isScanning);
-  const songsCount = useLibraryStore((state) => state.songs.length);
   const initializePlayer = usePlayerStore((state) => state.initialize);
   const playerInitialized = usePlayerStore((state) => state.initialized);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
@@ -92,7 +89,6 @@ const MainApp = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const lastUserInputRef = useRef(0);
-  const searchWarmRef = useRef<string | null>(null);
   const mainScrollRef = useRef<HTMLElement | null>(null);
   const startupAtRef = useRef(Date.now());
   const routeStartedAtRef = useRef(Date.now());
@@ -114,21 +110,6 @@ const MainApp = () => {
   const { lowPerf } = useFpsMonitor({
     enabled: !gameMode && !isOverlayRoute && !schedulerThrottled,
   });
-
-  useEffect(() => {
-    recordRenderCount('app-shell');
-  });
-
-  if (isOverlayRoute) {
-    return (
-      <ErrorBoundary
-        fallback={<ShellFallback label="Overlay unavailable." />}
-        onError={(error) => recordUiError('overlay', error)}
-      >
-        <OverlayPage />
-      </ErrorBoundary>
-    );
-  }
 
   useEffect(() => {
     let resumeSafeModeHandle: number | null = null;
@@ -531,69 +512,6 @@ const MainApp = () => {
   }, [location.pathname, gameMode]);
 
   useEffect(() => {
-    if (gameMode || startupLowMemoryMode || !songsCount || libraryScanning || schedulerThrottled || isTauri()) {
-      return;
-    }
-    const library = useLibraryStore.getState().songs;
-    const fingerprint = `${library.length}:${library[0]?.id ?? 'none'}:${library[library.length - 1]?.id ?? 'none'}`;
-    if (searchWarmRef.current === fingerprint) {
-      return;
-    }
-    searchWarmRef.current = fingerprint;
-    let alive = true;
-    let idleHandle: number | null = null;
-    let timeoutHandle: number | null = null;
-    let startupDelayHandle: number | null = null;
-    const idle = (globalThis as typeof globalThis & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    }).requestIdleCallback;
-    const cancelIdle = (globalThis as typeof globalThis & {
-      cancelIdleCallback?: (handle: number) => void;
-    }).cancelIdleCallback;
-    let index = 0;
-    const chunkSize = lowPerf || document.hidden ? 250 : 500;
-
-    const runChunk = () => {
-      if (!alive) {
-        return;
-      }
-      index = warmSearchIndex(library, index, chunkSize);
-      if (index < library.length) {
-        schedule();
-      }
-    };
-
-    const schedule = () => {
-      if (typeof idle === 'function') {
-        idleHandle = idle(() => runChunk(), { timeout: 1200 });
-      } else {
-        timeoutHandle = window.setTimeout(runChunk, 100);
-      }
-    };
-
-    const startupAge = Date.now() - startupAtRef.current;
-    const startupDelayMs = Math.max(0, 15_000 - startupAge);
-    if (startupDelayMs > 0) {
-      startupDelayHandle = window.setTimeout(schedule, startupDelayMs);
-    } else {
-      schedule();
-    }
-    return () => {
-      alive = false;
-      if (idleHandle !== null && typeof cancelIdle === 'function') {
-        cancelIdle(idleHandle);
-      }
-      if (timeoutHandle !== null) {
-        window.clearTimeout(timeoutHandle);
-      }
-      if (startupDelayHandle !== null) {
-        window.clearTimeout(startupDelayHandle);
-      }
-    };
-  }, [songsCount, libraryScanning, lowPerf, schedulerThrottled, gameMode, startupLowMemoryMode]);
-
-  useEffect(() => {
     (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ = lowPerf || gameMode || startupLowMemoryMode;
     (window as unknown as { __AMP_GAME_MODE__?: boolean }).__AMP_GAME_MODE__ = gameMode;
   }, [lowPerf, gameMode, startupLowMemoryMode]);
@@ -603,17 +521,6 @@ const MainApp = () => {
     document.documentElement.dataset.theme = theme;
     document.body.dataset.theme = theme;
   }, [appTheme]);
-
-  useEffect(() => {
-    if (gameMode && location.pathname !== '/game') {
-      navigate('/game', { replace: true });
-      return;
-    }
-
-    if (!gameMode && location.pathname === '/game') {
-      navigate('/home', { replace: true });
-    }
-  }, [gameMode, location.pathname, navigate]);
 
   const isLoading = !playerInitialized;
 

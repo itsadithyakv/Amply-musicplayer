@@ -15,9 +15,6 @@ export const isMetadataActivityPaused = (idleMs = 30_000): boolean => {
   if (isSchedulerBackgroundHidden() || isSchedulerInRestoreGrace()) {
     return true;
   }
-  if (document.hidden) {
-    return false;
-  }
   const last = getLastInteraction();
   if (!last) {
     return false;
@@ -29,7 +26,9 @@ export const waitForMetadataIdle = async (idleMs = 30_000, pollMs = 2000): Promi
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return;
   }
-  while (isMetadataActivityPaused(idleMs)) {
+  // Bounded so a permanently-active user cannot pin the caller's promise chain forever.
+  const maxPolls = Math.max(1, Math.ceil(180_000 / pollMs));
+  for (let i = 0; i < maxPolls && isMetadataActivityPaused(idleMs); i += 1) {
     await new Promise<void>((resolve) => window.setTimeout(resolve, pollMs));
   }
 };

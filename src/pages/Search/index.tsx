@@ -3,7 +3,7 @@ import { PageHeader, SoftPanel, UnifiedSearchInput } from '@/components/ui/Amply
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSearchRouteView } from '@/hooks/useLibraryViews';
 
-const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
+const SearchPage = () => {
   const query = useLibraryStore((state) => state.searchQuery);
   const setSearchQuery = useLibraryStore((state) => state.setSearchQuery);
   const searchView = useSearchRouteView();
@@ -11,10 +11,8 @@ const SearchPage = ({ embedded = false }: { embedded?: boolean }) => {
   const suggestions = query.trim() ? searchView.suggestions : [];
 
   return (
-    <div className={embedded ? 'space-y-4' : 'space-y-5 pb-8'}>
-      {!embedded ? (
-        <PageHeader title="Search" />
-      ) : null}
+    <div className="space-y-5 pb-8">
+      <PageHeader title="Search" />
 
       <SoftPanel className="p-4">
         <UnifiedSearchInput

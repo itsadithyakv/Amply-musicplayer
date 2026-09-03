@@ -221,20 +221,6 @@ export const recordBackgroundTask = (name: string, status: BackgroundTaskStatus,
   });
 };
 
-export const recordRenderCount = (surface: string): void => {
-  const counterKey = `render.${surface}`;
-  const nextCount = (snapshot.counters[counterKey] ?? 0) + 1;
-  if (isPlaybackBusy() && nextCount > 60 && nextCount % 30 === 0) {
-    warnDevBudget(`render-spike:${surface}`, `${surface} render count is high while playback is active`, {
-      renders: nextCount,
-    });
-  }
-  pushEvent({
-    name: counterKey,
-    category: 'event',
-  });
-};
-
 export const recordSelectorRebuild = (selector: string): void => {
   if (isPlaybackBusy()) {
     warnDevBudget(`selector-playback:${selector}`, `${selector} selector rebuilt during playback`, {

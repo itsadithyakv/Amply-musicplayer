@@ -12,13 +12,6 @@ type MetadataCacheIndex = {
   albums: Record<string, true>;
 };
 
-export type MetadataCacheCounts = {
-  lyrics: number;
-  genres: number;
-  artists: number;
-  albums: number;
-};
-
 let memoryIndex: MetadataCacheIndex | null = null;
 
 const ensureIndex = async (): Promise<MetadataCacheIndex> => {
@@ -54,26 +47,6 @@ export const resetMetadataCacheIndex = (): void => {
   memoryIndex = null;
   dirtyCount = 0;
   lastPersistAt = 0;
-};
-
-export const getMetadataCacheCounts = async (): Promise<MetadataCacheCounts> => {
-  const index = await ensureIndex();
-  let lyrics = 0;
-  let genres = 0;
-  for (const entry of Object.values(index.songs)) {
-    if (entry.lyrics) {
-      lyrics += 1;
-    }
-    if (entry.genre) {
-      genres += 1;
-    }
-  }
-  return {
-    lyrics,
-    genres,
-    artists: Object.keys(index.artists).length,
-    albums: Object.keys(index.albums).length,
-  };
 };
 
 export const markSongCached = async (songId: string, key: 'lyrics' | 'genre'): Promise<void> => {

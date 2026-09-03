@@ -63,5 +63,5 @@ export const useFpsMonitor = (options: FpsMonitorOptions = {}) => {
     };
   }, [enabled, lowFpsThreshold, recoverFpsThreshold, sampleWindowMs]);
 
-  return { fps: fpsRef.current, lowPerf };
+  return { lowPerf };
 };

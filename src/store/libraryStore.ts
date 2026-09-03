@@ -23,8 +23,6 @@ import { hydrateSongsWithCachedGenres, isUnknownGenre, loadSongGenre } from '@/s
 import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
 import {
-  getAlbumTracklistKey,
-  loadAlbumTracklist,
   loadAlbumTracklistCache,
   type AlbumTracklistCache,
 } from '@/services/albumTracklistService';
@@ -96,18 +94,10 @@ interface LibraryState {
     pending: boolean;
     message: string | null;
   };
-  albumTrackFetch: {
-    running: boolean;
-    total: number;
-    done: number;
-    pending: boolean;
-    message: string | null;
-  };
   listeningProfile: ListeningProfile;
   listeningActivity: ListeningActivity;
   tasteProfile: TasteProfile | null;
   startMetadataFetch: (options?: { allowWhenActive?: boolean }) => void;
-  startAlbumTracklistFetch: () => void;
   fetchMissingMetadataForSong: (
     songId: string,
     options?: {
@@ -1137,13 +1127,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         pending: false,
         message: null,
       },
-      albumTrackFetch: {
-        running: false,
-        total: 0,
-        done: 0,
-        pending: false,
-        message: null,
-      },
       listeningProfile: createDefaultListeningProfile(),
       listeningActivity: createDefaultListeningActivity(),
       tasteProfile: null,
@@ -1606,194 +1589,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     })();
   },
 
-  startAlbumTracklistFetch: () => {
-    const state = get();
-    if (state.albumTrackFetch.running) {
-      return;
-    }
-    if (isMetadataActivityPaused()) {
-      return;
-    }
-
-    void (async () => {
-      const runStart = performance.now();
-      const maxAlbumsPerRun = 2;
-      const maxMsPerRun = 1400;
-      const shouldPause = (processed: number) =>
-        processed >= maxAlbumsPerRun || performance.now() - runStart > maxMsPerRun;
-
-      const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-      const metadataPaused = settings.metadataFetchPaused ?? false;
-      if (settings.gameMode || metadataPaused) {
-        set({
-          albumTrackFetch: {
-            running: false,
-            total: 0,
-            done: 0,
-            pending: state.albumTrackFetch.pending,
-            message: metadataPaused
-              ? 'Metadata lookups are paused.'
-              : 'Game Mode disables album tracklist lookup.',
-          },
-        });
-        return;
-      }
-
-      const songs = get().songs;
-      if (!songs.length) {
-        set({
-          albumTrackFetch: {
-            running: false,
-            total: 0,
-            done: 0,
-            pending: false,
-            message: 'No albums available to scan.',
-          },
-        });
-        return;
-      }
-
-      set({
-        albumTrackFetch: {
-          running: true,
-          total: 0,
-          done: 0,
-          pending: true,
-          message: 'Checking cached album tracklists...',
-        },
-      });
-
-      const yieldToMain = () =>
-        new Promise<void>((resolve) => {
-          const idle = (globalThis as typeof globalThis & {
-            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-          }).requestIdleCallback;
-
-          if (typeof idle === 'function') {
-            idle(() => resolve(), { timeout: 300 });
-            return;
-          }
-
-          setTimeout(() => resolve(), 0);
-        });
-
-      const albumCache = await loadAlbumTracklistCache();
-      const attemptsCache = await loadMetadataAttempts();
-      const pendingAlbums: Array<{ artist: string; album: string; key: string }> = [];
-
-      const albumCandidates = new Map<
-        string,
-        {
-          album: string;
-          artist: string;
-          key: string;
-        }
-      >();
-
-      for (const song of songs) {
-        if (!song.album?.trim()) {
-          continue;
-        }
-        const primaryArtist = getPrimaryArtistName(song.artist);
-        if (!primaryArtist?.trim()) {
-          continue;
-        }
-        const compositeKey = `${primaryArtist.trim().toLowerCase()}::${song.album.trim().toLowerCase()}`;
-        if (!albumCandidates.has(compositeKey)) {
-          albumCandidates.set(compositeKey, {
-            album: song.album,
-            artist: primaryArtist,
-            key: getAlbumTracklistKey(primaryArtist, song.album),
-          });
-        }
-      }
-
-      for (const entry of albumCandidates.values()) {
-        if (albumCache[entry.key]?.tracks?.length) {
-          continue;
-        }
-        if (shouldSkipMetadata(attemptsCache, 'album_tracklist', entry.key)) {
-          continue;
-        }
-        pendingAlbums.push({ artist: entry.artist, album: entry.album, key: entry.key });
-      }
-
-      if (!pendingAlbums.length) {
-        set({
-          albumTrackFetch: {
-            running: false,
-            total: 0,
-            done: 0,
-            pending: false,
-            message: 'All album tracklists already cached.',
-          },
-        });
-        return;
-      }
-
-      let done = 0;
-      let lastUpdate = performance.now();
-      const updateProgress = (force = false) => {
-        const now = performance.now();
-        if (!force && now - lastUpdate < 300) {
-          return;
-        }
-        lastUpdate = now;
-        set({
-          albumTrackFetch: {
-            running: true,
-            total: pendingAlbums.length,
-            done,
-            pending: true,
-            message: null,
-          },
-        });
-      };
-
-      for (const entry of pendingAlbums) {
-        try {
-          if (!shouldSkipMetadata(attemptsCache, 'album_tracklist', entry.key)) {
-            if (tryAcquireMetadata('album_tracklist', entry.key)) {
-              const tracklist = await loadAlbumTracklist(entry.artist, entry.album);
-              if (tracklist?.tracks?.length) {
-                noteMetadataSuccess(attemptsCache, 'album_tracklist', entry.key);
-              } else {
-                noteMetadataFailure(attemptsCache, 'album_tracklist', entry.key);
-              }
-              releaseMetadata('album_tracklist', entry.key);
-            }
-          }
-        } catch {
-          noteMetadataFailure(attemptsCache, 'album_tracklist', entry.key);
-        } finally {
-          done += 1;
-          updateProgress();
-        }
-
-        if (done % 2 === 0) {
-          await yieldToMain();
-        }
-        if (shouldPause(done)) {
-          break;
-        }
-      }
-
-      await saveMetadataAttempts(attemptsCache);
-      const completedAll = done >= pendingAlbums.length;
-      set({
-        albumTrackFetch: {
-          running: false,
-          total: pendingAlbums.length,
-          done,
-          pending: !completedAll,
-          message: completedAll
-            ? 'Album tracklists cached.'
-            : 'Paused to keep things smooth. Will continue when idle.',
-        },
-      });
-    })();
-  },
-
   fetchMissingMetadataForSong: async (songId, options) => {
     const allowWhenPaused = options?.allowWhenPaused === true;
     if (get().metadataFetch.running && !allowWhenPaused) {
@@ -2064,10 +1859,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           ...get().metadataFetch,
           pending: hydratedSongs.length > 0,
         },
-        albumTrackFetch: {
-          ...get().albumTrackFetch,
-          pending: hydratedSongs.length > 0,
-        },
       });
 
       recordPerfEvent('library.initialize.ready', {
@@ -2228,10 +2019,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         artworkVersion: get().artworkVersion + 1,
         metadataFetch: {
           ...get().metadataFetch,
-          pending: true,
-        },
-        albumTrackFetch: {
-          ...get().albumTrackFetch,
           pending: true,
         },
       });
@@ -2440,10 +2227,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         ...state.metadataFetch,
         pending: nextSongs.length > 0,
       },
-      albumTrackFetch: {
-        ...state.albumTrackFetch,
-        pending: nextSongs.length > 0,
-      },
     });
 
     await persistLibrary(nextSongs, nextCustomPlaylists);
@@ -2628,25 +2411,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 }));
 
 export const libraryActions = {
-  scanLibrary: (paths?: string[]): Promise<void> => useLibraryStore.getState().scanLibrary(paths),
-  deleteSong: (songId: string): Promise<boolean> => useLibraryStore.getState().deleteSongFromDisk(songId),
   toggleFavorite: (songId: string): Promise<void> => useLibraryStore.getState().toggleFavorite(songId),
   updateGenre: (songId: string, genre: string): Promise<void> =>
     useLibraryStore.getState().updateSongGenre(songId, genre),
   addSongToCustomPlaylist: (playlistId: string, songId: string): Promise<void> =>
     useLibraryStore.getState().addSongToCustomPlaylist(playlistId, songId),
-  upsertCustomPlaylist: (playlist: Playlist): Promise<void> =>
-    useLibraryStore.getState().upsertCustomPlaylist(playlist),
-  deleteCustomPlaylist: (playlistId: string): Promise<boolean> =>
-    useLibraryStore.getState().deleteCustomPlaylist(playlistId),
-  patchSongActivity: async (songId: string, patch: SongActivityPatch): Promise<void> => {
-    if (!useLibraryStore.getState().getSongById(songId)) {
-      return;
-    }
-    await updateSongActivityPatch(songId, (current) => ({
-      ...current,
-      ...patch,
-    }));
-    useLibraryStore.setState((state) => ({ activityVersion: state.activityVersion + 1 }));
-  },
 };

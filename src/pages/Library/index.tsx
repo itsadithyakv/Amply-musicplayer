@@ -326,7 +326,6 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const setAlbumQueueView = usePlayerStore((state) => state.setAlbumQueueView);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
-  const albumTrackFetchDone = useLibraryStore((state) => state.albumTrackFetch.done);
 
   const [activeTab, setActiveTab] = useState<LibraryTab>(() => {
     if (typeof window === 'undefined') {
@@ -400,7 +399,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     return () => {
       alive = false;
     };
-  }, [deferredSongs.length, albumTrackFetchDone]);
+  }, [deferredSongs.length]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {

@@ -1,13 +1,39 @@
-import { Howl, Howler } from 'howler';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { isTauri, toPlayableSrc } from '@/services/storageService';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { isTauri } from '@/services/storageService';
+import { DEFAULT_SETTINGS } from '@/store/defaultSettings';
 import type { AppSettings, Song } from '@/types/music';
 
-interface LoadOptions {
+export interface LoadOptions {
   autoplay?: boolean;
   transition?: boolean;
   startAtSec?: number;
+}
+
+export interface AudioEngineCallbacks {
+  onProgress?: (position: number, duration: number) => void;
+  onEnded?: () => void;
+}
+
+/** Contract shared by the native (Tauri) engine and the browser stub. */
+export interface AudioEngine {
+  setCallbacks(callbacks: AudioEngineCallbacks): void;
+  applySettings(settings: AppSettings): void;
+  setLoop(enabled: boolean): void;
+  getCurrentSongId(): string | null;
+  getPosition(): number;
+  getDuration(): number;
+  loadSong(song: Song, options?: LoadOptions): Promise<void>;
+  preloadSongs(songs: Song[]): void;
+  play(): void;
+  playFrom(positionSec: number): void;
+  pause(): void;
+  stop(): void;
+  seek(positionSec: number): void;
+  setVolume(volume: number): void;
+  setRate(rate: number): void;
+  isPlaying(): boolean;
+  dispose(): void;
 }
 
 type AudioProgressEvent = {
@@ -15,328 +41,54 @@ type AudioProgressEvent = {
   duration: number;
 };
 
-// Adaptive preloading strategy based on library size
-const resolvePreloadStrategy = (librarySize: number) => {
-  if (librarySize < 200) {
-    // Small library: aggressive preloading
-    return {
-      maxConcurrentLoads: 5,
-      preloadAhead: 10, // Preload 10 songs ahead
-      preloadBehind: 2, // Keep 2 songs behind
-      bufferSize: 'large', // Full buffering
-      quality: 'high',
-    };
-  } else if (librarySize < 1000) {
-    // Medium library: balanced approach
-    return {
-      maxConcurrentLoads: 3,
-      preloadAhead: 5,
-      preloadBehind: 1,
-      bufferSize: 'medium',
-      quality: 'medium',
-    };
-  } else {
-    // Large library: memory-conscious
-    return {
-      maxConcurrentLoads: 2,
-      preloadAhead: 3,
-      preloadBehind: 0,
-      bufferSize: 'small',
-      quality: 'adaptive',
-    };
-  }
-};
+const CROSSFADE_MIN_DURATION_SEC = 20;
+const SILENCE_TRIM_START_SEC = 0.08;
 
-// LRU cache for audio buffers (for large libraries)
-class AudioBufferCache {
-  private cache = new Map<string, Howl>();
-  private accessOrder = new Map<string, number>();
-  private maxSize: number;
-  private accessCounter = 0;
+const resolveStartOffset = (song: Song, startAtSec: number): number =>
+  startAtSec > 0 ? startAtSec : Math.max(0, Math.min(SILENCE_TRIM_START_SEC, song.duration * 0.02));
 
-  constructor(maxSize: number) {
-    this.maxSize = maxSize;
-  }
-
-  get(songId: string): Howl | undefined {
-    const howl = this.cache.get(songId);
-    if (howl) {
-      this.accessOrder.set(songId, ++this.accessCounter);
-    }
-    return howl;
-  }
-
-  set(songId: string, howl: Howl): void {
-    if (this.cache.size >= this.maxSize) {
-      // Remove least recently used
-      let oldestId: string | undefined;
-      let oldestAccess = Infinity;
-      for (const [id, access] of this.accessOrder) {
-        if (access < oldestAccess) {
-          oldestAccess = access;
-          oldestId = id;
-        }
-      }
-      if (oldestId) {
-        const oldHowl = this.cache.get(oldestId);
-        if (oldHowl) {
-          oldHowl.unload();
-        }
-        this.cache.delete(oldestId);
-        this.accessOrder.delete(oldestId);
-      }
-    }
-    this.cache.set(songId, howl);
-    this.accessOrder.set(songId, ++this.accessCounter);
-  }
-
-  has(songId: string): boolean {
-    return this.cache.has(songId);
-  }
-
-  delete(songId: string): boolean {
-    const howl = this.cache.get(songId);
-    if (howl) {
-      howl.unload();
-    }
-    this.accessOrder.delete(songId);
-    return this.cache.delete(songId);
-  }
-
-  clear(): void {
-    this.cache.forEach((howl) => howl.unload());
-    this.cache.clear();
-    this.accessOrder.clear();
-  }
-
-  size(): number {
-    return this.cache.size;
-  }
-}
-
-// Background preloading manager
-class BackgroundPreloader {
-  private loading = new Set<string>();
-  private queue: Song[] = [];
-  private maxConcurrent: number;
-  private strategy: ReturnType<typeof resolvePreloadStrategy>;
-
-  constructor(librarySize: number) {
-    this.strategy = resolvePreloadStrategy(librarySize);
-    this.maxConcurrent = this.strategy.maxConcurrentLoads;
-  }
-
-  updateLibrarySize(size: number): void {
-    this.strategy = resolvePreloadStrategy(size);
-    this.maxConcurrent = this.strategy.maxConcurrentLoads;
-  }
-
-  enqueue(songs: Song[]): void {
-    // Remove duplicates and prioritize by position
-    const seen = new Set(this.queue.map(s => s.id));
-    const newSongs = songs.filter(s => !seen.has(s.id) && !this.loading.has(s.id));
-
-    this.queue.push(...newSongs);
-    this.processQueue();
-  }
-
-  private async processQueue(): Promise<void> {
-    while (this.loading.size < this.maxConcurrent && this.queue.length > 0) {
-      const song = this.queue.shift()!;
-      if (this.loading.has(song.id)) continue;
-
-      this.loading.add(song.id);
-
-      try {
-        // Use idle callback for background loading
-        const idleLoad = () => {
-          const sources = resolveSongSources(song);
-          const formats = resolveSongFormats(song);
-
-          const howl = new Howl({
-            src: sources,
-            format: formats,
-            html5: true,
-            preload: true,
-            volume: 0, // Silent preload
-            onload: () => {
-              // Cache the preloaded howl
-              audioBufferCache.set(song.id, howl);
-              this.loading.delete(song.id);
-              this.processQueue();
-            },
-            onloaderror: () => {
-              this.loading.delete(song.id);
-              this.processQueue();
-            },
-          });
-        };
-
-        if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-          window.requestIdleCallback(idleLoad, { timeout: 5000 });
-        } else {
-          // Fallback for browsers without requestIdleCallback
-          setTimeout(idleLoad, 100);
-        }
-      } catch (error) {
-        this.loading.delete(song.id);
-        this.processQueue();
-      }
-    }
-  }
-
-  clear(): void {
-    this.queue.length = 0;
-    // Don't clear loading set as those will complete naturally
-  }
-};
-
-const resolveExtension = (value: string): string | null => {
-  const clean = value.split(/[?#]/)[0];
-  const ext = clean.split('.').pop()?.toLowerCase();
-  return ext ?? null;
-};
-
-const toFileUri = (path: string): string => {
-  const normalized = path.replace(/\\/g, '/');
-  if (/^[a-zA-Z]:\//.test(normalized)) {
-    return `file:///${encodeURI(normalized)}`;
-  }
-
-  if (normalized.startsWith('/')) {
-    return `file://${encodeURI(normalized)}`;
-  }
-
-  return encodeURI(normalized);
-};
-
-const resolveSongSources = (song: Song): string[] => {
-  const candidates: string[] = [];
-
-  if (song.path) {
-    candidates.push(toPlayableSrc(song.path));
-    candidates.push(toFileUri(song.path));
-  }
-
-  if (song.source) {
-    candidates.push(song.source);
-  }
-
-  return Array.from(new Set(candidates.filter(Boolean)));
-};
-
-const resolveSongFormats = (song: Song): string[] => {
-  const formats = new Set<string>();
-
-  const addFormat = (value?: string) => {
-    if (!value) {
-      return;
-    }
-    const ext = resolveExtension(value);
-    if (ext) {
-      formats.add(ext === 'm4a' ? 'aac' : ext);
-    }
-  };
-
-  addFormat(song.path);
-  addFormat(song.source);
-
-  return Array.from(formats);
-};
-
-// Global instances for optimization. Keep safe defaults so fallback/browser preload paths
-// cannot run before library sizing has arrived.
-let audioBufferCache = new AudioBufferCache(50);
-let backgroundPreloader = new BackgroundPreloader(0);
-let currentLibrarySize = 0;
-
-// Initialize with default size, will be updated when library loads
-const initializeAudioOptimizations = (librarySize: number) => {
-  if (librarySize !== currentLibrarySize) {
-    currentLibrarySize = librarySize;
-    audioBufferCache = new AudioBufferCache(librarySize < 200 ? 50 : librarySize < 1000 ? 20 : 10);
-    backgroundPreloader = new BackgroundPreloader(librarySize);
-  }
-};
-
-const defaultSettings: AppSettings = {
-  libraryPath: 'music',
-  appTheme: 'light',
-  crossfadeEnabled: false,
-  crossfadeDurationSec: 6,
-  gaplessEnabled: true,
-  playbackSpeed: 1,
-  outputDeviceName: undefined,
-  eqPreset: 'flat',
-  eqBands: [0, 0, 0, 0, 0],
-  launchOnStartup: false,
-  gameMode: false,
-  miniNowPlayingOverlay: false,
-  overlaySpinningArtwork: true,
-  overlayAutoHide: true,
-  lyricsVisualsEnabled: false,
-  lyricsVisualTheme: 'ember',
-  metadataFetchPaused: false,
-  discoveryIntensity: 0.5,
-  randomnessIntensity: 0.5,
-  pauseMixRegenDuringPlayback: false,
-  onlineRecommendationsEnabled: false,
-  lastFmApiKey: '',
-  onlineRecommendationProviderOrder: ['lastfm', 'musicbrainz'],
-  autoPauseOnFocus: false,
-  autoPauseIgnoreApps: [],
-  autoPauseIgnoreFullscreen: false,
-};
-
-class NativeAudioEngine {
+/**
+ * Playback through the Rust engine (rodio). Progress and ended events arrive as Tauri events.
+ * Position is interpolated between ticks and scaled by the playback rate.
+ */
+class NativeAudioEngine implements AudioEngine {
   private currentSong: Song | null = null;
   private currentPosition = 0;
   private currentDuration = 0;
   private isPlayingFlag = false;
   private lastProgressAt = 0;
-  private onProgress: ((position: number, duration: number) => void) | null = null;
-  private onEnded: (() => void) | null = null;
-  private settings: AppSettings = defaultSettings;
+  private onProgress: AudioEngineCallbacks['onProgress'] | null = null;
+  private onEnded: AudioEngineCallbacks['onEnded'] | null = null;
+  private settings: AppSettings = DEFAULT_SETTINGS;
   private masterVolume = 0.85;
-  private readonly crossfadeMinDurationSec = 20;
-  private readonly silenceTrimStartSec = 0.08;
-  private listening = false;
+  private unlisten: UnlistenFn[] = [];
+  private bindPromise: Promise<void>;
 
   constructor() {
-    if (isTauri()) {
-      void this.bindNativeEvents();
-    }
+    this.bindPromise = this.bindNativeEvents();
   }
 
   private async bindNativeEvents(): Promise<void> {
-    if (this.listening) {
-      return;
-    }
-    this.listening = true;
-
-    await listen<AudioProgressEvent>('amply://audio-progress', (event) => {
+    const offProgress = await listen<AudioProgressEvent>('amply://audio-progress', (event) => {
       const { position, duration } = event.payload;
       this.currentPosition = position;
       this.currentDuration = duration;
       this.lastProgressAt = performance.now();
       this.onProgress?.(position, duration);
     });
-
-    await listen('amply://audio-ended', () => {
+    const offEnded = await listen('amply://audio-ended', () => {
       this.isPlayingFlag = false;
       this.onEnded?.();
     });
+    this.unlisten.push(offProgress, offEnded);
   }
 
-  setCallbacks(callbacks: {
-    onProgress?: (position: number, duration: number) => void;
-    onEnded?: () => void;
-  }): void {
+  setCallbacks(callbacks: AudioEngineCallbacks): void {
     this.onProgress = callbacks.onProgress ?? null;
     this.onEnded = callbacks.onEnded ?? null;
   }
 
-  applySettings(settings: AppSettings, librarySize?: number): void {
+  applySettings(settings: AppSettings): void {
     const previous = this.settings;
     this.settings = settings;
     if (settings.playbackSpeed !== previous.playbackSpeed) {
@@ -351,12 +103,7 @@ class NativeAudioEngine {
     if (settings.lyricsVisualsEnabled !== previous.lyricsVisualsEnabled) {
       void invoke('audio_set_visualizer_enabled', { enabled: settings.lyricsVisualsEnabled });
     }
-    this.refreshTrackVolumes();
-
-    // Initialize audio optimizations with current library size
-    if (librarySize !== undefined) {
-      initializeAudioOptimizations(librarySize);
-    }
+    this.refreshTrackVolume();
   }
 
   setLoop(enabled: boolean): void {
@@ -369,8 +116,8 @@ class NativeAudioEngine {
 
   getPosition(): number {
     if (this.isPlayingFlag && this.lastProgressAt > 0) {
-      const delta = (performance.now() - this.lastProgressAt) / 1000;
-      return Math.min(this.currentDuration || Infinity, this.currentPosition + delta);
+      const elapsed = ((performance.now() - this.lastProgressAt) / 1000) * (this.settings.playbackSpeed || 1);
+      return Math.min(this.currentDuration || Infinity, this.currentPosition + elapsed);
     }
     return this.currentPosition;
   }
@@ -390,15 +137,10 @@ class NativeAudioEngine {
       transition &&
       this.settings.crossfadeEnabled &&
       !this.settings.gaplessEnabled &&
-      currentDuration >= this.crossfadeMinDurationSec &&
-      song.duration >= this.crossfadeMinDurationSec;
+      currentDuration >= CROSSFADE_MIN_DURATION_SEC &&
+      song.duration >= CROSSFADE_MIN_DURATION_SEC;
 
-    const trimmedStart =
-      startAtSec > 0
-        ? startAtSec
-        : Math.max(0, Math.min(this.silenceTrimStartSec, song.duration * 0.02));
-
-    const volume = this.resolveTrackVolume(song);
+    const startOffset = resolveStartOffset(song, startAtSec);
     const shouldAutoplay = autoplay || canCrossfade;
 
     if (!canCrossfade && !this.settings.gaplessEnabled) {
@@ -409,17 +151,17 @@ class NativeAudioEngine {
       path,
       autoplay: shouldAutoplay,
       transition: canCrossfade,
-      startAtSec: trimmedStart,
+      startAtSec: startOffset,
       durationSec: song.duration,
       crossfadeDurationSec: this.settings.crossfadeDurationSec,
       crossfade: canCrossfade,
-      trackVolume: volume,
+      trackVolume: this.resolveTrackVolume(song),
       gaplessEnabled: this.settings.gaplessEnabled,
     });
 
     this.currentSong = song;
     this.currentDuration = song.duration;
-    this.currentPosition = trimmedStart;
+    this.currentPosition = startOffset;
     this.lastProgressAt = performance.now();
     this.isPlayingFlag = shouldAutoplay;
     this.onProgress?.(this.currentPosition, this.currentDuration);
@@ -430,25 +172,19 @@ class NativeAudioEngine {
       void invoke('audio_preload', { paths: [] });
       return;
     }
-
-    const unique: Song[] = [];
     const seen = new Set<string>();
+    const paths: string[] = [];
     for (const song of songs) {
-      if (!song?.id || seen.has(song.id) || song.id === this.currentSong?.id) {
+      if (!song?.id || seen.has(song.id) || song.id === this.currentSong?.id || !song.path) {
         continue;
       }
       seen.add(song.id);
-      unique.push(song);
-      if (unique.length >= 2) {
+      paths.push(song.path);
+      if (paths.length >= 2) {
         break;
       }
     }
-
-    void invoke('audio_preload', {
-      paths: unique
-        .map((song) => song.path)
-        .filter((path): path is string => typeof path === 'string' && path.length > 0),
-    });
+    void invoke('audio_preload', { paths });
   }
 
   play(): void {
@@ -484,15 +220,7 @@ class NativeAudioEngine {
 
   setVolume(volume: number): void {
     this.masterVolume = volume;
-    this.refreshTrackVolumes();
-  }
-
-  syncSongMetadata(song: Song): void {
-    if (this.currentSong?.id !== song.id) {
-      return;
-    }
-    this.currentSong = song;
-    this.refreshTrackVolumes();
+    this.refreshTrackVolume();
   }
 
   setRate(rate: number): void {
@@ -503,78 +231,54 @@ class NativeAudioEngine {
     return this.isPlayingFlag;
   }
 
+  dispose(): void {
+    void this.bindPromise.then(() => {
+      this.unlisten.forEach((fn) => fn());
+      this.unlisten = [];
+    });
+    this.onProgress = null;
+    this.onEnded = null;
+  }
+
   private resolveTrackVolume(_song: Song): number {
     return this.masterVolume;
   }
 
-  private refreshTrackVolumes(): void {
+  private refreshTrackVolume(): void {
     if (!this.currentSong) {
       return;
     }
-    const volume = this.resolveTrackVolume(this.currentSong);
-    void invoke('audio_set_volume', { volume });
+    void invoke('audio_set_volume', { volume: this.resolveTrackVolume(this.currentSong) });
   }
 }
 
-class HowlerAudioEngine {
-  private currentHowl: Howl | null = null;
-
-  private fadingHowl: Howl | null = null;
-
-  private preloadedHowls = new Map<string, Howl>();
-  private preloadedMeta = new Map<string, Song>();
-
+/**
+ * Browser-mode stub (plain `vite dev`, tests). Produces no sound; advances a fake clock so
+ * transport UI, progress and auto-advance keep working.
+ */
+class SilentAudioEngine implements AudioEngine {
   private currentSong: Song | null = null;
+  private position = 0;
+  private duration = 0;
+  private playing = false;
+  private rate = 1;
+  private loop = false;
+  private timer: number | null = null;
+  private lastTickAt = 0;
+  private onProgress: AudioEngineCallbacks['onProgress'] | null = null;
+  private onEnded: AudioEngineCallbacks['onEnded'] | null = null;
 
-  private progressTimer: number | null = null;
-  private progressIntervalMs = 250;
-  private visibilityHandler: (() => void) | null = null;
-
-  private onProgress: ((position: number, duration: number) => void) | null = null;
-
-  private onEnded: (() => void) | null = null;
-
-  private loopCurrent = false;
-
-  private pendingSeek: number | null = null;
-
-  private loadToken = 0;
-
-  private settings: AppSettings = defaultSettings;
-
-  private readonly crossfadeMinDurationSec = 20;
-
-  private readonly silenceTrimStartSec = 0.08;
-
-  setCallbacks(callbacks: {
-    onProgress?: (position: number, duration: number) => void;
-    onEnded?: () => void;
-  }): void {
+  setCallbacks(callbacks: AudioEngineCallbacks): void {
     this.onProgress = callbacks.onProgress ?? null;
     this.onEnded = callbacks.onEnded ?? null;
   }
 
-  applySettings(settings: AppSettings, librarySize?: number): void {
-    this.settings = settings;
-    if (this.currentHowl) {
-      this.currentHowl.rate(settings.playbackSpeed);
-    }
-    this.preloadedHowls.forEach((howl) => {
-      howl.rate(settings.playbackSpeed);
-    });
-    this.refreshTrackVolumes();
-
-    // Initialize audio optimizations with current library size
-    if (librarySize !== undefined) {
-      initializeAudioOptimizations(librarySize);
-    }
+  applySettings(settings: AppSettings): void {
+    this.rate = settings.playbackSpeed || 1;
   }
 
   setLoop(enabled: boolean): void {
-    this.loopCurrent = enabled;
-    if (this.currentHowl) {
-      this.currentHowl.loop(enabled);
-    }
+    this.loop = enabled;
   }
 
   getCurrentSongId(): string | null {
@@ -582,445 +286,104 @@ class HowlerAudioEngine {
   }
 
   getPosition(): number {
-    if (!this.currentHowl) {
-      return 0;
-    }
-
-    return Number(this.currentHowl.seek() || 0);
+    return this.position;
   }
 
   getDuration(): number {
-    return this.currentHowl?.duration() ?? 0;
+    return this.duration;
   }
 
   async loadSong(song: Song, options: LoadOptions = {}): Promise<void> {
-    const { autoplay = true, transition = true, startAtSec = 0 } = options;
-    const token = (this.loadToken += 1);
-    const currentDuration = this.currentHowl?.duration() ?? 0;
-    const canCrossfade =
-      transition &&
-      this.settings.crossfadeEnabled &&
-      !this.settings.gaplessEnabled &&
-      currentDuration >= this.crossfadeMinDurationSec &&
-      song.duration >= this.crossfadeMinDurationSec;
-
-    if (!this.currentHowl) {
-      const targetHowl = this.createHowl(song, autoplay, startAtSec);
-      this.currentHowl = targetHowl;
-      this.currentSong = song;
-      return;
-    }
-
-    if (!canCrossfade) {
-      const previousHowl = this.currentHowl;
-      if (previousHowl) {
-        previousHowl.stop();
-        previousHowl.unload();
-      }
-      if (this.fadingHowl) {
-        this.fadingHowl.stop();
-        this.fadingHowl.unload();
-        this.fadingHowl = null;
-      }
-      const targetHowl = this.createHowl(song, false, startAtSec);
-      this.currentHowl = targetHowl;
-      this.currentSong = song;
-      if (autoplay) {
-        targetHowl.play();
-      }
-      return;
-    }
-
-    const targetHowl = this.createHowl(song, true, startAtSec);
-    const oldHowl = this.currentHowl;
-    this.fadingHowl = oldHowl;
-    const currentVolume = oldHowl.volume();
-    const fadeDurationMs = Math.max(1000, this.settings.crossfadeDurationSec * 1000);
-
-    targetHowl.volume(0);
-    targetHowl.fade(0, currentVolume, fadeDurationMs);
-
-    oldHowl.fade(currentVolume, 0, fadeDurationMs);
-    window.setTimeout(() => {
-      if (this.loadToken !== token) {
-        oldHowl.stop();
-        oldHowl.unload();
-        if (this.fadingHowl === oldHowl) {
-          this.fadingHowl = null;
-        }
-        return;
-      }
-      oldHowl.stop();
-      oldHowl.unload();
-      if (this.fadingHowl === oldHowl) {
-        this.fadingHowl = null;
-      }
-    }, fadeDurationMs + 50);
-
-    this.currentHowl = targetHowl;
+    const { autoplay = true, startAtSec = 0 } = options;
     this.currentSong = song;
-  }
-
-  preloadSongs(songs: Song[]): void {
-    if (!this.settings.gaplessEnabled && currentLibrarySize >= 1000) {
-      // For large libraries, always preload strategically
-      backgroundPreloader.enqueue(songs);
-      return;
-    }
-
-    const strategy = resolvePreloadStrategy(currentLibrarySize);
-    const preloadCount = Math.min(songs.length, strategy.preloadAhead);
-
-    const unique: Song[] = [];
-    const seen = new Set<string>();
-    for (const song of songs.slice(0, preloadCount)) {
-      if (!song?.id || seen.has(song.id) || song.id === this.currentSong?.id) {
-        continue;
-      }
-      seen.add(song.id);
-      unique.push(song);
-    }
-
-    // Check cache first
-    const toLoad: Song[] = [];
-    unique.forEach(song => {
-      if (!audioBufferCache.has(song.id)) {
-        toLoad.push(song);
-      }
-    });
-
-    // Load uncached songs
-    toLoad.forEach((song) => {
-      if (this.preloadedHowls.has(song.id)) {
-        return;
-      }
-
-      let howl: Howl;
-      try {
-        // Check if already cached
-        howl = audioBufferCache.get(song.id) || this.createPreloadHowl(song);
-        if (!audioBufferCache.has(song.id)) {
-          audioBufferCache.set(song.id, howl);
-        }
-      } catch (error) {
-        console.warn('[Amply] Failed to preload song:', song.id, error);
-        return;
-      }
-
-      this.preloadedHowls.set(song.id, howl);
-      this.preloadedMeta.set(song.id, song);
-    });
-
-    // Clean up excess preloaded howls based on strategy
-    const maxPreload = strategy.preloadAhead + strategy.preloadBehind;
-    if (this.preloadedHowls.size > maxPreload) {
-      const entries = Array.from(this.preloadedHowls.entries());
-      const toRemove = entries.slice(maxPreload);
-      toRemove.forEach(([id]) => {
-        this.preloadedHowls.delete(id);
-        this.preloadedMeta.delete(id);
-        // Don't remove from global cache, let LRU handle it
-      });
-    }
-
-    // For large libraries, also enqueue background preloading
-    if (currentLibrarySize >= 1000 && songs.length > preloadCount) {
-      backgroundPreloader.enqueue(songs.slice(preloadCount));
+    this.duration = song.duration || 0;
+    this.position = resolveStartOffset(song, startAtSec);
+    this.onProgress?.(this.position, this.duration);
+    if (autoplay) {
+      this.play();
+    } else {
+      this.pause();
     }
   }
 
-  private createPreloadHowl(song: Song): Howl {
-    const sources = resolveSongSources(song);
-    const formats = resolveSongFormats(song);
-
-    return new Howl({
-      src: sources,
-      format: formats,
-      html5: true,
-      preload: true,
-      volume: 0,
-      rate: this.settings.playbackSpeed,
-    });
-  }
+  preloadSongs(): void {}
 
   play(): void {
-    if (!this.currentHowl || this.currentHowl.playing()) {
+    if (!this.currentSong) {
       return;
     }
-    this.currentHowl.play();
+    this.playing = true;
+    this.lastTickAt = performance.now();
+    if (this.timer === null) {
+      this.timer = window.setInterval(() => this.tick(), 250);
+    }
   }
 
   playFrom(positionSec: number): void {
-    if (!this.currentHowl) {
-      return;
-    }
-
-    if (this.currentHowl.playing()) {
-      this.currentHowl.seek(positionSec);
-      return;
-    }
-
-    this.stopOtherHowls(this.currentHowl);
-    this.pendingSeek = positionSec;
-    this.currentHowl.play();
-    if (this.currentHowl.playing()) {
-      this.currentHowl.seek(positionSec);
-      this.pendingSeek = null;
-    }
+    this.position = positionSec;
+    this.play();
   }
 
   pause(): void {
-    this.currentHowl?.pause();
-    if (this.fadingHowl) {
-      this.fadingHowl.stop();
-      this.fadingHowl.unload();
-      this.fadingHowl = null;
-    }
-    this.preloadedHowls.forEach((howl) => {
-      if (howl.playing()) {
-        howl.stop();
-      }
-    });
+    this.playing = false;
+    this.clearTimer();
   }
 
   stop(): void {
-    this.currentHowl?.stop();
-    if (this.fadingHowl) {
-      this.fadingHowl.stop();
-      this.fadingHowl.unload();
-      this.fadingHowl = null;
-    }
-    this.stopProgressLoop();
+    this.pause();
+    this.position = 0;
   }
 
   seek(positionSec: number): void {
-    this.currentHowl?.seek(positionSec);
-    this.publishProgress();
+    this.position = Math.max(0, Math.min(this.duration || positionSec, positionSec));
+    this.lastTickAt = performance.now();
+    this.onProgress?.(this.position, this.duration);
   }
 
-  setVolume(volume: number): void {
-    Howler.volume(volume);
-    this.refreshTrackVolumes();
-  }
-
-  syncSongMetadata(song: Song): void {
-    if (this.currentSong?.id === song.id) {
-      this.currentSong = song;
-      if (this.currentHowl) {
-        this.currentHowl.volume(this.resolveTrackVolume(song));
-      }
-    }
-
-    if (this.preloadedMeta.has(song.id)) {
-      this.preloadedMeta.set(song.id, song);
-      const howl = this.preloadedHowls.get(song.id);
-      if (howl) {
-        howl.volume(this.resolveTrackVolume(song));
-      }
-    }
-  }
+  setVolume(): void {}
 
   setRate(rate: number): void {
-    this.currentHowl?.rate(rate);
+    this.rate = rate || 1;
   }
 
   isPlaying(): boolean {
-    return this.currentHowl?.playing() ?? false;
+    return this.playing;
   }
 
-  private createHowl(song: Song, autoplay: boolean, startAtSec: number): Howl {
-    const normalizedVolume = this.resolveTrackVolume(song);
-    const preloaded = this.takePreloadedHowl(song.id);
-    if (preloaded) {
-      this.attachHowlHandlers(preloaded, song, startAtSec);
-      preloaded.volume(normalizedVolume);
-      preloaded.rate(this.settings.playbackSpeed);
-      preloaded.loop(this.loopCurrent);
-      if (autoplay) {
-        preloaded.play();
-      }
-      return preloaded;
-    }
-
-    // Check global cache for large libraries
-    if (currentLibrarySize >= 1000) {
-      const cached = audioBufferCache.get(song.id);
-      if (cached) {
-        this.attachHowlHandlers(cached, song, startAtSec);
-        cached.volume(normalizedVolume);
-        cached.rate(this.settings.playbackSpeed);
-        cached.loop(this.loopCurrent);
-        if (autoplay) {
-          cached.play();
-        }
-        return cached;
-      }
-    }
-
-    const sources = resolveSongSources(song);
-    const formats = resolveSongFormats(song);
-
-    const howl = new Howl({
-      src: sources,
-      format: formats,
-      html5: true,
-      preload: true,
-      autoplay,
-      volume: normalizedVolume,
-      rate: this.settings.playbackSpeed,
-      loop: this.loopCurrent,
-    });
-
-    this.attachHowlHandlers(howl, song, startAtSec);
-    return howl;
+  dispose(): void {
+    this.clearTimer();
+    this.onProgress = null;
+    this.onEnded = null;
   }
 
-  private takePreloadedHowl(songId: string): Howl | null {
-    // First check local preloaded howls
-    const howl = this.preloadedHowls.get(songId) ?? null;
-    if (howl) {
-      this.preloadedHowls.delete(songId);
-      this.preloadedMeta.delete(songId);
-      return howl;
+  private tick(): void {
+    if (!this.playing) {
+      return;
     }
-
-    // For large libraries, check global cache
-    if (currentLibrarySize >= 1000) {
-      const cached = audioBufferCache.get(songId);
-      if (cached) {
-        return cached;
-      }
-    }
-
-    return null;
-  }
-
-  private attachHowlHandlers(howl: Howl, song: Song, startAtSec: number): void {
-    howl.off();
-    howl.on('load', () => {
-      this.publishProgress();
-    });
-    howl.on('play', () => {
-      if (this.pendingSeek !== null) {
-        howl.seek(this.pendingSeek);
-        this.pendingSeek = null;
-      } else if (startAtSec > 0) {
-        howl.seek(startAtSec);
+    const now = performance.now();
+    this.position += ((now - this.lastTickAt) / 1000) * this.rate;
+    this.lastTickAt = now;
+    if (this.duration > 0 && this.position >= this.duration) {
+      if (this.loop) {
+        this.position = 0;
       } else {
-        const trimmedStart = Math.max(0, Math.min(this.silenceTrimStartSec, song.duration * 0.02));
-        if (trimmedStart > 0) {
-          howl.seek(trimmedStart);
-        }
-      }
-      this.startProgressLoop();
-    });
-    howl.on('playerror', (_soundId, error) => {
-      console.error('[Amply] Play error', song.path, error);
-      howl.once('unlock', () => {
-        howl.play();
-      });
-    });
-    howl.on('loaderror', (_soundId, error) => {
-      console.error('[Amply] Load error', song.path, error);
-    });
-    howl.on('pause', () => {
-      this.stopProgressLoop();
-    });
-    howl.on('stop', () => {
-      this.stopProgressLoop();
-    });
-    howl.on('end', () => {
-      if (this.loopCurrent) {
+        this.position = this.duration;
+        this.playing = false;
+        this.clearTimer();
+        this.onProgress?.(this.position, this.duration);
+        this.onEnded?.();
         return;
       }
-      this.stopProgressLoop();
-      this.onEnded?.();
-    });
+    }
+    this.onProgress?.(this.position, this.duration);
   }
 
-  private stopOtherHowls(keep?: Howl): void {
-    if (this.currentHowl && this.currentHowl !== keep) {
-      this.currentHowl.stop();
-      this.currentHowl.unload();
-    }
-
-    if (this.fadingHowl && this.fadingHowl !== keep) {
-      this.fadingHowl.stop();
-      this.fadingHowl.unload();
-      this.fadingHowl = null;
-    }
-
-    this.preloadedHowls.forEach((howl) => {
-      if (howl !== keep && howl.playing()) {
-        howl.stop();
-      }
-    });
-  }
-
-  private resolveTrackVolume(_song: Song): number {
-    return Howler.volume();
-  }
-
-  private refreshTrackVolumes(): void {
-    const current = this.currentSong;
-    if (current && this.currentHowl) {
-      this.currentHowl.volume(this.resolveTrackVolume(current));
-    }
-
-    this.preloadedHowls.forEach((howl, id) => {
-      const song = this.preloadedMeta.get(id);
-      if (song) {
-        howl.volume(this.resolveTrackVolume(song));
-      }
-    });
-  }
-
-  private startProgressLoop(): void {
-    if (this.progressTimer) {
-      window.clearInterval(this.progressTimer);
-    }
-    const resolveInterval = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        return 1000;
-      }
-      return 250;
-    };
-    this.progressIntervalMs = resolveInterval();
-    this.progressTimer = window.setInterval(() => {
-      this.publishProgress();
-    }, this.progressIntervalMs);
-
-    if (!this.visibilityHandler && typeof document !== 'undefined') {
-      this.visibilityHandler = () => {
-        const next = resolveInterval();
-        if (next !== this.progressIntervalMs) {
-          this.startProgressLoop();
-        }
-      };
-      document.addEventListener('visibilitychange', this.visibilityHandler);
-    }
-  }
-
-  private publishProgress(): void {
-    if (!this.currentHowl || !this.onProgress) {
-      return;
-    }
-
-    this.onProgress(Number(this.currentHowl.seek() || 0), this.currentHowl.duration() || 0);
-  }
-
-  private stopProgressLoop(): void {
-    if (!this.progressTimer) {
-      return;
-    }
-
-    window.clearInterval(this.progressTimer);
-    this.progressTimer = null;
-    if (this.visibilityHandler && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', this.visibilityHandler);
-      this.visibilityHandler = null;
+  private clearTimer(): void {
+    if (this.timer !== null) {
+      window.clearInterval(this.timer);
+      this.timer = null;
     }
   }
 }
 
-export const audioEngine = isTauri() ? new NativeAudioEngine() : new HowlerAudioEngine();
+export const audioEngine: AudioEngine = isTauri() ? new NativeAudioEngine() : new SilentAudioEngine();

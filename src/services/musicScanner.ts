@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppSettings, Song } from '@/types/music';
+import type { Song } from '@/types/music';
 import { buildSongId } from '@/services/metadataParser';
-import { isTauri, readStorageJson, toPlayableSrc } from '@/services/storageService';
+import { isTauri, toPlayableSrc } from '@/services/storageService';
 import { getDisplayTitleRepair } from '@/utils/artists';
 
 interface ScannedSong {
@@ -79,13 +79,8 @@ export const scanMusicFolder = async (folder?: string): Promise<Song[]> => {
 
   try {
     const scanned = await invoke<ScannedSong[]>('scan_music', { folder: folder?.trim() || null });
-    const normalized = scanned.map(normalizeSong);
-    const settings = await readStorageJson<Partial<AppSettings>>('settings.json', {});
-    if (settings.gameMode) {
-      return normalized;
-    }
-    // Defer artwork fetching to the idle metadata pipeline to keep scans fast.
-    return normalized;
+    // Artwork fetching is deferred to the idle metadata pipeline to keep scans fast.
+    return scanned.map(normalizeSong);
   } catch {
     return [];
   }

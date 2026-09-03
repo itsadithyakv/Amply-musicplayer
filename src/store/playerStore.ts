@@ -397,57 +397,18 @@ const readPluginLaunchOnStartup = async (): Promise<boolean | null> => {
   }
 };
 
-const readNativeLaunchOnStartup = async (): Promise<boolean | null> => {
-  if (!isTauri()) {
-    return null;
-  }
-  try {
-    return await invoke<boolean>('launch_on_startup_is_enabled');
-  } catch (error) {
-    recordPerfEvent('settings.launch-startup.native-read-failed', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-};
-
 const readLaunchOnStartupEnabled = async (fallback: boolean): Promise<boolean> => {
   if (!isTauri()) {
     return fallback;
   }
-
-  const [pluginEnabled, nativeEnabled] = await Promise.all([
-    readPluginLaunchOnStartup(),
-    readNativeLaunchOnStartup(),
-  ]);
-  const known = [pluginEnabled, nativeEnabled].filter((value): value is boolean => typeof value === 'boolean');
-  if (!known.length) {
-    return fallback;
-  }
-  return known.some(Boolean);
-};
-
-const setNativeLaunchOnStartup = async (enabled: boolean): Promise<boolean | null> => {
-  if (!isTauri()) {
-    return null;
-  }
-  try {
-    return await invoke<boolean>('launch_on_startup_set_enabled', { enabled });
-  } catch (error) {
-    recordPerfEvent('settings.launch-startup.native-write-failed', {
-      enabled,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
+  const enabled = await readPluginLaunchOnStartup();
+  return typeof enabled === 'boolean' ? enabled : fallback;
 };
 
 const setSystemLaunchOnStartup = async (enabled: boolean): Promise<boolean> => {
   if (!isTauri()) {
     return enabled;
   }
-
-  let pluginEnabled: boolean | null = null;
   try {
     const autostart = await import('@tauri-apps/plugin-autostart');
     if (enabled) {
@@ -455,27 +416,18 @@ const setSystemLaunchOnStartup = async (enabled: boolean): Promise<boolean> => {
     } else {
       await autostart.disable();
     }
-    pluginEnabled = await autostart.isEnabled();
+    const actualEnabled = await autostart.isEnabled();
+    if (actualEnabled !== enabled) {
+      throw new Error(enabled ? 'Failed to enable launch on startup' : 'Failed to disable launch on startup');
+    }
+    return actualEnabled;
   } catch (error) {
     recordPerfEvent('settings.launch-startup.plugin-write-failed', {
       enabled,
       error: error instanceof Error ? error.message : String(error),
     });
+    throw error;
   }
-
-  if (enabled && pluginEnabled === true) {
-    // Avoid duplicate startup entries if an older registry fallback was used.
-    void setNativeLaunchOnStartup(false);
-    return true;
-  }
-
-  const nativeEnabled = await setNativeLaunchOnStartup(enabled);
-  const actualEnabled = await readLaunchOnStartupEnabled(false);
-  if (actualEnabled !== enabled) {
-    throw new Error(enabled ? 'Failed to enable launch on startup' : 'Failed to disable launch on startup');
-  }
-
-  return nativeEnabled ?? actualEnabled;
 };
 
 const resolveNextSongId = (state: PlayerState): string | null => {
@@ -873,8 +825,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           return;
         }
         attemptRestore();
-        // Initialize audio optimizations with library size
-        audioEngine.applySettings(get().settings, state.songs.length);
+        audioEngine.applySettings(get().settings);
         unsubscribe();
       });
     }
@@ -1184,8 +1135,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ...get().settings,
       playbackSpeed: clamped,
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },
@@ -1195,8 +1145,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ...get().settings,
       outputDeviceName: deviceName ?? undefined,
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },
@@ -1208,8 +1157,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       eqPreset: preset,
       eqBands: [...template],
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },
@@ -1221,8 +1169,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       eqPreset: 'custom' as const,
       eqBands: normalized,
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },
@@ -1233,8 +1180,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       crossfadeEnabled: enabled,
       gaplessEnabled: enabled ? false : get().settings.gaplessEnabled,
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },
@@ -1244,8 +1190,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ...get().settings,
       crossfadeDurationSec: Math.max(1, Math.min(12, durationSec)),
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },
@@ -1256,8 +1201,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       gaplessEnabled: enabled,
       crossfadeEnabled: enabled ? false : get().settings.crossfadeEnabled,
     };
-    const librarySize = useLibraryStore.getState().songs.length;
-    audioEngine.applySettings(settings, librarySize);
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },

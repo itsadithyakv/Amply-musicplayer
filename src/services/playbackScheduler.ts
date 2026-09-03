@@ -67,14 +67,6 @@ export const scheduleInteraction = (task: ScheduledTask, options: ScheduleOption
   return scheduleImmediate(options.reason ?? 'interaction', task, options.groupKey);
 };
 
-export const scheduleVisibleRoute = (
-  task: ScheduledTask,
-  routeKey: string,
-  options: ScheduleOptions = {},
-): (() => void) => {
-  return scheduleImmediate(options.reason ?? `visible-route:${routeKey}`, task, options.groupKey ?? `route:${routeKey}`);
-};
-
 export const scheduleIdle = (task: ScheduledTask, options: ScheduleOptions = {}): (() => void) => {
   if (backgroundPauseReasons.size > 0 || shouldThrottleNonCriticalWork()) {
     recordBackgroundTask(options.reason ?? 'idle', 'skipped', 0);
