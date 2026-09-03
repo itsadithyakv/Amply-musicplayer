@@ -27,7 +27,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
 
   return (
     <section className={hidden ? 'hidden' : 'grid grid-cols-[minmax(260px,320px)_minmax(0,1fr)] gap-8'}>
-      <div className="neu-well aspect-square w-full max-w-[320px] overflow-hidden rounded-lg">
+      <div className={`neu-well aspect-square w-full max-w-[320px] overflow-hidden rounded-lg transition-transform duration-500 ${isPlaying ? 'anim-float' : ''}`}>
         {song?.albumArt ? <ArtworkImage src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="eager" forceReady /> : null}
       </div>
 
@@ -88,6 +88,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
               label={isPlaying ? 'Pause' : 'Play'}
               size="xl"
               variant="accent"
+              className={isPlaying ? 'anim-pulse-ring' : undefined}
               onClick={() => {
                 const finishInteraction = beginControlInteraction('play-pause', isPlaying ? 'Pausing...' : 'Resuming...');
                 togglePlayPause();

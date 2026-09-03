@@ -293,13 +293,34 @@ input[type='range']:focus-visible {
       0 -1px 0 rgb(var(--amply-edge) / 0.08);
   }
 
-  /* Interactive states: raised things press in, flat things lift on hover. */
+  /* Interactive states: raised things lift on hover and press in on click. */
   .neu-interactive {
     cursor: pointer;
     transition:
-      box-shadow 140ms ease,
+      box-shadow 160ms ease,
       background-color 120ms ease,
-      transform 140ms var(--ease-smooth);
+      color 120ms ease,
+      transform 160ms var(--ease-smooth);
+  }
+
+  .neu-interactive.neu-raised:hover:not(:disabled):not([aria-pressed='true']):not([data-pressed='true']) {
+    transform: translateY(-2px);
+    box-shadow:
+      -8px -8px 18px var(--neu-l),
+      8px 8px 18px var(--neu-d),
+      inset 1px 1px 0 var(--neu-edge-hi);
+  }
+
+  .neu-interactive.neu-raised-sm:hover:not(:disabled):not([aria-pressed='true']):not([data-pressed='true']),
+  .neu-interactive.neu-convex:hover:not(:disabled),
+  .neu-interactive.neu-accent:hover:not(:disabled),
+  .neu-interactive.neu-danger:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  .neu-interactive:active:not(:disabled) {
+    transform: translateY(0) scale(0.97);
+    transition-duration: 80ms;
   }
 
   .neu-interactive.neu-flat:hover,
@@ -516,6 +537,190 @@ input[type='range']:focus-visible {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Motion                                                               */
+/* ------------------------------------------------------------------ */
+@layer components {
+  /* Route content: rise + fade when a page mounts. */
+  .anim-page {
+    animation: amplyRise 320ms var(--ease-smooth) both;
+  }
+
+  .anim-rise {
+    animation: amplyRise 360ms var(--ease-smooth) both;
+  }
+
+  .anim-fade-in {
+    animation: amplyFadeIn 200ms ease-out both;
+  }
+
+  .anim-scale-in {
+    animation: amplyScaleIn 220ms var(--ease-smooth) both;
+  }
+
+  .anim-toast-in {
+    animation: amplyToastIn 260ms var(--ease-smooth) both;
+  }
+
+  /* Children of an .anim-stagger container rise one after another (first 14 get a delay). */
+  .anim-stagger > * {
+    --i: 14;
+    animation: amplyRise 360ms var(--ease-smooth) both;
+    animation-delay: calc(var(--stagger-step, 40ms) * var(--i));
+  }
+
+  .anim-stagger > *:nth-child(1) { --i: 0; }
+  .anim-stagger > *:nth-child(2) { --i: 1; }
+  .anim-stagger > *:nth-child(3) { --i: 2; }
+  .anim-stagger > *:nth-child(4) { --i: 3; }
+  .anim-stagger > *:nth-child(5) { --i: 4; }
+  .anim-stagger > *:nth-child(6) { --i: 5; }
+  .anim-stagger > *:nth-child(7) { --i: 6; }
+  .anim-stagger > *:nth-child(8) { --i: 7; }
+  .anim-stagger > *:nth-child(9) { --i: 8; }
+  .anim-stagger > *:nth-child(10) { --i: 9; }
+  .anim-stagger > *:nth-child(11) { --i: 10; }
+  .anim-stagger > *:nth-child(12) { --i: 11; }
+  .anim-stagger > *:nth-child(13) { --i: 12; }
+  .anim-stagger > *:nth-child(14) { --i: 13; }
+
+  /* Gentle bob for the artwork of the playing track. */
+  .anim-float {
+    animation: amplyFloat 5s ease-in-out infinite;
+  }
+
+  /* Soft accent ring that breathes out from the play button while playing. */
+  .anim-pulse-ring {
+    animation: amplyPulseRing 2s ease-out infinite;
+  }
+
+  /* Loading shimmer for artwork placeholders. */
+  .anim-shimmer {
+    background-image: linear-gradient(100deg, transparent 30%, rgb(var(--amply-shadow-light) / 0.16) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: amplyShimmer 1.6s linear infinite;
+  }
+
+  .anim-spin-slow {
+    animation: amplySpinSlow 8s linear infinite;
+  }
+
+  /* Page-header rule draws itself in from the left. */
+  .amply-hairline {
+    transform-origin: left center;
+    animation: amplyDrawX 600ms var(--ease-smooth) both;
+  }
+
+  /* Icons nudge with their buttons. */
+  .neu-interactive > svg {
+    transition: transform 160ms var(--ease-smooth);
+  }
+
+  .neu-interactive:hover:not(:disabled) > svg {
+    transform: scale(1.08);
+  }
+
+  /* Toggle knob overshoots slightly, slider thumb grows on hover. */
+  .neu-toggle::after {
+    transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .neu-range::-webkit-slider-thumb:hover {
+    transform: scale(1.12);
+  }
+}
+
+@keyframes amplyFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes amplyRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes amplyScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes amplyToastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes amplyDrawX {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes amplyFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes amplyPulseRing {
+  0% {
+    box-shadow:
+      -3px -3px 7px var(--neu-l),
+      3px 3px 7px var(--neu-d),
+      0 0 0 0 rgb(var(--amply-accent) / 0.45);
+  }
+  100% {
+    box-shadow:
+      -3px -3px 7px var(--neu-l),
+      3px 3px 7px var(--neu-d),
+      0 0 0 16px rgb(var(--amply-accent) / 0);
+  }
+}
+
+@keyframes amplyShimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes amplySpinSlow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Low-perf fallback: collapse every shadow to a hairline. */
 html[data-low-perf='true'] .neu-raised,
 html[data-low-perf='true'] .neu-raised-sm,
@@ -525,6 +730,11 @@ html[data-low-perf='true'] .neu-pressed-sm,
 html[data-low-perf='true'] .neu-well {
   box-shadow: var(--neu-flat-shadow);
   background-image: none;
+}
+
+html[data-low-perf='true'] [class*='anim-'],
+html[data-low-perf='true'] .anim-stagger > * {
+  animation: none !important;
 }
 
 @keyframes favoritePulse {

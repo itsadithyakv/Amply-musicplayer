@@ -1506,7 +1506,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return false;
     }
 
-    const deleted = await useLibraryStore.getState().deleteSongFromDisk(songId);
+    let deleted = false;
+    try {
+      deleted = await useLibraryStore.getState().deleteSongFromDisk(songId);
+    } catch (error) {
+      get().showToast(error instanceof Error ? error.message : String(error));
+      return false;
+    }
     if (!deleted) {
       return false;
     }

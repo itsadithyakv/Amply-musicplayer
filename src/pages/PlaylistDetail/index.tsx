@@ -75,7 +75,7 @@ const PlaylistDetailPage = () => {
   };
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="anim-stagger space-y-6 pb-8">
       <Card as="header" padding="lg" radius="lg" className="render-contained">
         <div className="flex flex-wrap items-start gap-6">
           <PlaylistArtworkCollage artworkSet={artworkSet} radius="md" padded className="h-[196px] w-[196px]" />

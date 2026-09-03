@@ -39,6 +39,7 @@ export const PrimaryTransport = memo(({ actionBusyRef }: PrimaryTransportProps) 
         label={isPlaying ? 'Pause' : 'Play'}
         size="lg"
         variant="accent"
+        className={isPlaying ? 'anim-pulse-ring' : undefined}
         onClick={() => {
           const finishInteraction = beginControlInteraction('play-pause', isPlaying ? 'Pausing...' : 'Resuming...');
           if (isPlaying) {

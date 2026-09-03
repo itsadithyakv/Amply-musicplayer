@@ -59,7 +59,7 @@ export const Modal = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-amply-backdrop/55 p-6"
+      className="anim-fade-in fixed inset-0 z-modal flex items-center justify-center bg-amply-backdrop/55 p-6"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -74,7 +74,7 @@ export const Modal = ({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={clsx(
-          'neu-raised flex max-h-[85vh] w-full flex-col rounded-lg outline-none',
+          'anim-scale-in neu-raised flex max-h-[85vh] w-full flex-col rounded-lg outline-none',
           sizeClass[size],
           className,
         )}

@@ -26,7 +26,7 @@ export const SectionRow = ({ title, songs, onPick, scrollable = false }: Section
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
+        <div className="anim-stagger grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
           {songs.map((song) => (
             <div key={`${title}-${song.id}`}>
               <AlbumCard title={song.title} subtitle={song.artist} artwork={song.albumArt} onClick={() => onPick(song)} />

@@ -66,7 +66,7 @@ const GameModePage = () => {
         {items.length === 0 ? (
           <p className="px-4 py-4 text-[12px] text-amply-textSecondary">No playlists yet. Create one in normal mode.</p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="anim-stagger space-y-1">
             {items.map((playlist) => (
               <li key={playlist.id} className="flex items-center justify-between gap-3 rounded-sm px-3 py-2.5">
                 <div className="min-w-0">

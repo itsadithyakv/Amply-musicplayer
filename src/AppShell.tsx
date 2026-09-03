@@ -545,9 +545,11 @@ const AppShell = () => {
               fallback={<RouteFallback />}
               onError={(error) => recordUiError('game-route', error)}
             >
-              <Routes>
-                <Route path="/game" element={<GameModePage />} />
-              </Routes>
+              <div key={pathname} className="anim-page">
+                <Routes>
+                  <Route path="/game" element={<GameModePage />} />
+                </Routes>
+              </div>
             </ErrorBoundary>
           ) : (
             <ErrorBoundary
@@ -562,8 +564,9 @@ const AppShell = () => {
                   </Card>
                 }
               >
-                <Routes>
-                  <Route path="/" element={<Navigate to="/home" replace />} />
+                <div key={pathname} className="anim-page">
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/home" replace />} />
                   <Route path="/home" element={<HomePage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/library" element={<LibraryPage />} />
@@ -571,7 +574,8 @@ const AppShell = () => {
                   <Route path="/playlist/:playlistId" element={<PlaylistDetailPage />} />
                   <Route path="/now-playing" element={<NowPlayingPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
-                </Routes>
+                  </Routes>
+                </div>
               </Suspense>
             </ErrorBoundary>
           )}

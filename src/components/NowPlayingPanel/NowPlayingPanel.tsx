@@ -462,7 +462,7 @@ const NowPlayingPanel = () => {
         </div>
       ) : (
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-1 pb-20 pr-2">
-          <div className="space-y-4 pb-5">
+          <div className="anim-stagger space-y-4 pb-5">
             <div className="neu-raised aspect-square w-full overflow-hidden rounded-lg">
               {song.albumArt ? (
                 <ArtworkImage src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="eager" forceReady />

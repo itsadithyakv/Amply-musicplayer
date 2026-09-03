@@ -20,7 +20,7 @@ const SettingsPage = () => (
     />
 
     <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.28fr)_minmax(0,0.92fr)] 2xl:items-start">
-      <div className="grid gap-4">
+      <div className="anim-stagger grid gap-4">
         <LibrarySection />
         <LibraryDataSection />
         <PlaybackSection />
@@ -28,7 +28,7 @@ const SettingsPage = () => (
         <AppVersionSection />
       </div>
 
-      <div className="grid gap-4">
+      <div className="anim-stagger grid gap-4">
         <AppearanceSection />
         <AppBehaviorSection />
         <OverlaySection />

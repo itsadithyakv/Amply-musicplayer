@@ -26,7 +26,7 @@ export const QueuePanel = memo(({ active }: { active: boolean }) => {
           {queueDisplay.length === 0 ? (
             <p className="px-4 py-6 text-[13px] text-amply-textMuted">Queue is empty.</p>
           ) : (
-            <div className="flex flex-col gap-2 p-3">
+            <div className="anim-stagger flex flex-col gap-2 p-3" style={{ ["--stagger-step" as string]: "25ms" }}>
               {queueDisplay.map((queuedSong, index) => {
                 const isCurrent = queuedSong.id === currentSongId;
                 return (

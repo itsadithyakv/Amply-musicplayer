@@ -484,7 +484,7 @@ const HomePage = () => {
   );
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="anim-stagger space-y-8 pb-8">
       <PageHeader
         title="Discover"
         description={regenMessage ?? undefined}
@@ -596,7 +596,7 @@ const HomePage = () => {
       {madeForYouMixes.length ? (
         <section className="space-y-3">
           <SectionTitle>Made for you</SectionTitle>
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="anim-stagger grid gap-5 xl:grid-cols-2">
             {madeForYouMixes.map((mix, index) => (
               <MadeForYouHero key={mix.id} mix={mix} toneIndex={index} onPlay={() => playPlaylist(mix.songIds)} />
             ))}

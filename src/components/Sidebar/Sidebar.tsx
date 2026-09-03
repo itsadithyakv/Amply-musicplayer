@@ -60,16 +60,16 @@ const MetadataStatus = () => {
 
 const Sidebar = () => (
   <aside className="flex h-full min-h-0 w-full flex-col px-3 py-5 shadow-[inset_-1px_0_0_rgb(var(--amply-edge)/var(--edge-a))] lg:px-4">
-    <div className="mb-8 flex items-center justify-center gap-3 px-0 lg:justify-start lg:px-2">
-      <span className="neu-raised-sm inline-flex h-11 w-11 items-center justify-center rounded-full">
-        <img src={logoIcon} alt="Amply" className="h-7 w-7 object-contain" />
+    <div className="anim-rise mb-8 flex flex-col items-center justify-center gap-2 text-center">
+      <span className="neu-raised inline-flex h-14 w-14 items-center justify-center rounded-full">
+        <img src={logoIcon} alt="Amply" className="h-9 w-9 object-contain" />
       </span>
       <p className="hidden font-display text-[23px] font-black tracking-[-0.045em] text-amply-textPrimary lg:block">Amply</p>
     </div>
     <MetadataStatus />
 
     <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-visible px-1 pb-4">
-      <div className="space-y-2">
+      <div className="anim-stagger space-y-2">
         {primaryNav.map((item) => (
           <NavEntry key={item.path} item={item} />
         ))}

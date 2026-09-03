@@ -158,7 +158,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
     <div className={clsx('relative overflow-hidden', !isLoaded && !error && 'bg-amply-bgDeep', className)}>
       {!isLoaded && !error && (
         <div
-          className={clsx('neu-well absolute inset-0', pulse && 'animate-pulse', placeholderClassName)}
+          className={clsx('neu-well absolute inset-0', pulse && 'anim-shimmer', placeholderClassName)}
           aria-hidden="true"
         />
       )}

@@ -14,7 +14,7 @@ const SearchPage = () => {
   const suggestions = query.trim() ? searchView.suggestions : [];
 
   return (
-    <div className="space-y-5 pb-8">
+    <div className="anim-stagger space-y-5 pb-8">
       <PageHeader title="Search" />
 
       <Card padding="md">
