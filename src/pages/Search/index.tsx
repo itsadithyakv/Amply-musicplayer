@@ -1,5 +1,8 @@
 import SongList from '@/components/SongList/SongList';
-import { PageHeader, SoftPanel, UnifiedSearchInput } from '@/components/ui/AmplyUI';
+import { Card } from '@/components/ui/Card';
+import { Chip } from '@/components/ui/Badge';
+import { SearchInput } from '@/components/ui/Input';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSearchRouteView } from '@/hooks/useLibraryViews';
 
@@ -14,39 +17,26 @@ const SearchPage = () => {
     <div className="space-y-5 pb-8">
       <PageHeader title="Search" />
 
-      <SoftPanel className="p-4">
-        <UnifiedSearchInput
-          value={query}
-          onValueChange={setSearchQuery}
-          placeholder="Search songs, artists, albums, playlists..."
-        />
+      <Card padding="md">
+        <SearchInput value={query} onValueChange={setSearchQuery} placeholder="Search songs, artists, albums, playlists…" />
 
         {suggestions.length ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {suggestions.map((suggestion) => (
-              <button
-                key={suggestion}
-                type="button"
-                onClick={() => setSearchQuery(suggestion)}
-                className="rounded-full border border-amply-border/60 bg-amply-bgPrimary/40 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-amply-textSecondary transition-colors hover:bg-amply-hover hover:text-amply-textPrimary"
-              >
+              <Chip key={suggestion} onClick={() => setSearchQuery(suggestion)}>
                 {suggestion}
-              </button>
+              </Chip>
             ))}
           </div>
         ) : null}
-      </SoftPanel>
+      </Card>
 
       {filteredSongs.length ? (
         <SongList songs={filteredSongs} persistKey="search" hideSort />
-      ) : searchView.query.trim().length >= 2 ? (
-        <SoftPanel className="p-6 text-[13px] text-amply-textMuted">
-          No results found. Try a different search term.
-        </SoftPanel>
       ) : (
-        <SoftPanel className="p-6 text-[13px] text-amply-textMuted">
-          Start typing to search your library.
-        </SoftPanel>
+        <Card padding="lg" className="text-[13px] text-amply-textSecondary">
+          {searchView.query.trim().length >= 2 ? 'No results found. Try a different search term.' : 'Start typing to search your library.'}
+        </Card>
       )}
     </div>
   );
