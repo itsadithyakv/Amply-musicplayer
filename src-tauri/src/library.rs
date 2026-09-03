@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
     time::UNIX_EPOCH,
 };
 
@@ -17,7 +18,133 @@ use lofty::{
     tag::Tag,
 };
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use walkdir::WalkDir;
+
+use crate::error::{AmplyError, AmplyResult};
+use crate::storage;
+
+/// kv key holding the JSON array of canonical library roots.
+pub(crate) const LIBRARY_ROOTS_KEY: &str = "library/roots.json";
+
+/// Canonical library folders registered with the asset protocol scope.
+/// `delete_song_file` refuses anything outside this set.
+#[derive(Default)]
+pub(crate) struct LibraryRoots(pub Mutex<Vec<PathBuf>>);
+
+impl LibraryRoots {
+    pub(crate) fn snapshot(&self) -> Vec<PathBuf> {
+        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    }
+
+    /// Returns `true` when `root` was not registered before.
+    fn insert(&self, root: PathBuf) -> bool {
+        let mut roots = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if roots.contains(&root) {
+            false
+        } else {
+            roots.push(root);
+            true
+        }
+    }
+}
+
+/// Resolves a user-facing library folder to an absolute, canonical path.
+///
+/// * empty / `None` → the platform music folder
+/// * relative (the frontend default is `"music"`) → under the audio dir (or home)
+/// * absolute → as given
+///
+/// The result is canonicalised with `dunce` when the folder exists so that
+/// `starts_with` checks against canonicalised file paths are meaningful.
+pub(crate) fn resolve_library_root(input: Option<&str>) -> PathBuf {
+    let path = match input.map(str::trim).filter(|value| !value.is_empty()) {
+        None => default_music_path(),
+        // The frontend's legacy default `libraryPath` is the bare word "music": treat it as the
+        // system Music folder rather than a `Music/music` subfolder that never exists.
+        Some(value) if value.eq_ignore_ascii_case("music") => default_music_path(),
+        Some(value) => {
+            let candidate = PathBuf::from(value);
+            if candidate.is_absolute() {
+                candidate
+            } else {
+                dirs::audio_dir()
+                    .or_else(dirs::home_dir)
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(candidate)
+            }
+        }
+    };
+    dunce::canonicalize(&path).unwrap_or(path)
+}
+
+/// Adds `root` to the asset protocol scope and to the managed root set.
+/// Returns `true` when the root is new.
+pub(crate) fn register_library_root(app: &tauri::AppHandle, roots: &LibraryRoots, root: &Path) -> bool {
+    if let Err(error) = app.asset_protocol_scope().allow_directory(root, true) {
+        log::warn!("Failed to allow asset protocol access to {}: {error}", root.display());
+    }
+    roots.insert(root.to_path_buf())
+}
+
+fn persist_library_roots_blocking(app: &tauri::AppHandle, roots: &[PathBuf]) -> Result<(), String> {
+    let listed: Vec<String> = roots.iter().map(|root| root.to_string_lossy().to_string()).collect();
+    let serialized = serde_json::to_string(&listed).map_err(|err| err.to_string())?;
+    storage::storage_db(app)?.write_blocking(LIBRARY_ROOTS_KEY, &serialized)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedLibrarySettings {
+    #[serde(default)]
+    library_paths: Vec<String>,
+    #[serde(default)]
+    library_path: Option<String>,
+}
+
+/// Rebuilds the root set at startup from `library/roots.json` and the
+/// frontend's `settings.json`, registering each with the asset protocol scope
+/// before the webview loads. Must run after `StorageDb` is managed.
+pub(crate) fn restore_library_roots(app: &tauri::AppHandle) -> LibraryRoots {
+    let roots = LibraryRoots::default();
+    let db = match storage::storage_db(app) {
+        Ok(db) => db,
+        Err(error) => {
+            log::warn!("Cannot restore library roots: {error}");
+            return roots;
+        }
+    };
+
+    let mut inputs: Vec<String> = Vec::new();
+    match db.read_blocking(LIBRARY_ROOTS_KEY) {
+        Ok(Some(text)) => match serde_json::from_str::<Vec<String>>(&text) {
+            Ok(saved) => inputs.extend(saved),
+            Err(error) => log::warn!("Ignoring unparsable {LIBRARY_ROOTS_KEY}: {error}"),
+        },
+        Ok(None) => {}
+        Err(error) => log::warn!("Failed to read {LIBRARY_ROOTS_KEY}: {error}"),
+    }
+    match db.read_blocking("settings.json") {
+        Ok(Some(text)) => match serde_json::from_str::<PersistedLibrarySettings>(&text) {
+            Ok(settings) => {
+                inputs.extend(settings.library_paths);
+                inputs.extend(settings.library_path);
+            }
+            Err(error) => log::warn!("Ignoring unparsable settings.json for library paths: {error}"),
+        },
+        Ok(None) => {}
+        Err(error) => log::warn!("Failed to read settings.json: {error}"),
+    }
+
+    for input in inputs {
+        if input.trim().is_empty() {
+            continue;
+        }
+        let root = resolve_library_root(Some(&input));
+        register_library_root(app, &roots, &root);
+    }
+    roots
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -273,13 +400,25 @@ fn is_low_confidence_scan_artist(artist: &str) -> bool {
 }
 
 #[tauri::command]
-pub async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let scan_root = folder
-            .filter(|value| !value.trim().is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(default_music_path);
+pub async fn scan_music(
+    app: tauri::AppHandle,
+    roots: tauri::State<'_, LibraryRoots>,
+    folder: Option<String>,
+) -> AmplyResult<Vec<ScannedSong>> {
+    let scan_root = resolve_library_root(folder.as_deref());
+    if register_library_root(&app, &roots, &scan_root) {
+        let snapshot = roots.snapshot();
+        let handle = app.clone();
+        let persisted = tauri::async_runtime::spawn_blocking(move || persist_library_roots_blocking(&handle, &snapshot))
+            .await
+            .map_err(|err| err.to_string())
+            .and_then(|result| result);
+        if let Err(error) = persisted {
+            log::warn!("Failed to persist library roots: {error}");
+        }
+    }
 
+    let songs = tauri::async_runtime::spawn_blocking(move || {
         if !scan_root.exists() {
             return Ok(Vec::new());
         }
@@ -390,54 +529,81 @@ pub async fn scan_music(folder: Option<String>) -> Result<Vec<ScannedSong>, Stri
                 .then_with(|| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()))
         });
 
-        Ok(songs)
+        Ok::<_, String>(songs)
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+    Ok(songs)
+}
+
+/// Deletes `path` only when it lives under one of the registered library roots.
+/// Returns `Ok(false)` when the file is already gone.
+fn delete_song_file_blocking(path: &str, roots: &[PathBuf]) -> AmplyResult<bool> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AmplyError::InvalidInput("Song path missing".to_string()));
+    }
+    if roots.is_empty() {
+        return Err(AmplyError::Unavailable("Library not scanned yet".to_string()));
+    }
+    let raw = PathBuf::from(trimmed);
+    let target = dunce::canonicalize(&raw).unwrap_or(raw);
+    if !roots.iter().any(|root| target.starts_with(root)) {
+        return Err(AmplyError::Forbidden(
+            "Path is outside the configured library folders".to_string(),
+        ));
+    }
+    if !target.exists() {
+        return Ok(false);
+    }
+    if !target.is_file() {
+        return Err(AmplyError::InvalidInput("Selected path is not a file".to_string()));
+    }
+    fs::remove_file(&target)?;
+    Ok(true)
 }
 
 #[tauri::command]
-pub async fn delete_song_file(path: String) -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            return Err("Song path missing".to_string());
-        }
-        let target = PathBuf::from(trimmed);
-        if !target.exists() {
-            return Ok(false);
-        }
-        if !target.is_file() {
-            return Err("Selected path is not a file".to_string());
-        }
-        fs::remove_file(&target).map_err(|err| err.to_string())?;
-        Ok(true)
+pub async fn delete_song_file(path: String, roots: tauri::State<'_, LibraryRoots>) -> AmplyResult<bool> {
+    let roots = roots.snapshot();
+    tauri::async_runtime::spawn_blocking(move || delete_song_file_blocking(&path, &roots))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn pick_music_folders() -> Vec<String> {
+    // rfd blocks until the dialog closes; keep that off the main thread.
+    let picked = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Select Music Folders")
+            .pick_folders()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<String>>()
     })
-    .await
-    .map_err(|err| err.to_string())?
+    .await;
+    match picked {
+        Ok(paths) => paths,
+        Err(error) => {
+            log::warn!("Folder picker task failed: {error}");
+            Vec::new()
+        }
+    }
 }
 
 #[tauri::command]
-pub fn pick_music_folders() -> Vec<String> {
-    rfd::FileDialog::new()
-        .set_title("Select Music Folders")
-        .pick_folders()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|path| path.to_string_lossy().to_string())
-        .collect()
-}
-
-#[tauri::command]
-pub async fn load_embedded_artwork(path: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn load_embedded_artwork(path: String) -> AmplyResult<Option<String>> {
+    let artwork = tauri::async_runtime::spawn_blocking(move || {
         let tagged_file = Probe::open(Path::new(&path))
             .and_then(|probe| probe.read())
             .map_err(|err| err.to_string())?;
-        Ok(extract_embedded_artwork(&tagged_file))
+        Ok::<_, String>(extract_embedded_artwork(&tagged_file))
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+    Ok(artwork)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -453,8 +619,8 @@ pub struct ArtCount {
     pub count: u32,
 }
 
-#[tauri::command]
-pub fn build_album_art_frequency_rust(songs: Vec<ArtworkSongInput>) -> Result<Vec<ArtCount>, String> {
+#[tauri::command(async)]
+pub fn build_album_art_frequency_rust(songs: Vec<ArtworkSongInput>) -> AmplyResult<Vec<ArtCount>> {
     let mut freq: HashMap<String, u32> = HashMap::new();
     for song in songs {
         let art = match song.album_art {
@@ -469,4 +635,82 @@ pub fn build_album_art_frequency_rust(songs: Vec<ArtworkSongInput>) -> Result<Ve
         .into_iter()
         .map(|(art, count)| ArtCount { art, count })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "amply-library-test-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dunce::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn resolve_library_root_handles_empty_relative_and_absolute() {
+        assert_eq!(resolve_library_root(None), resolve_library_root(Some("  ")));
+        assert!(resolve_library_root(None).is_absolute());
+
+        assert_eq!(resolve_library_root(Some("music")), resolve_library_root(None));
+        assert_eq!(resolve_library_root(Some("Music")), resolve_library_root(None));
+
+        let relative = resolve_library_root(Some("music/subfolder"));
+        assert!(relative.is_absolute());
+        assert!(relative.ends_with("subfolder"));
+
+        let root = temp_dir("abs");
+        assert_eq!(resolve_library_root(Some(&root.to_string_lossy())), root);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn library_roots_dedupe() {
+        let roots = LibraryRoots::default();
+        assert!(roots.insert(PathBuf::from("a")));
+        assert!(!roots.insert(PathBuf::from("a")));
+        assert!(roots.insert(PathBuf::from("b")));
+        assert_eq!(roots.snapshot().len(), 2);
+    }
+
+    #[test]
+    fn delete_song_file_requires_a_registered_root() {
+        let root = temp_dir("root");
+        let outside = temp_dir("outside");
+        let inside_file = root.join("song.mp3");
+        let outside_file = outside.join("song.mp3");
+        fs::write(&inside_file, b"x").unwrap();
+        fs::write(&outside_file, b"x").unwrap();
+
+        let no_roots: Vec<PathBuf> = Vec::new();
+        assert!(matches!(
+            delete_song_file_blocking(&inside_file.to_string_lossy(), &no_roots),
+            Err(AmplyError::Unavailable(_))
+        ));
+        assert!(matches!(
+            delete_song_file_blocking("   ", std::slice::from_ref(&root)),
+            Err(AmplyError::InvalidInput(_))
+        ));
+
+        let roots = vec![root.clone()];
+        let forbidden = delete_song_file_blocking(&outside_file.to_string_lossy(), &roots).unwrap_err();
+        assert!(matches!(forbidden, AmplyError::Forbidden(_)));
+        assert_eq!(forbidden.to_string(), "Path is outside the configured library folders");
+        assert!(outside_file.exists());
+
+        assert!(matches!(
+            delete_song_file_blocking(&root.to_string_lossy(), &roots),
+            Err(AmplyError::InvalidInput(_))
+        ));
+        assert!(delete_song_file_blocking(&inside_file.to_string_lossy(), &roots).unwrap());
+        assert!(!inside_file.exists());
+        assert!(!delete_song_file_blocking(&inside_file.to_string_lossy(), &roots).unwrap());
+
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
 }

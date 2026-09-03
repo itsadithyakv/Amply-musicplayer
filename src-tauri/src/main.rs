@@ -2,10 +2,13 @@
 
 use std::sync::mpsc;
 
+use log::LevelFilter;
 use tauri::image::Image;
 use tauri::{Manager, WindowEvent};
+use tauri_plugin_log::{Target, TargetKind};
 
 mod audio;
+mod error;
 mod library;
 mod metadata;
 mod platform;
@@ -18,16 +21,33 @@ fn main() {
     let (audio_tx, audio_rx) = mpsc::channel::<AudioCommand>();
 
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("amply".into()),
+                    }),
+                    Target::new(TargetKind::Stdout),
+                ])
+                .level(if cfg!(debug_assertions) {
+                    LevelFilter::Info
+                } else {
+                    LevelFilter::Warn
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .manage(AudioState::new(audio_tx.clone()))
         .setup(|app| {
             let storage_root = storage::storage_root_path(app.handle())?;
             app.manage(storage::StorageDb::open(storage_root)?);
+            // Asset-protocol access to every known library folder must exist before the webview loads.
+            app.manage(library::restore_library_roots(app.handle()));
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = metadata::cache::migrate_legacy_blobs(&handle) {
-                    eprintln!("Failed to migrate legacy metadata caches: {error}");
+                    log::error!("Failed to migrate legacy metadata caches: {error}");
                 }
             });
             #[cfg(desktop)]
@@ -36,14 +56,16 @@ fn main() {
                 if let Err(error) =
                     app.handle().plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
                 {
-                    eprintln!("Failed to initialize autostart plugin: {error}");
+                    log::error!("Failed to initialize autostart plugin: {error}");
                 }
             }
 
             let window_icon = Image::from_bytes(include_bytes!("../icons/LogoAmply.png")).ok();
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = window_icon {
-                    let _ = window.set_icon(icon);
+                    if let Err(error) = window.set_icon(icon) {
+                        log::warn!("Failed to set window icon: {error}");
+                    }
                 }
             }
 
@@ -103,12 +125,21 @@ fn main() {
                 app.exit(0);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run amply");
+        .build(tauri::generate_context!())
+        .expect("failed to build amply")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Stop helper threads before the process exits so hooks and COM are released.
+                platform::shutdown();
+                audio::shutdown(app);
+            }
+        });
 }
 
 fn close_all_windows(app: &tauri::AppHandle) {
-    for (_label, window) in app.webview_windows() {
-        let _ = window.close();
+    for (label, window) in app.webview_windows() {
+        if let Err(error) = window.close() {
+            log::warn!("Failed to close window {label}: {error}");
+        }
     }
 }

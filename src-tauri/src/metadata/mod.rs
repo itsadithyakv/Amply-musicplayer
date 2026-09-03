@@ -37,7 +37,6 @@ pub(crate) const LYRICS_INDEX_PATH: &str = "lyrics_cache/index.json";
 pub(crate) const TRACK_ARTWORK_CACHE_PATH: &str = "metadata_cache/track_artwork_cache.json";
 pub(crate) const ALBUM_TRACKLIST_CACHE_PATH: &str = "metadata_cache/album_tracklist_cache.json";
 pub(crate) const SONG_GENRE_CACHE_PATH: &str = "metadata_cache/song_genre_cache.json";
-pub(crate) const METADATA_USER_AGENT: &str = "Amply/1.6 (local music player; metadata cache)";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

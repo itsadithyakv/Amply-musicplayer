@@ -1,19 +1,17 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
 
 use reqwest::Url;
 use serde::Deserialize;
 
 use super::cache::{read_json, to_storage_cache_path, write_json};
-use super::http::{fetch_json, wikipedia_summary_url};
+use super::http::{fetch_json, wikipedia_summary_url, HTTP};
 use super::normalize::{
     artist_identity_matches, count_words, hash_string, identity_contains, is_disambiguation_text,
     is_likely_artist_title, is_music_related_text, normalize_text, slugify, slugify_legacy,
     to_word_range,
 };
-use super::{now_unix, ArtistProfile, ArtistProfileLoadResult, ARTIST_CACHE_FOLDER, METADATA_USER_AGENT};
+use super::{now_unix, ArtistProfile, ArtistProfileLoadResult, ARTIST_CACHE_FOLDER};
+use crate::error::AmplyResult;
 use crate::storage::delete_storage_kv;
 
 fn cache_key_for_artist(artist_name: &str) -> String {
@@ -100,13 +98,8 @@ struct WikipediaExtractPage {
 
 pub(crate) async fn fetch_wikipedia_summary(title: &str) -> Result<Option<WikipediaSummaryPayload>, String> {
     let url = wikipedia_summary_url(title)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let response = client
+    let response = HTTP
         .get(url)
-        .header("User-Agent", METADATA_USER_AGENT)
         .header("Accept", "application/json")
         .send()
         .await
@@ -159,7 +152,7 @@ pub(crate) async fn fetch_wikipedia_search_titles_for_query(query: &str, limit: 
         ],
     )
     .map_err(|err| err.to_string())?;
-    let payload: WikipediaSearchPayload = fetch_json(url, None).await?;
+    let payload: WikipediaSearchPayload = fetch_json(url).await?;
     let titles = payload
         .query
         .and_then(|query| query.search)
@@ -185,7 +178,7 @@ async fn fetch_wikipedia_intro_extract(title: &str) -> Result<Option<String>, St
         ],
     )
     .map_err(|err| err.to_string())?;
-    let payload: WikipediaExtractPayload = fetch_json(url, None).await?;
+    let payload: WikipediaExtractPayload = fetch_json(url).await?;
     let pages = payload.query.and_then(|query| query.pages).unwrap_or_default();
     let extract = pages.values().next().and_then(|page| page.extract.clone());
     Ok(extract.and_then(|value| {
@@ -202,8 +195,9 @@ pub(crate) async fn build_candidate_titles(artist_name: &str) -> Result<Vec<Stri
         .map(|qualifier| format!("{trimmed} ({qualifier})"))
         .collect::<Vec<_>>();
     candidates.push(trimmed.to_string());
-    if let Ok(searched) = fetch_wikipedia_search_titles(trimmed).await {
-        candidates.extend(searched);
+    match fetch_wikipedia_search_titles(trimmed).await {
+        Ok(searched) => candidates.extend(searched),
+        Err(error) => log::warn!("Wikipedia search for artist {trimmed:?} failed: {error}"),
     }
 
     Ok(candidates
@@ -234,7 +228,13 @@ async fn fetch_artist_profile(artist_name: &str) -> Result<Option<ArtistProfile>
         }
 
         let resolved_title = summary_payload.title.clone().unwrap_or_else(|| title.clone());
-        let intro_extract = fetch_wikipedia_intro_extract(&resolved_title).await.unwrap_or(None);
+        let intro_extract = match fetch_wikipedia_intro_extract(&resolved_title).await {
+            Ok(extract) => extract,
+            Err(error) => {
+                log::warn!("Wikipedia intro extract for {resolved_title:?} failed: {error}");
+                None
+            }
+        };
         let merged_summary = to_word_range(
             intro_extract.as_deref().unwrap_or(&summary_extract),
             100,
@@ -295,7 +295,7 @@ pub(crate) fn is_valid_artist_profile(profile: &ArtistProfile, artist_name: &str
 }
 
 #[tauri::command]
-pub async fn has_cached_artist_profile_rust(app: tauri::AppHandle, artist_name: String) -> Result<bool, String> {
+pub async fn has_cached_artist_profile_rust(app: tauri::AppHandle, artist_name: String) -> AmplyResult<bool> {
     let name = artist_name.trim().to_string();
     if name.is_empty() || name.to_lowercase() == "unknown artist" {
         return Ok(true);
@@ -317,7 +317,7 @@ pub async fn has_cached_artist_profile_rust(app: tauri::AppHandle, artist_name: 
 pub async fn read_cached_artist_profile_rust(
     app: tauri::AppHandle,
     artist_name: String,
-) -> Result<ArtistProfileLoadResult, String> {
+) -> AmplyResult<ArtistProfileLoadResult> {
     let name = artist_name.trim().to_string();
     let cache_key = cache_key_for_artist(&name);
     let cache_path = to_storage_cache_path(&cache_key);
@@ -336,7 +336,9 @@ pub async fn read_cached_artist_profile_rust(
         if let Some(profile) = cached {
             if is_valid_artist_profile(&profile, &name) {
                 if candidate_key != cache_key {
-                    let _ = write_json(&app, &cache_key, &profile).await;
+                    if let Err(error) = write_json(&app, &cache_key, &profile).await {
+                        log::warn!("Failed to migrate artist profile cache to {cache_key}: {error}");
+                    }
                 }
                 let resolved_cache_path = to_storage_cache_path(&candidate_key);
                 return Ok(ArtistProfileLoadResult {
@@ -346,7 +348,9 @@ pub async fn read_cached_artist_profile_rust(
                     cache_path: resolved_cache_path,
                 });
             }
-            let _ = delete_storage_kv(&app, &candidate_key).await;
+            if let Err(error) = delete_storage_kv(&app, &candidate_key).await {
+                log::warn!("Failed to drop invalid artist profile cache {candidate_key}: {error}");
+            }
         }
     }
 
@@ -362,7 +366,7 @@ pub async fn read_cached_artist_profile_rust(
 pub async fn load_artist_profile_rust(
     app: tauri::AppHandle,
     artist_name: String,
-) -> Result<ArtistProfileLoadResult, String> {
+) -> AmplyResult<ArtistProfileLoadResult> {
     let name = artist_name.trim().to_string();
     let cache_key = cache_key_for_artist(&name);
     let cache_path = to_storage_cache_path(&cache_key);
@@ -380,7 +384,9 @@ pub async fn load_artist_profile_rust(
         if let Some(cached) = read_json::<ArtistProfile>(&app, &candidate_key).await? {
             if is_valid_artist_profile(&cached, &name) {
                 if candidate_key != cache_key {
-                    let _ = write_json(&app, &cache_key, &cached).await;
+                    if let Err(error) = write_json(&app, &cache_key, &cached).await {
+                        log::warn!("Failed to migrate artist profile cache to {cache_key}: {error}");
+                    }
                 }
                 let resolved_cache_path = to_storage_cache_path(&candidate_key);
                 return Ok(ArtistProfileLoadResult {
@@ -390,7 +396,9 @@ pub async fn load_artist_profile_rust(
                     cache_path: resolved_cache_path,
                 });
             }
-            let _ = delete_storage_kv(&app, &candidate_key).await;
+            if let Err(error) = delete_storage_kv(&app, &candidate_key).await {
+                log::warn!("Failed to drop invalid artist profile cache {candidate_key}: {error}");
+            }
         }
     }
 
@@ -410,12 +418,15 @@ pub async fn load_artist_profile_rust(
             from_cache: None,
             cache_path,
         }),
-        Err(_) => Ok(ArtistProfileLoadResult {
-            status: "no-internet".to_string(),
-            profile: None,
-            from_cache: None,
-            cache_path,
-        }),
+        Err(error) => {
+            log::warn!("Wikipedia artist profile for {name:?} failed: {error}");
+            Ok(ArtistProfileLoadResult {
+                status: "no-internet".to_string(),
+                profile: None,
+                from_cache: None,
+                cache_path,
+            })
+        }
     }
 }
 

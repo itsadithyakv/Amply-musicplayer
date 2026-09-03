@@ -6,20 +6,46 @@ use std::{
     fs,
     sync::{
         mpsc::{self, Receiver},
-        Arc,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use tauri::{AppHandle, Emitter};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
 
-use self::engine::{AudioCommand, AudioProgress, AudioSpectrum, NativeAudio};
+use self::engine::{AudioCommand, AudioProgress, AudioSpectrum, AudioState, NativeAudio};
+use crate::platform::join_with_timeout;
 
-pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> JoinHandle<()> {
+/// Join handle of the audio thread, taken by `shutdown`.
+static AUDIO_THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+
+/// Asks the audio thread to stop and waits up to 2 s for it, so the output
+/// stream is torn down before the process exits.
+pub(crate) fn shutdown(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AudioState>() {
+        if state.sender.send(AudioCommand::Shutdown).is_err() {
+            log::debug!("Audio thread already stopped before shutdown");
+        }
+    }
+    let handle = AUDIO_THREAD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    join_with_timeout("audio engine", handle, Duration::from_secs(2));
+}
+
+fn emit<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    if let Err(error) = app.emit(event, payload) {
+        log::warn!("Failed to emit {event}: {error}");
+    }
+}
+
+pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) {
     let app_handle = app;
     let audio_rx = rx;
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         let mut audio = NativeAudio::new();
         let mut last_emit = Instant::now();
         let mut last_spectrum_emit = Instant::now();
@@ -117,6 +143,7 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
 
                         let _ = reply.send(Ok(()));
                     }
+                    AudioCommand::Shutdown => break,
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -142,7 +169,8 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
                 audio.progress_dirty = false;
                 if audio.is_playing && progress_due {
                     last_emit = Instant::now();
-                    let _ = app_handle.emit(
+                    emit(
+                        &app_handle,
                         "amply://audio-progress",
                         AudioProgress {
                             position: audio.current_position(),
@@ -154,7 +182,8 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
                     && last_spectrum_emit.elapsed() >= Duration::from_millis(50)
                 {
                     last_spectrum_emit = Instant::now();
-                    let _ = app_handle.emit(
+                    emit(
+                        &app_handle,
                         "amply://audio-spectrum",
                         AudioSpectrum {
                             bands: audio.spectrum.snapshot(),
@@ -162,9 +191,11 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
                     );
                 }
                 if ended {
-                    let _ = app_handle.emit("amply://audio-ended", ());
+                    emit(&app_handle, "amply://audio-ended", ());
                 }
             }
         }
-    })
+        log::info!("Audio thread stopped");
+    });
+    *AUDIO_THREAD.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
 }

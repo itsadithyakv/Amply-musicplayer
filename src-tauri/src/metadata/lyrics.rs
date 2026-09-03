@@ -9,6 +9,7 @@ use reqwest::Url;
 use serde::Deserialize;
 
 use super::cache::{read_json, read_text, to_storage_cache_path, write_json, write_text};
+use super::http::HTTP;
 use super::normalize::{
     clean_lyrics_title, get_primary_artist_name, is_unknown_album, metadata_artist_for_song,
     normalize_artist, normalize_match_name, normalize_plain_lyrics, normalize_title, safe_includes,
@@ -17,6 +18,7 @@ use super::normalize::{
 use super::{
     LyricsCandidate, LyricsLoadResult, LyricsSaveResult, SongInput, LYRICS_CACHE_FOLDER, LYRICS_INDEX_PATH,
 };
+use crate::error::AmplyResult;
 
 static TIME_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]").unwrap());
 
@@ -382,13 +384,9 @@ async fn fetch_lyrics_search_candidates_for(
         }
     }
     let url = Url::parse_with_params("https://lrclib.net/api/search", &params).map_err(|err| err.to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let response = client
+    let response = HTTP
         .get(url)
-        .header("User-Agent", "Amply/1.0 (https://github.com/ampl-musicplayer)")
+        .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -424,13 +422,9 @@ async fn fetch_lyrics_single_candidate_for(
         }
     }
     let url = Url::parse_with_params("https://lrclib.net/api/get", &params).map_err(|err| err.to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let response = client
+    let response = HTTP
         .get(url)
-        .header("User-Agent", "Amply/1.0 (https://github.com/ampl-musicplayer)")
+        .timeout(Duration::from_secs(8))
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -524,8 +518,14 @@ fn build_lyrics_result(raw: &str, cache_key: &str, from_cache: bool) -> LyricsLo
 pub async fn lyrics_find_candidates_rust(
     _app: tauri::AppHandle,
     song: SongInput,
-) -> Result<Vec<LyricsCandidate>, String> {
-    let candidates = fetch_lyrics_candidates(&song).await.unwrap_or_default();
+) -> AmplyResult<Vec<LyricsCandidate>> {
+    let candidates = match fetch_lyrics_candidates(&song).await {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            log::warn!("LRCLIB lyrics search for {:?} by {:?} failed: {error}", song.title, song.artist);
+            Vec::new()
+        }
+    };
     Ok(rank_candidates(&song, candidates))
 }
 
@@ -533,7 +533,7 @@ pub async fn lyrics_find_candidates_rust(
 pub async fn lyrics_read_cached_rust(
     app: tauri::AppHandle,
     song: SongInput,
-) -> Result<LyricsLoadResult, String> {
+) -> AmplyResult<LyricsLoadResult> {
     let key = cache_key_for_song(&song);
     if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
         if !text.trim().is_empty() {
@@ -553,7 +553,7 @@ pub async fn lyrics_save_selection_rust(
     app: tauri::AppHandle,
     song: SongInput,
     candidate: LyricsCandidate,
-) -> Result<LyricsSaveResult, String> {
+) -> AmplyResult<LyricsSaveResult> {
     let key = cache_key_for_song(&song);
     write_text(&app, &key, &candidate.raw).await?;
     if let Some(song_id) = song.id.as_deref() {
@@ -570,7 +570,7 @@ pub async fn lyrics_save_selection_rust(
 pub async fn lyrics_load_rust(
     app: tauri::AppHandle,
     song: SongInput,
-) -> Result<LyricsLoadResult, String> {
+) -> AmplyResult<LyricsLoadResult> {
     let key = cache_key_for_song(&song);
     if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
         if validate_lyrics_quality(&text) {
@@ -578,15 +578,23 @@ pub async fn lyrics_load_rust(
                 set_lyrics_index_entry(&app, song_id, &key).await?;
             }
             if cache_key != key {
-                let _ = write_text(&app, &key, &text).await;
+                if let Err(error) = write_text(&app, &key, &text).await {
+                    log::warn!("Failed to copy lyrics cache {cache_key} to {key}: {error}");
+                }
             }
             return Ok(build_lyrics_result(&text, &cache_key, true));
-        } else {
-            let _ = write_text(&app, &cache_key, "").await;
+        } else if let Err(error) = write_text(&app, &cache_key, "").await {
+            log::warn!("Failed to blank low-quality lyrics cache {cache_key}: {error}");
         }
     }
 
-    let candidates = fetch_lyrics_candidates(&song).await.unwrap_or_default();
+    let candidates = match fetch_lyrics_candidates(&song).await {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            log::warn!("LRCLIB lyrics search for {:?} by {:?} failed: {error}", song.title, song.artist);
+            Vec::new()
+        }
+    };
     if candidates.is_empty() {
         return Ok(LyricsLoadResult {
             status: "missing".to_string(),

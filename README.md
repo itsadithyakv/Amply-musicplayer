@@ -87,7 +87,7 @@ Mixes are seeded from the ISO week / day so they stay stable within a period; ma
 
 ## Notes
 
-- The default scan path is the `music` folder inside your system Music directory; add more folders in Settings.
+- The default scan path is your system Music folder; add more folders in Settings.
 - Only folders you have scanned (plus the system Music folder) are reachable through the asset protocol, and songs can only be deleted from inside those folders.
 - In browser mode (`npm run dev`) the app runs with two demo songs and a silent audio engine.
-- Logs are written to `%APPDATA%\AdithyaKV.AmplyMusicPlayer\logs`.
+- Logs are written to `%LOCALAPPDATA%\AdithyaKV.AmplyMusicPlayer\logs\amply.log`.

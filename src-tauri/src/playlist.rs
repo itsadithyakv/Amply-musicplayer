@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::error::AmplyResult;
+
 const DAY_SEC: i64 = 86_400;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1293,7 +1295,7 @@ pub fn generate_playlists(
 }
 
 #[tauri::command]
-pub fn generate_smart_playlists_rust(
+pub async fn generate_smart_playlists_rust(
     songs: Vec<SongInput>,
     seed: Option<u64>,
     daily_seed: Option<u64>,
@@ -1301,7 +1303,7 @@ pub fn generate_smart_playlists_rust(
     discovery_intensity: Option<f32>,
     randomness_intensity: Option<f32>,
     lite: Option<bool>,
-) -> Result<Vec<PlaylistOutput>, String> {
+) -> AmplyResult<Vec<PlaylistOutput>> {
     let seed_value = seed.unwrap_or_else(|| {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         now.as_secs()
@@ -1311,13 +1313,19 @@ pub fn generate_smart_playlists_rust(
     let randomness = randomness_intensity.unwrap_or(0.3).clamp(0.0, 1.0);
     let lite_flag = lite.unwrap_or(false);
 
-    Ok(generate_playlists(
-        songs,
-        seed_value,
-        daily_seed_value,
-        profile,
-        discovery,
-        randomness,
-        lite_flag,
-    ))
+    // CPU-bound over the whole library; never on the main thread.
+    let playlists = tauri::async_runtime::spawn_blocking(move || {
+        generate_playlists(
+            songs,
+            seed_value,
+            daily_seed_value,
+            profile,
+            discovery,
+            randomness,
+            lite_flag,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    Ok(playlists)
 }

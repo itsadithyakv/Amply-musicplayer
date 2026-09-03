@@ -25,9 +25,12 @@ pub(crate) async fn read_json<T: for<'de> Deserialize<'de>>(
     if let Some(text) = read_text(app, relative_path).await? {
         match serde_json::from_str::<T>(&text) {
             Ok(parsed) => return Ok(Some(parsed)),
-            Err(_) => {
+            Err(error) => {
+                log::warn!("Dropping unparsable JSON at {relative_path}: {error}");
                 if resolve_storage_path(app, relative_path).is_ok() {
-                    let _ = delete_storage_kv(app, relative_path).await;
+                    if let Err(error) = delete_storage_kv(app, relative_path).await {
+                        log::warn!("Failed to delete {relative_path}: {error}");
+                    }
                 }
                 return Ok(None);
             }
@@ -100,8 +103,11 @@ pub(crate) async fn cache_get<T: DeserializeOwned>(
     };
     match serde_json::from_str::<T>(&text) {
         Ok(value) => Ok(Some(value)),
-        Err(_) => {
-            let _ = delete_storage_kv(app, &path).await;
+        Err(error) => {
+            log::warn!("Dropping unparsable cache entry {path}: {error}");
+            if let Err(error) = delete_storage_kv(app, &path).await {
+                log::warn!("Failed to delete cache entry {path}: {error}");
+            }
             Ok(None)
         }
     }

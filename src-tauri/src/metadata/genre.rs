@@ -15,9 +15,9 @@ use super::normalize::{
     normalize_text, slugify,
 };
 use super::{
-    now_unix, ArtistProfile, SongGenreCacheEntry, SongGenreLoadResult, SongInput, METADATA_USER_AGENT,
-    SONG_GENRE_CACHE_PATH,
+    now_unix, ArtistProfile, SongGenreCacheEntry, SongGenreLoadResult, SongInput, SONG_GENRE_CACHE_PATH,
 };
+use crate::error::AmplyResult;
 
 #[derive(Debug, Deserialize)]
 struct MbArtistCredit {
@@ -35,8 +35,8 @@ struct MbArtistRef {
 #[tauri::command]
 pub async fn load_song_genre_cache_rust(
     app: tauri::AppHandle,
-) -> Result<HashMap<String, SongGenreCacheEntry>, String> {
-    cache_all::<SongGenreCacheEntry>(&app, CacheKind::SongGenre).await
+) -> AmplyResult<HashMap<String, SongGenreCacheEntry>> {
+    Ok(cache_all::<SongGenreCacheEntry>(&app, CacheKind::SongGenre).await?)
 }
 
 fn cache_key_for_song_genre(song: &SongInput) -> String {
@@ -314,7 +314,7 @@ async fn fetch_wikipedia_categories_for_title(title: &str) -> Result<Vec<String>
     )
     .map_err(|err| err.to_string())?;
 
-    let payload: WikipediaCategoryPayload = fetch_json(url, Some(METADATA_USER_AGENT)).await?;
+    let payload: WikipediaCategoryPayload = fetch_json(url).await?;
     let pages = payload.query.and_then(|query| query.pages).unwrap_or_default();
     let mut categories = Vec::new();
     for page in pages.values() {
@@ -461,7 +461,13 @@ async fn fetch_wikipedia_artist_genre_fallback(artist_name: &str) -> Result<Opti
             return Ok(Some(genre.to_string()));
         }
 
-        let categories = fetch_wikipedia_categories_for_title(&title).await.unwrap_or_default();
+        let categories = match fetch_wikipedia_categories_for_title(&title).await {
+            Ok(categories) => categories,
+            Err(error) => {
+                log::warn!("Wikipedia categories for {title:?} failed: {error}");
+                Vec::new()
+            }
+        };
         let scored = score_genre_categories(&categories, 1);
         if let Some(genre) = display_ranked_genres(scored) {
             return Ok(Some(genre));
@@ -530,7 +536,7 @@ async fn fetch_musicbrainz_song_genre(song: &SongInput) -> Result<Option<String>
     .map_err(|err| err.to_string())?;
 
     musicbrainz_throttle().await;
-    let payload: MbRecordingGenreSearch = fetch_json(url, Some(METADATA_USER_AGENT)).await?;
+    let payload: MbRecordingGenreSearch = fetch_json(url).await?;
     let mut genre_scores: HashMap<&'static str, i32> = HashMap::new();
     let mut artist_fallback_scores: HashMap<&'static str, i32> = HashMap::new();
     for hit in payload.recordings.unwrap_or_default() {
@@ -595,14 +601,19 @@ async fn fetch_wikipedia_song_genre(song: &SongInput) -> Result<Option<String>, 
         format!("{title} {primary_artist} song"),
     ];
     for query in search_queries {
-        if let Ok(found) = fetch_wikipedia_search_titles_for_query(&query, 8).await {
-            for found_title in found {
-                if !candidate_titles
-                    .iter()
-                    .any(|existing| existing.eq_ignore_ascii_case(&found_title))
-                {
-                    candidate_titles.push(found_title);
-                }
+        let found = match fetch_wikipedia_search_titles_for_query(&query, 8).await {
+            Ok(found) => found,
+            Err(error) => {
+                log::warn!("Wikipedia song search for {query:?} failed: {error}");
+                continue;
+            }
+        };
+        for found_title in found {
+            if !candidate_titles
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&found_title))
+            {
+                candidate_titles.push(found_title);
             }
         }
     }
@@ -634,7 +645,7 @@ async fn fetch_itunes_song_genre(song: &SongInput) -> Result<Option<String>, Str
         ],
     )
     .map_err(|err| err.to_string())?;
-    let payload: ItunesSongPayload = fetch_json(url, None).await?;
+    let payload: ItunesSongPayload = fetch_json(url).await?;
     let hits = payload.results.unwrap_or_default();
     if hits.is_empty() {
         return Ok(None);
@@ -659,17 +670,17 @@ async fn fetch_song_genre(song: &SongInput) -> Result<Option<String>, String> {
     match fetch_musicbrainz_song_genre(song).await {
         Ok(Some(genre)) => return Ok(Some(genre)),
         Ok(None) => {}
-        Err(_) => {}
+        Err(error) => log::warn!("MusicBrainz genre for {:?} failed: {error}", song.title),
     }
     match fetch_wikipedia_song_genre(song).await {
         Ok(Some(genre)) => return Ok(Some(genre)),
         Ok(None) => {}
-        Err(_) => {}
+        Err(error) => log::warn!("Wikipedia genre for {:?} failed: {error}", song.title),
     }
     match fetch_itunes_song_genre(song).await {
         Ok(Some(genre)) => return Ok(Some(genre)),
         Ok(None) => {}
-        Err(_) => {}
+        Err(error) => log::warn!("iTunes genre for {:?} failed: {error}", song.title),
     }
     fetch_wikipedia_artist_genre_fallback(&primary_artist).await
 }
@@ -700,7 +711,7 @@ async fn infer_cached_artist_profile_genre(
 pub async fn load_song_genre_rust(
     app: tauri::AppHandle,
     song: SongInput,
-) -> Result<SongGenreLoadResult, String> {
+) -> AmplyResult<SongGenreLoadResult> {
     let cache_path = to_storage_cache_path(SONG_GENRE_CACHE_PATH);
 
     if let Some(genre) = song.genre.as_deref() {
@@ -727,7 +738,14 @@ pub async fn load_song_genre_rust(
     }
 
     let primary_artist = metadata_artist_for_song(&song);
-    if let Ok(Some(genre)) = infer_cached_artist_profile_genre(&app, &primary_artist).await {
+    let inferred = match infer_cached_artist_profile_genre(&app, &primary_artist).await {
+        Ok(genre) => genre,
+        Err(error) => {
+            log::warn!("Cached artist profile genre for {primary_artist:?} failed: {error}");
+            None
+        }
+    };
+    if let Some(genre) = inferred {
         cache_put(
             &app,
             CacheKind::SongGenre,
@@ -771,12 +789,15 @@ pub async fn load_song_genre_rust(
             from_cache: None,
             cache_path,
         }),
-        Err(_) => Ok(SongGenreLoadResult {
-            status: "no-internet".to_string(),
-            genre: None,
-            from_cache: None,
-            cache_path,
-        }),
+        Err(error) => {
+            log::warn!("Genre providers for {:?} failed: {error}", song.title);
+            Ok(SongGenreLoadResult {
+                status: "no-internet".to_string(),
+                genre: None,
+                from_cache: None,
+                cache_path,
+            })
+        }
     }
 }
 

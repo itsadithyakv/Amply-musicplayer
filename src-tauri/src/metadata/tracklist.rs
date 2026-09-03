@@ -7,6 +7,7 @@ use super::cache::{cache_all, cache_get, cache_put, CacheKind};
 use super::http::{fetch_json, musicbrainz_throttle};
 use super::normalize::{normalize_track_title, slugify};
 use super::{now_unix, AlbumTrack, AlbumTracklist};
+use crate::error::AmplyResult;
 
 fn get_album_tracklist_key(artist: &str, album: &str) -> String {
     format!(
@@ -95,8 +96,8 @@ fn parse_release_tracks(payload: &MbReleaseLookup) -> Vec<AlbumTrack> {
 #[tauri::command]
 pub async fn load_album_tracklist_cache_rust(
     app: tauri::AppHandle,
-) -> Result<HashMap<String, AlbumTracklist>, String> {
-    cache_all::<AlbumTracklist>(&app, CacheKind::AlbumTracklist).await
+) -> AmplyResult<HashMap<String, AlbumTracklist>> {
+    Ok(cache_all::<AlbumTracklist>(&app, CacheKind::AlbumTracklist).await?)
 }
 
 #[tauri::command]
@@ -104,7 +105,7 @@ pub async fn load_album_tracklist_rust(
     app: tauri::AppHandle,
     artist: String,
     album: String,
-) -> Result<Option<AlbumTracklist>, String> {
+) -> AmplyResult<Option<AlbumTracklist>> {
     if artist.trim().is_empty() || album.trim().is_empty() {
         return Ok(None);
     }
@@ -127,11 +128,7 @@ pub async fn load_album_tracklist_rust(
     .map_err(|err| err.to_string())?;
 
     musicbrainz_throttle().await;
-    let search_result: MbReleaseSearch = fetch_json(
-        search_url,
-        Some("AmplyMusicPlayer/1.4 (https://github.com/)")
-    )
-    .await?;
+    let search_result: MbReleaseSearch = fetch_json(search_url).await?;
     let release_id = match find_best_release_id(&search_result, &album) {
         Some(id) => id,
         None => return Ok(None),
@@ -143,11 +140,7 @@ pub async fn load_album_tracklist_rust(
         &[("inc", "recordings"), ("fmt", "json")],
     )
     .map_err(|err| err.to_string())?;
-    let lookup_result: MbReleaseLookup = fetch_json(
-        lookup_url,
-        Some("AmplyMusicPlayer/1.4 (https://github.com/)")
-    )
-    .await?;
+    let lookup_result: MbReleaseLookup = fetch_json(lookup_url).await?;
     let tracks = parse_release_tracks(&lookup_result);
     if tracks.is_empty() {
         return Ok(None);

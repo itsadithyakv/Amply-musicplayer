@@ -9,6 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
+use crate::error::AmplyResult;
+
 pub(crate) const STORAGE_SUBFOLDERS: [&str; 4] = ["lyrics_cache", "playlists", "artist_cache", "metadata_cache"];
 const DB_FILE_NAME: &str = "amply_cache.db";
 
@@ -131,7 +133,9 @@ pub(crate) fn read_kv_backfilled(conn: &Connection, root: Option<&Path>, key: &s
     if let Some(root) = root {
         if let Ok(target) = resolve_relative_storage_path(root, key) {
             if let Ok(content) = fs::read_to_string(&target) {
-                let _ = write_kv(conn, key, &content);
+                if let Err(error) = write_kv(conn, key, &content) {
+                    log::warn!("Failed to import legacy storage file {key} into the kv store: {error}");
+                }
                 return Ok(Some(content));
             }
         }
@@ -253,22 +257,23 @@ pub(crate) fn resolve_storage_path(app: &tauri::AppHandle, relative_path: &str) 
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn ensure_storage_dirs(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn ensure_storage_dirs(app: tauri::AppHandle) -> AmplyResult<String> {
     let root = ensure_storage_dirs_async(&app).await?;
     Ok(root.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub async fn open_storage_dir(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_storage_dir(app: tauri::AppHandle) -> AmplyResult<()> {
     let root = ensure_storage_dirs_async(&app).await?;
     let target = root.to_string_lossy().to_string();
     app.opener()
         .open_path(target, None::<&str>)
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn clear_storage_cache(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn clear_storage_cache(app: tauri::AppHandle) -> AmplyResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let db = storage_db(&app)?;
         db.with_conn(|conn| conn.execute_batch("DELETE FROM kv; VACUUM;").map_err(|err| err.to_string()))?;
@@ -281,15 +286,16 @@ pub async fn clear_storage_cache(app: tauri::AppHandle) -> Result<(), String> {
         ensure_storage_dirs_blocking(db.root())
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn read_storage_file(
     app: tauri::AppHandle,
     relative_path: String,
-) -> Result<Option<String>, String> {
-    read_storage_kv(&app, &relative_path).await
+) -> AmplyResult<Option<String>> {
+    Ok(read_storage_kv(&app, &relative_path).await?)
 }
 
 #[tauri::command]
@@ -297,8 +303,9 @@ pub async fn write_storage_file(
     app: tauri::AppHandle,
     relative_path: String,
     content: String,
-) -> Result<(), String> {
-    write_storage_kv(&app, &relative_path, &content).await
+) -> AmplyResult<()> {
+    write_storage_kv(&app, &relative_path, &content).await?;
+    Ok(())
 }
 
 #[cfg(test)]

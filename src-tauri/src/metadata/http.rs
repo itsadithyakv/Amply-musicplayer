@@ -1,4 +1,7 @@
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    sync::LazyLock,
+    time::{Duration, Instant},
+};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
@@ -9,36 +12,51 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use super::normalize::{get_primary_artist_name, is_artist_close_match, is_close_match, is_exact_match};
-use super::{SongInput, METADATA_USER_AGENT};
+use super::SongInput;
 
-static MB_LAST_REQUEST: LazyLock<Mutex<Option<std::time::Instant>>> = LazyLock::new(|| Mutex::new(None));
+/// MusicBrainz requires a contact in the user agent; every provider gets the same one.
+pub(crate) const UA: &str = concat!(
+    "Amply/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/adithyakv/amply; adithyakrishnan.vinod@gmail.com)"
+);
 
+/// One process-wide client: connection pooling, shared timeouts and user agent.
+/// Per-request overrides (shorter timeouts) go on the request builder.
+pub(crate) static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .user_agent(UA)
+        .timeout(Duration::from_secs(12))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .expect("reqwest client with static configuration")
+});
+
+const MB_MIN_GAP: Duration = Duration::from_millis(1100);
+
+static MB_LAST_REQUEST: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Serialises MusicBrainz callers so consecutive requests are at least
+/// `MB_MIN_GAP` apart. The guard is held across the sleep on purpose: a second
+/// caller waits for the first one's slot instead of racing for the same one.
 pub(crate) async fn musicbrainz_throttle() {
-    let mut guard = MB_LAST_REQUEST.lock().await;
-    let now = std::time::Instant::now();
-    if let Some(last) = *guard {
-        let elapsed = now.duration_since(last);
-        if elapsed < Duration::from_millis(1100) {
-            let wait_for = Duration::from_millis(1100) - elapsed;
-            drop(guard);
-            tokio::time::sleep(wait_for).await;
-            let mut guard = MB_LAST_REQUEST.lock().await;
-            *guard = Some(std::time::Instant::now());
-            return;
+    let mut last = MB_LAST_REQUEST.lock().await;
+    if let Some(prev) = *last {
+        let wait = MB_MIN_GAP.saturating_sub(prev.elapsed());
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
         }
     }
-    *guard = Some(now);
+    *last = Some(Instant::now());
 }
 
-pub(crate) async fn fetch_json<T: for<'de> Deserialize<'de>>(url: Url, user_agent: Option<&str>) -> Result<T, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()
+pub(crate) async fn fetch_json<T: for<'de> Deserialize<'de>>(url: Url) -> Result<T, String> {
+    let response = HTTP
+        .get(url)
+        .header("Accept", "application/json")
+        .send()
+        .await
         .map_err(|err| err.to_string())?;
-    let mut request = client.get(url);
-    request = request.header("User-Agent", user_agent.unwrap_or(METADATA_USER_AGENT));
-    request = request.header("Accept", "application/json");
-    let response = request.send().await.map_err(|err| err.to_string())?;
     if !response.status().is_success() {
         return Err(format!("Request failed: {}", response.status()));
     }
@@ -68,16 +86,7 @@ pub(crate) fn compress_image_to_data_url(image: DynamicImage) -> Option<String> 
 }
 
 pub(crate) async fn fetch_image_data_url(url: &str) -> Result<Option<String>, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let response = client
-        .get(url)
-        .header("User-Agent", METADATA_USER_AGENT)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = HTTP.get(url).send().await.map_err(|err| err.to_string())?;
     if !response.status().is_success() {
         return Ok(None);
     }
@@ -143,5 +152,22 @@ mod tests {
             url.as_str(),
             "https://en.wikipedia.org/api/rest_v1/page/summary/Guns%20N'%20Roses%2FLive"
         );
+    }
+
+    #[test]
+    fn user_agent_carries_version_and_contact() {
+        assert!(UA.starts_with(concat!("Amply/", env!("CARGO_PKG_VERSION"))));
+        assert!(UA.contains('@'));
+    }
+
+    #[test]
+    fn musicbrainz_throttle_spaces_consecutive_callers() {
+        tauri::async_runtime::block_on(async {
+            // Shares the process-wide slot, so only relative gaps are asserted.
+            musicbrainz_throttle().await;
+            let first = Instant::now();
+            musicbrainz_throttle().await;
+            assert!(first.elapsed() >= Duration::from_millis(1000));
+        });
     }
 }

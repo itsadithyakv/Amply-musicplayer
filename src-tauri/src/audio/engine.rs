@@ -144,6 +144,8 @@ pub(crate) enum AudioCommand {
     SetVisualizerEnabled { enabled: bool, reply: mpsc::Sender<Result<(), String>> },
     SetOutputDevice { name: Option<String>, reply: mpsc::Sender<Result<(), String>> },
     Preload { paths: Vec<String>, reply: mpsc::Sender<Result<(), String>> },
+    /// Ends the audio thread's loop; sent from `audio::shutdown` at process exit.
+    Shutdown,
 }
 
 /// Playback position given the position at the last (re)start, the wall-clock time
@@ -173,7 +175,6 @@ impl NativeAudio {
             }
             Err(error) => {
                 log::error!("Failed to initialize audio output: {error}");
-                eprintln!("[Amply] Failed to initialize audio output: {error}");
                 Err(format!("Audio output unavailable: {error}"))
             }
         }

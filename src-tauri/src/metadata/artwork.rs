@@ -4,6 +4,7 @@ use super::cache::{cache_get, cache_put, CacheKind};
 use super::http::{fetch_image_data_url, fetch_json, score_itunes_hit, ItunesSongHit, ItunesSongPayload};
 use super::normalize::{clean_lyrics_title, metadata_artist_for_song, slugify};
 use super::SongInput;
+use crate::error::AmplyResult;
 
 fn cache_key_for_track_artwork(song: &SongInput) -> String {
     let primary_artist = metadata_artist_for_song(song);
@@ -36,7 +37,7 @@ async fn fetch_itunes_track_artwork_url(song: &SongInput) -> Result<Option<Strin
         ],
     )
     .map_err(|err| err.to_string())?;
-    let payload: ItunesSongPayload = fetch_json(url, None).await?;
+    let payload: ItunesSongPayload = fetch_json(url).await?;
     let mut ranked: Vec<(i32, ItunesSongHit)> = payload
         .results
         .unwrap_or_default()
@@ -51,27 +52,41 @@ async fn fetch_itunes_track_artwork_url(song: &SongInput) -> Result<Option<Strin
 }
 
 async fn fetch_track_artwork_data_url(song: &SongInput) -> Result<Option<String>, String> {
-    if let Ok(Some(url)) = fetch_itunes_track_artwork_url(song).await {
-        if let Ok(Some(data_url)) = fetch_image_data_url(&url).await {
-            return Ok(Some(data_url));
+    let url = match fetch_itunes_track_artwork_url(song).await {
+        Ok(Some(url)) => url,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            log::warn!("iTunes artwork search for {:?} by {:?} failed: {error}", song.title, song.artist);
+            return Ok(None);
         }
-        return Ok(Some(url));
+    };
+    match fetch_image_data_url(&url).await {
+        Ok(Some(data_url)) => Ok(Some(data_url)),
+        Ok(None) => Ok(Some(url)),
+        Err(error) => {
+            log::warn!("iTunes artwork download {url} failed, falling back to the URL: {error}");
+            Ok(Some(url))
+        }
     }
-
-    Ok(None)
 }
 
 #[tauri::command]
 pub async fn load_track_artwork_rust(
     app: tauri::AppHandle,
     song: SongInput,
-) -> Result<Option<String>, String> {
+) -> AmplyResult<Option<String>> {
     let key = cache_key_for_track_artwork(&song);
     if let Some(cached) = cache_get::<String>(&app, CacheKind::TrackArtwork, &key).await? {
         return Ok(Some(cached));
     }
 
-    let fetched: Option<String> = fetch_track_artwork_data_url(&song).await.unwrap_or_default();
+    let fetched: Option<String> = match fetch_track_artwork_data_url(&song).await {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!("Track artwork lookup for {:?} failed: {error}", song.title);
+            None
+        }
+    };
     if let Some(value) = fetched.as_ref() {
         cache_put(&app, CacheKind::TrackArtwork, &key, value).await?;
     }
