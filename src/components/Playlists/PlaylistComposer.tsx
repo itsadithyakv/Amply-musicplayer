@@ -1,4 +1,5 @@
-import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
+import clsx from 'clsx';
+import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 import {
@@ -19,7 +20,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
-import { PillButton, SegmentedTabs, UnifiedSearchInput } from '@/components/ui/AmplyUI';
+import { Button, Card, Divider, IconButton, Kicker, SearchInput, SegmentedTabs, Surface, TextInput } from '@/components/ui';
+import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCollage';
 import { recordBudgetLatency } from '@/services/perfDiagnostics';
 import type { Playlist, Song } from '@/types/music';
 import { filterPlaylistSongs, indexPlaylistSongs, type PlaylistComposerFilter } from './playlistComposerModel';
@@ -80,26 +82,22 @@ const PlaylistSongRow = memo(({ index, style, data }: ListChildComponentProps<Pl
 
   return (
     <div style={style} className="px-1 py-1">
-      <div className="flex h-full min-w-0 items-center gap-3 rounded-[14px] px-3 text-[12px] transition-colors hover:bg-amply-hover">
-        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-[10px] bg-amply-bgSecondary">
+      <div className="neu-flat flex h-full min-w-0 items-center gap-3 rounded-md px-3 text-[12px] transition-[box-shadow] duration-150 hover:neu-raised-sm">
+        <div className="neu-well h-10 w-10 shrink-0 overflow-hidden rounded-sm">
           {song.albumArt ? <ArtworkImage src={song.albumArt} alt="" className="h-full w-full object-cover" pulse={false} /> : null}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium text-amply-textPrimary">{song.title}</p>
-          <p className="truncate text-[11px] text-amply-textMuted">{song.artist} · {song.album}</p>
+          <p className="truncate text-[11px] text-amply-textSecondary">{song.artist} · {song.album}</p>
         </div>
-        <button
-          type="button"
+        <Button
+          size="sm"
+          pressed={selected}
           onClick={() => data.togglePlaylistSong(song.id)}
-          aria-pressed={selected}
-          className={`min-w-[66px] rounded-[12px] border px-3 py-1.5 text-[11px] font-medium transition-colors ${
-            selected
-              ? 'border-amply-accent/50 bg-amply-accent/10 text-amply-accent'
-              : 'border-amply-border/60 text-amply-textSecondary hover:bg-amply-hover'
-          }`}
+          className={clsx('min-w-[66px]', selected && 'text-amply-accent')}
         >
           {selected ? 'Added' : 'Add'}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -118,30 +116,31 @@ const SortableSong = ({
   onRemove: (songId: string) => void;
   onMove: (position: number, direction: -1 | 1) => void;
 }) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: song.id });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: song.id });
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded-[14px] border border-amply-border/45 bg-amply-surface/55 px-2 py-2 ${isDragging ? 'z-10 shadow-lift' : ''}`}
+      className={clsx('flex items-center gap-2 rounded-md px-2 py-2', isDragging ? 'neu-raised z-raised' : 'neu-flat')}
     >
-      <button
-        type="button"
-        className="cursor-grab rounded-[10px] px-2 py-2 text-[14px] text-amply-textMuted active:cursor-grabbing"
-        aria-label={`Drag ${song.title}`}
+      <IconButton
+        ref={setActivatorNodeRef}
+        name="drag"
+        label={`Drag ${song.title}`}
+        size="xs"
+        variant="ghost"
+        className="cursor-grab active:cursor-grabbing"
         {...attributes}
         {...listeners}
-      >
-        ⠿
-      </button>
+      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-medium text-amply-textPrimary">{song.title}</p>
-        <p className="truncate text-[10px] text-amply-textMuted">{song.artist}</p>
+        <p className="truncate text-[11px] text-amply-textSecondary">{song.artist}</p>
       </div>
       <div className="flex items-center gap-1">
-        <button type="button" disabled={position === 0} onClick={() => onMove(position, -1)} className="h-7 w-7 rounded-lg text-amply-textMuted hover:bg-amply-hover disabled:opacity-25" aria-label={`Move ${song.title} up`}>↑</button>
-        <button type="button" disabled={position === count - 1} onClick={() => onMove(position, 1)} className="h-7 w-7 rounded-lg text-amply-textMuted hover:bg-amply-hover disabled:opacity-25" aria-label={`Move ${song.title} down`}>↓</button>
-        <button type="button" onClick={() => onRemove(song.id)} className="h-7 rounded-lg px-2 text-[10px] text-amply-textMuted hover:bg-amply-hover hover:text-amply-textPrimary">Remove</button>
+        <IconButton name="arrow-up" label={`Move ${song.title} up`} size="xs" variant="flat" disabled={position === 0} onClick={() => onMove(position, -1)} />
+        <IconButton name="arrow-down" label={`Move ${song.title} down`} size="xs" variant="flat" disabled={position === count - 1} onClick={() => onMove(position, 1)} />
+        <IconButton name="close" label={`Remove ${song.title}`} size="xs" variant="ghost" onClick={() => onRemove(song.id)} />
       </div>
     </div>
   );
@@ -173,6 +172,7 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
   const [selectedSongIds, setSelectedSongIds] = useState<string[]>(initialPlaylist?.songIds ?? []);
   const [playlistError, setPlaylistError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -197,6 +197,11 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
     () => Array.from(new Set(selectedSongs.map((song) => song.albumArt).filter((art): art is string => Boolean(art)))).slice(0, 4),
     [selectedSongs],
   );
+  const previewArtwork = useMemo(() => {
+    if (playlistArtwork) return [playlistArtwork];
+    if (!collageArtwork.length) return [];
+    return [0, 1, 2, 3].map((slot) => collageArtwork[slot] ?? collageArtwork[0]);
+  }, [collageArtwork, playlistArtwork]);
 
   const togglePlaylistSong = useCallback((songId: string) => {
     const startedAt = performance.now();
@@ -260,55 +265,45 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className="space-y-4">
-          <section className="rounded-[20px] border border-amply-border/45 bg-amply-bgSecondary/55 p-4">
-            <p className="amply-kicker">Playlist details</p>
+          <Card as="section" padding="md">
+            <Kicker>Playlist details</Kicker>
             <div className="mt-4 flex items-start gap-4">
-              <div className="grid h-24 w-24 shrink-0 grid-cols-2 overflow-hidden rounded-[16px] bg-[#191817] shadow-card">
-                {playlistArtwork ? (
-                  <ArtworkImage src={playlistArtwork} alt="Playlist cover" className="col-span-2 row-span-2 h-full w-full object-cover" />
-                ) : collageArtwork.length ? (
-                  [0, 1, 2, 3].map((slot) => {
-                    const artwork = collageArtwork[slot] ?? collageArtwork[0];
-                    return artwork ? <ArtworkImage key={`${artwork}-${slot}`} src={artwork} alt="" className="h-full w-full object-cover" pulse={false} /> : null;
-                  })
-                ) : (
-                  <div className="col-span-2 row-span-2 flex items-center justify-center text-[10px] font-bold uppercase tracking-[0.2em] text-white/45">Amply</div>
-                )}
-              </div>
+              <PlaylistArtworkCollage artworkSet={previewArtwork} radius="sm" className="h-24 w-24" />
               <div className="min-w-0 flex-1 space-y-3">
-                <label className="block space-y-1.5">
-                  <span className="text-[11px] text-amply-textMuted">Name</span>
-                  <input autoFocus value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="Playlist name" className="w-full rounded-[12px] border border-amply-border/50 bg-amply-bgPrimary/70 px-3 py-2 text-[13px] text-amply-textPrimary outline-none" />
-                </label>
-                <label className="block space-y-1.5">
-                  <span className="text-[11px] text-amply-textMuted">Description</span>
-                  <input value={playlistDescription} onChange={(event) => setPlaylistDescription(event.target.value)} placeholder="Optional note" className="w-full rounded-[12px] border border-amply-border/50 bg-amply-bgPrimary/70 px-3 py-2 text-[13px] text-amply-textPrimary outline-none" />
-                </label>
+                <TextInput autoFocus label="Name" size="sm" value={playlistName} onValueChange={setPlaylistName} placeholder="Playlist name" />
+                <TextInput label="Note" size="sm" value={playlistDescription} onValueChange={setPlaylistDescription} placeholder="Optional description" />
               </div>
             </div>
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <label className="cursor-pointer rounded-[12px] border border-amply-border/55 px-3 py-2 text-[11px] font-medium text-amply-textSecondary hover:bg-amply-hover">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <Button size="sm" icon="folder" onClick={() => coverInputRef.current?.click()}>
                 {playlistArtwork ? 'Change cover' : 'Choose cover'}
-                <input type="file" accept="image/*" className="hidden" onChange={(event) => {
+              </Button>
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                aria-label="Playlist cover image"
+                onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (!file) return;
                   void resizeCover(file).then((dataUrl) => {
                     setPlaylistArtwork(dataUrl);
                     setPlaylistError(null);
                   }).catch((error: Error) => setPlaylistError(error.message));
-                }} />
-              </label>
-              {playlistArtwork ? <button type="button" onClick={() => setPlaylistArtwork(undefined)} className="text-[11px] text-amply-textMuted hover:text-amply-textPrimary">Use auto collage</button> : null}
+                }}
+              />
+              {playlistArtwork ? <Button size="sm" variant="ghost" onClick={() => setPlaylistArtwork(undefined)}>Use auto collage</Button> : null}
             </div>
-          </section>
+          </Card>
 
-          <section className="rounded-[20px] border border-amply-border/45 bg-amply-bgSecondary/55 p-4">
-            <div className="flex items-center justify-between">
+          <Card as="section" padding="md">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="amply-kicker">Track order</p>
-                <p className="mt-1 text-[11px] text-amply-textMuted">{selectedSongIds.length} selected</p>
+                <Kicker>Track order</Kicker>
+                <p className="mt-1 text-[12px] text-amply-textSecondary">{selectedSongIds.length} selected</p>
               </div>
-              <button type="button" onClick={() => setSelectedSongIds([])} disabled={!selectedSongIds.length} className="text-[11px] text-amply-textMuted hover:text-amply-textPrimary disabled:opacity-30">Clear</button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedSongIds([])} disabled={!selectedSongIds.length}>Clear</Button>
             </div>
             <div className="mt-3 h-[330px] overflow-hidden">
               {selectedSongs.length ? (
@@ -319,46 +314,57 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
                     </AutoSizer>
                   </SortableContext>
                 </DndContext>
-              ) : <div className="flex h-full items-center justify-center rounded-[14px] border border-dashed border-amply-border/55 px-4 text-center text-[12px] text-amply-textMuted">Add tracks from your library. Empty playlists can be saved.</div>}
+              ) : (
+                <Surface variant="well" radius="sm" className="flex h-full items-center justify-center px-4 text-center text-[12px] text-amply-textSecondary">
+                  Add tracks from your library. Empty playlists can be saved.
+                </Surface>
+              )}
             </div>
-          </section>
+          </Card>
         </div>
 
-        <section className="min-w-0 rounded-[20px] border border-amply-border/45 bg-amply-bgSecondary/55 p-4">
+        <Card as="section" padding="md" className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[14px] font-semibold text-amply-textPrimary">Choose tracks</p>
-              <p className="mt-0.5 text-[11px] text-amply-textMuted">{composerSongs.length.toLocaleString()} matching tracks</p>
+              <p className="mt-0.5 text-[12px] text-amply-textSecondary">{composerSongs.length.toLocaleString()} matching tracks</p>
             </div>
-            <UnifiedSearchInput value={playlistSongQuery} onValueChange={setPlaylistSongQuery} placeholder="Title, artist, or album" className="w-full max-w-xs" />
+            <SearchInput size="sm" value={playlistSongQuery} onValueChange={setPlaylistSongQuery} placeholder="Title, artist, or album" aria-label="Search tracks" className="w-full max-w-xs" />
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <SegmentedTabs tabs={[
-              { value: 'all', label: 'All' },
-              { value: 'favorites', label: 'Favorites' },
-              { value: 'recent', label: 'Recent' },
-              { value: 'most_played', label: 'Most played' },
-            ]} value={filterTab} onChange={setFilterTab} />
-            <div className="flex gap-3 text-[11px]">
-              <button type="button" onClick={() => setSelectedSongIds((current) => Array.from(new Set([...current, ...composerSongs.map((song) => song.id)])))} className="text-amply-textSecondary hover:text-amply-textPrimary">Add results</button>
-              <button type="button" onClick={() => {
+            <SegmentedTabs
+              size="sm"
+              ariaLabel="Filter tracks"
+              tabs={[
+                { value: 'all', label: 'All' },
+                { value: 'favorites', label: 'Favorites' },
+                { value: 'recent', label: 'Recent' },
+                { value: 'most_played', label: 'Most played' },
+              ]}
+              value={filterTab}
+              onChange={setFilterTab}
+            />
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setSelectedSongIds((current) => Array.from(new Set([...current, ...composerSongs.map((song) => song.id)])))}>Add results</Button>
+              <Button size="sm" variant="ghost" onClick={() => {
                 const visible = new Set(composerSongs.map((song) => song.id));
                 setSelectedSongIds((current) => current.filter((id) => !visible.has(id)));
-              }} className="text-amply-textMuted hover:text-amply-textPrimary">Remove results</button>
+              }}>Remove results</Button>
             </div>
           </div>
-          <div className="mt-4 h-[520px] overflow-hidden rounded-[16px] border border-amply-border/40 bg-amply-bgPrimary/40 p-1">
+          <Surface variant="pressed" radius="md" className="mt-4 h-[520px] overflow-hidden p-1">
             <AutoSizer>
               {({ height, width }) => <List height={height} width={width} itemCount={composerSongs.length} itemSize={58} itemData={rowData} overscanCount={8}>{PlaylistSongRow}</List>}
             </AutoSizer>
-          </div>
-        </section>
+          </Surface>
+        </Card>
       </div>
 
-      {playlistError ? <p role="alert" className="text-[12px] text-red-400">{playlistError}</p> : null}
-      <div className="flex justify-end gap-2 border-t border-[var(--divider-soft)] pt-4">
-        <PillButton type="button" onClick={onCancel}>Cancel</PillButton>
-        <PillButton type="button" variant="primary" disabled={saving} onClick={() => void savePlaylist()}>{saving ? 'Saving…' : initialPlaylist ? 'Save changes' : 'Create playlist'}</PillButton>
+      {playlistError ? <p role="alert" className="text-[12px] text-amply-danger">{playlistError}</p> : null}
+      <Divider />
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button variant="primary" loading={saving} onClick={() => void savePlaylist()}>{saving ? 'Saving…' : initialPlaylist ? 'Save changes' : 'Create playlist'}</Button>
       </div>
     </div>
   );

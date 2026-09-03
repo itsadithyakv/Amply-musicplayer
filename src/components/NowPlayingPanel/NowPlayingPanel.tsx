@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import retryIcon from '@/assets/icons/repeat.svg';
+import { Button, Divider, IconButton, Kicker, Spinner } from '@/components/ui';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { getSongsByIds } from '@/store/libraryDataStore';
@@ -440,26 +440,30 @@ const NowPlayingPanel = () => {
   }, []);
 
   return (
-    <aside className="panel-surface flex h-full min-h-0 flex-col border-l border-amply-border/40 px-4 py-5">
+    <aside className="flex h-full min-h-0 flex-col bg-amply-bg px-4 py-5 shadow-[inset_1px_0_0_rgb(var(--amply-edge)/var(--edge-a))]">
       <div className="flex items-end justify-between px-1">
         <div>
-          <p className="amply-kicker">Now playing</p>
+          <Kicker>Now playing</Kicker>
           <p className="mt-1 text-[15px] font-semibold tracking-[-0.02em] text-amply-textPrimary">Track &amp; artist</p>
         </div>
-        {song ? <button type="button" onClick={() => navigate('/now-playing')} className="text-[11px] font-medium text-amply-textMuted hover:text-amply-textPrimary">Open view</button> : null}
+        {song ? (
+          <Button variant="ghost" size="sm" iconRight="chevron-right" onClick={() => navigate('/now-playing')}>
+            Open view
+          </Button>
+        ) : null}
       </div>
-      <div className="amply-hairline mt-4" />
+      <Divider accentLead className="mt-4" />
 
       {!song ? (
-        <div className="mt-4 flex flex-1 flex-col items-center justify-center rounded-[20px] border border-dashed border-amply-border/45 px-6 text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-amply-border/40 text-[18px] text-amply-textMuted">♪</div>
+        <div className="neu-well mt-4 flex flex-1 flex-col items-center justify-center rounded-md px-6 text-center">
+          <div className="neu-raised-sm mb-4 flex h-12 w-12 items-center justify-center rounded-full text-[18px] text-amply-textMuted" aria-hidden="true">♪</div>
           <p className="text-[13px] font-medium text-amply-textPrimary">Nothing playing</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-amply-textMuted">Choose a track to see its artwork and artist details.</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-amply-textMuted">Choose a track to see its artwork and artist details.</p>
         </div>
       ) : (
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-1 pb-20 pr-2">
-          <div className="space-y-4 border-b border-[var(--divider-soft)] pb-5">
-            <div className="aspect-square w-full overflow-hidden rounded-[20px] bg-amply-bgSecondary shadow-[var(--artwork-shadow)]">
+          <div className="space-y-4 pb-5">
+            <div className="neu-raised aspect-square w-full overflow-hidden rounded-lg">
               {song.albumArt ? (
                 <ArtworkImage src={song.albumArt} alt={song.album} className="h-full w-full object-cover" loading="eager" forceReady />
               ) : null}
@@ -488,7 +492,7 @@ const NowPlayingPanel = () => {
                   </button>
                 ) : null}
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-amply-textMuted">
+              <div className="flex items-center gap-2 text-[12px] text-amply-textMuted">
                 {isUnknownGenre(resolvedGenre) ? (
                   <span>{resolvedGenre}</span>
                 ) : (
@@ -497,22 +501,23 @@ const NowPlayingPanel = () => {
                     onClick={() => {
                       void openGenreQueue(song);
                     }}
-                    className="text-[11px] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
+                    className="text-[12px] text-amply-textMuted transition-colors hover:text-amply-textPrimary"
                   >
                     {resolvedGenre}
                   </button>
                 )}
-                <span className="h-1 w-1 rounded-full bg-amply-border/70" />
+                <span className="h-1 w-1 rounded-full bg-amply-textMuted/60" aria-hidden="true" />
                 <span>{formatDuration(song.duration)}</span>
               </div>
               {isUnknownGenre(resolvedGenre) ? (
-                <p className="text-[11px] text-amply-textMuted">Genre not cached yet.</p>
+                <p className="text-[12px] text-amply-textMuted">Genre not cached yet.</p>
               ) : null}
             </div>
           </div>
+          <Divider />
 
           <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
-            <p className="amply-kicker">About artist</p>
+            <Kicker>About artist</Kicker>
 
             {!idleReady ? (
               <p className="text-[12px] text-amply-textMuted">Warming up artist profile...</p>
@@ -520,14 +525,14 @@ const NowPlayingPanel = () => {
 
             {artistLoading ? (
               <div className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-amply-border border-t-amply-accent" />
+                <Spinner size={16} label="Loading artist info" />
                 <span>Loading artist info...</span>
               </div>
             ) : null}
 
             {idleReady && !artistLoading && artistStatus === 'ready' && artistProfile ? (
               <div className="flex min-h-0 flex-1 flex-col gap-3">
-                <div className="aspect-[16/9] w-full overflow-hidden rounded-[14px] bg-amply-bgSecondary">
+                <div className="neu-well aspect-[16/9] w-full overflow-hidden rounded-md">
                   {artistProfile.imageUrl ? (
                     <ArtworkImage
                       src={artistProfile.imageUrl}
@@ -543,20 +548,22 @@ const NowPlayingPanel = () => {
                 <div className="min-h-0 flex-1">
                   <p className={summaryExpanded ? 'text-[12px] leading-relaxed text-amply-textSecondary' : 'line-clamp-4 text-[12px] leading-relaxed text-amply-textSecondary'}>{artistProfile.summary}</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-amply-textMuted">
+                <div className="flex flex-wrap items-center gap-2 text-[12px] text-amply-textMuted">
                   <button type="button" onClick={() => setSummaryExpanded((current) => !current)} className="font-medium text-amply-textPrimary">{summaryExpanded ? 'Show less' : 'Read more'}</button>
                   {isOffline ? <span>· Offline</span> : null}
                 </div>
                 {artistProfile.sourceUrl ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconRight="external-link"
+                    className="w-fit"
                     onClick={() => {
                       void openArtistSource(artistProfile.sourceUrl);
                     }}
-                    className="inline-flex w-fit items-center text-[11px] font-medium text-amply-textMuted transition-colors hover:text-amply-textPrimary"
                   >
                     Source
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             ) : null}
@@ -571,10 +578,10 @@ const NowPlayingPanel = () => {
 
             {artistChecked && !artistLoading && artistStatus !== 'ready' ? (
               <div className="pt-2">
-                <button
-                  type="button"
-                  aria-label="Retry metadata"
-                  title="Retry metadata"
+                <IconButton
+                  name="refresh"
+                  label="Retry metadata"
+                  size="sm"
                   disabled={!song}
                   onClick={() => {
                     if (!song) {
@@ -588,10 +595,7 @@ const NowPlayingPanel = () => {
                       .then(() => setArtistRefreshToken((current) => current + 1))
                       .catch((error) => reportArtistProfileError('retry-metadata', error));
                   }}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-amply-border/60 text-amply-textSecondary transition-colors hover:text-amply-textPrimary disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <img src={retryIcon} alt="" className="h-4 w-4" />
-                </button>
+                />
               </div>
             ) : null}
           </div>

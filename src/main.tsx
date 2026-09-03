@@ -5,8 +5,6 @@ import App from '@/App';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { primeStartupSafetyFlags, requestSafeModeNextStart } from '@/services/safeModeService';
 import '@/index.css';
-// Temporary compatibility layer for not-yet-migrated pages; deleted at the end of Phase A6.
-import '@/styles/legacy.css';
 
 if (window.location.hash.includes('/overlay')) {
   document.documentElement.dataset.amplyWindow = 'overlay';
@@ -29,7 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         void requestSafeModeNextStart('root-error-boundary');
       }}
       fallback={
-        <div className="flex h-screen w-full items-center justify-center bg-amply-bgPrimary p-6 text-center text-[13px] text-amply-textSecondary">
+        <div className="flex h-screen w-full items-center justify-center bg-amply-bg p-6 text-center text-[13px] text-amply-textSecondary">
           Amply could not start cleanly. Restart the app to try recovery mode.
         </div>
       }

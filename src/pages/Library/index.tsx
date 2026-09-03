@@ -1,31 +1,46 @@
 import { usePersistedPreference } from '@/hooks/usePersistedPreference';
 import { oneOf } from '@/services/preferences';
-import { useEffect, useMemo, useRef, useState, useTransition, type ComponentType } from 'react';
-import AutoSizer from 'react-virtualized-auto-sizer';
-import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
-import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
-import { IconButton, PageHeader, PillButton, SegmentedTabs, UnifiedSearchInput, UnifiedSelectInput } from '@/components/ui/AmplyUI';
+import { Button, IconButton, PageHeader, ProgressBar, SearchInput, SegmentedTabs, Select, TextInput } from '@/components/ui';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { LibraryTab, Song } from '@/types/music';
-import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
+import { getPrimaryArtistName } from '@/utils/artists';
 import { pickMusicFolders } from '@/services/storageService';
 import {
   getAlbumTracklistKey,
   loadAlbumTracklist,
   loadAlbumTracklistCache,
-  normalizeTrackTitle,
   type AlbumTracklist,
 } from '@/services/albumTracklistService';
 import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptService';
-import addIcon from '@/assets/icons/add.svg';
-import { isUnknownGenre } from '@/services/songMetadataService';
 import { pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { useLibraryTabView } from '@/hooks/useLibraryViews';
+import { LibraryCardGrid } from './LibraryCardGrid';
+import { AlbumDetailModal, type ActiveAlbum } from './AlbumDetailModal';
+import {
+  albumSortOptions,
+  artistSortOptions,
+  buildAlbumTrackMatches,
+  buildArtistGroups,
+  buildGenreGroups,
+  genreSortOptions,
+  isAlbumSort,
+  isArtistSort,
+  isGenreSort,
+  sortAlbums,
+  sortGroups,
+  type AlbumEntry,
+  type AlbumSort,
+  type AlbumTrackMatches,
+  type ArtistSort,
+  type GenreSort,
+  type SongGroup,
+} from './libraryGroups';
 
 const tabs: Array<{ label: string; value: LibraryTab }> = [
   { label: 'Songs', value: 'songs' },
@@ -38,287 +53,9 @@ interface LibraryPageProps {
   initialTab?: LibraryTab;
 }
 
-interface GenreGroup {
-  label: string;
-  songs: Song[];
-  artwork?: string;
-  totalPlays: number;
-}
-
-interface ArtistGroup {
-  label: string;
-  songs: Song[];
-  artwork?: string;
-  totalPlays: number;
-}
-
-type CardGridData<T> = {
-  items: T[];
-  columns: number;
-  renderItem: (item: T) => JSX.Element;
-  getKey: (item: T, index: number) => string;
-};
-
-const CARD_MIN_WIDTH = 190;
-const CARD_GAP = 18;
-const CARD_HEIGHT = 244;
-
-const LibraryCardShell = ({ children }: { children: React.ReactNode }) => <div className="h-full [&>*]:h-full">{children}</div>;
-
-const CardGridRow = <T,>({ index, style, data }: ListChildComponentProps<CardGridData<T>>) => {
-  const { items, columns, renderItem, getKey } = data;
-  const start = index * columns;
-  const slice = items.slice(start, start + columns);
-
-  return (
-    <div style={{ ...style, paddingBottom: CARD_GAP }}>
-      <div className="grid h-full" style={{ gap: CARD_GAP, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
-        {slice.map((item, offset) => (
-          <div key={getKey(item, start + offset)}>{renderItem(item)}</div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const buildGenreGroups = (songs: Song[], artworkFor: (songs: Song[]) => string | undefined): GenreGroup[] => {
-  const groups = new Map<string, GenreGroup>();
-
-  for (const song of songs) {
-    const label = isUnknownGenre(song.genre) ? 'Unknown Genre' : song.genre?.trim() || 'Unknown Genre';
-    const key = label.toLowerCase();
-    const existing = groups.get(key);
-
-    if (!existing) {
-      groups.set(key, {
-        label,
-        songs: [song],
-        artwork: undefined,
-        totalPlays: song.playCount,
-      });
-      continue;
-    }
-
-    existing.songs.push(song);
-    existing.totalPlays += song.playCount;
-    if (!existing.artwork && song.albumArt) {
-      existing.artwork = song.albumArt;
-    }
-  }
-
-  return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      artwork: group.artwork ?? artworkFor(group.songs),
-    }))
-    .sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
-};
-
-const buildArtistGroups = (songs: Song[], artworkFor: (songs: Song[]) => string | undefined): ArtistGroup[] => {
-  const groups = new Map<string, ArtistGroup>();
-  const seenByArtist = new Map<string, Set<string>>();
-
-  for (const song of songs) {
-    const artistNames = splitArtistNames(song.artist);
-
-    for (const artistName of artistNames) {
-      const key = artistName.toLowerCase();
-      const seenSongIds = seenByArtist.get(key) ?? new Set<string>();
-      if (seenSongIds.has(song.id)) {
-        continue;
-      }
-
-      seenSongIds.add(song.id);
-      seenByArtist.set(key, seenSongIds);
-
-      const existing = groups.get(key);
-      if (!existing) {
-        groups.set(key, {
-          label: artistName,
-          songs: [song],
-          artwork: undefined,
-          totalPlays: song.playCount,
-        });
-        continue;
-      }
-
-      existing.songs.push(song);
-      existing.totalPlays += song.playCount;
-      if (!existing.artwork && song.albumArt) {
-        existing.artwork = song.albumArt;
-      }
-    }
-  }
-
-  return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      artwork: group.artwork ?? artworkFor(group.songs),
-    }))
-    .sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length || a.label.localeCompare(b.label));
-};
-
-type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played' | 'most_songs';
-type ArtistSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
-type GenreSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
-
 const isLibraryTab = oneOf<LibraryTab>(['songs', 'albums', 'artists', 'genres']);
-const isAlbumSort = oneOf<AlbumSort>(['title_asc', 'title_desc', 'artist_asc', 'most_played', 'most_songs']);
-const isArtistSort = oneOf<ArtistSort>(['name_asc', 'name_desc', 'most_played', 'most_songs']);
-const isGenreSort = oneOf<GenreSort>(['name_asc', 'name_desc', 'most_played', 'most_songs']);
 
-type AlbumEntry = {
-  album: string;
-  artist: string;
-  artwork?: string;
-  songs: Song[];
-  key: string;
-  totalPlays: number;
-};
-
-const sortAlbums = (albums: AlbumEntry[], sortBy: AlbumSort): AlbumEntry[] => {
-  const sorted = [...albums];
-  switch (sortBy) {
-    case 'title_desc':
-      return sorted.sort((a, b) => b.album.localeCompare(a.album) || a.artist.localeCompare(b.artist));
-    case 'artist_asc':
-      return sorted.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
-    case 'most_played':
-      return sorted.sort((a, b) => b.totalPlays - a.totalPlays || a.album.localeCompare(b.album));
-    case 'most_songs':
-      return sorted.sort((a, b) => b.songs.length - a.songs.length || a.album.localeCompare(b.album));
-    case 'title_asc':
-    default:
-      return sorted.sort((a, b) => a.album.localeCompare(b.album) || a.artist.localeCompare(b.artist));
-  }
-};
-
-const sortAlbumTracksForPlayback = (songs: Song[]): Song[] => {
-  return [...songs].sort((a, b) => {
-    const trackA = a.track ?? 0;
-    const trackB = b.track ?? 0;
-    const hasA = trackA > 0;
-    const hasB = trackB > 0;
-    if (hasA && hasB && trackA !== trackB) {
-      return trackA - trackB;
-    }
-    if (hasA !== hasB) {
-      return hasA ? -1 : 1;
-    }
-    const titleCmp = a.title.localeCompare(b.title);
-    if (titleCmp !== 0) {
-      return titleCmp;
-    }
-    return a.filename.localeCompare(b.filename);
-  });
-};
-
-const buildAlbumTrackMatches = (albumSongs: Song[], tracklist: AlbumTracklist | null) => {
-  if (!tracklist?.tracks?.length) {
-    const orderedSongs = [...albumSongs].sort((a, b) => {
-      const titleCmp = a.title.localeCompare(b.title);
-      if (titleCmp !== 0) {
-        return titleCmp;
-      }
-      return a.filename.localeCompare(b.filename);
-    });
-    return {
-      total: albumSongs.length,
-      available: albumSongs.length,
-      missing: [] as Array<{ position: number; title: string }>,
-      orderedSongs,
-      viewItems: orderedSongs.map((song, index) => ({
-        id: song.id,
-        title: song.title,
-        position: index + 1,
-        available: true,
-      })),
-    };
-  }
-
-  const byTrack = new Map<number, Song>();
-  const byTitle = new Map<string, Song>();
-  for (const song of albumSongs) {
-    if (song.track && song.track > 0 && !byTrack.has(song.track)) {
-      byTrack.set(song.track, song);
-    }
-    const normalized = normalizeTrackTitle(song.title);
-    if (normalized && !byTitle.has(normalized)) {
-      byTitle.set(normalized, song);
-    }
-  }
-
-  const used = new Set<string>();
-  const orderedSongs: Song[] = [];
-  const missing: Array<{ position: number; title: string }> = [];
-
-  const viewItems: Array<{ id?: string; title: string; position: number; available: boolean }> = [];
-  for (const track of tracklist.tracks) {
-    const normalized = normalizeTrackTitle(track.title);
-    const match = byTrack.get(track.position) ?? (normalized ? byTitle.get(normalized) : undefined);
-    if (match && !used.has(match.id)) {
-      used.add(match.id);
-      orderedSongs.push(match);
-      viewItems.push({
-        id: match.id,
-        title: track.title,
-        position: track.position,
-        available: true,
-      });
-    } else {
-      missing.push({ position: track.position, title: track.title });
-      viewItems.push({
-        title: track.title,
-        position: track.position,
-        available: false,
-      });
-    }
-  }
-
-  const fallback = sortAlbumTracksForPlayback(albumSongs);
-  for (const song of fallback) {
-    if (!used.has(song.id)) {
-      used.add(song.id);
-      orderedSongs.push(song);
-      viewItems.push({
-        id: song.id,
-        title: song.title,
-        position: viewItems.length + 1,
-        available: true,
-      });
-    }
-  }
-
-  return {
-    total: tracklist.tracks.length,
-    available: tracklist.tracks.length - missing.length,
-    missing,
-    orderedSongs,
-    viewItems,
-  };
-};
-
-const albumSortOptions: Array<{ label: string; value: AlbumSort }> = [
-  { label: 'Album (A-Z)', value: 'title_asc' },
-  { label: 'Album (Z-A)', value: 'title_desc' },
-  { label: 'Artist (A-Z)', value: 'artist_asc' },
-  { label: 'Most Played', value: 'most_played' },
-  { label: 'Most Songs', value: 'most_songs' },
-];
-
-const artistSortOptions: Array<{ label: string; value: ArtistSort }> = [
-  { label: 'Artist (A-Z)', value: 'name_asc' },
-  { label: 'Artist (Z-A)', value: 'name_desc' },
-  { label: 'Most Played', value: 'most_played' },
-  { label: 'Most Songs', value: 'most_songs' },
-];
-
-const genreSortOptions: Array<{ label: string; value: GenreSort }> = [
-  { label: 'Genre (A-Z)', value: 'name_asc' },
-  { label: 'Genre (Z-A)', value: 'name_desc' },
-  { label: 'Most Played', value: 'most_played' },
-  { label: 'Most Songs', value: 'most_songs' },
-];
+type AlbumSummary = AlbumTrackMatches & { tracklist: AlbumTracklist | null };
 
 const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const [isTabPending, startTabTransition] = useTransition();
@@ -344,19 +81,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const [genreQuery, setGenreQuery] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [albumTracklists, setAlbumTracklists] = useState<Record<string, AlbumTracklist>>({});
-  const [activeAlbum, setActiveAlbum] = useState<{
-    album: string;
-    artist: string;
-    songs: Song[];
-    tracklist: AlbumTracklist | null;
-    total: number;
-    available: number;
-    missing: Array<{ position: number; title: string }>;
-    orderedSongs: Song[];
-    viewItems: Array<{ id?: string; title: string; position: number; available: boolean }>;
-    artwork?: string;
-    isLoading: boolean;
-  } | null>(null);
+  const [activeAlbum, setActiveAlbum] = useState<ActiveAlbum | null>(null);
   const libraryTabView = useLibraryTabView(activeTab);
   const deferredSongs = libraryTabView.songs;
   const activeAlbumSignatureRef = useRef<string | null>(null);
@@ -445,13 +170,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       prev
         ? {
             ...prev,
+            ...matches,
             songs: matchingSongs,
             tracklist,
-            total: matches.total,
-            available: matches.available,
-            missing: matches.missing,
-            orderedSongs: matches.orderedSongs,
-            viewItems: matches.viewItems,
           }
         : prev,
     );
@@ -473,20 +194,10 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   }, [albums, albumQuery, albumSort]);
 
   const albumSummaries = useMemo(() => {
+    const map = new Map<string, AlbumSummary>();
     if (!shouldBuildAlbums) {
-      return new Map();
+      return map;
     }
-    const map = new Map<
-      string,
-      {
-        available: number;
-        total: number;
-        tracklist: AlbumTracklist | null;
-        orderedSongs: Song[];
-        viewItems: Array<{ id?: string; title: string; position: number; available: boolean }>;
-        missing: Array<{ position: number; title: string }>;
-      }
-    >();
     for (const entry of albums) {
       const tracklist = albumTracklists[entry.key] ?? null;
       const summary = buildAlbumTrackMatches(entry.songs, tracklist);
@@ -505,70 +216,130 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
 
   const filteredArtists = useMemo(() => {
     const query = artistQuery.trim().toLowerCase();
-    const matches = query
-      ? artists.filter((artist) => artist.label.toLowerCase().includes(query))
-      : artists;
-
-    const sorted = [...matches];
-    switch (artistSort) {
-      case 'name_desc':
-        return sorted.sort((a, b) => b.label.localeCompare(a.label));
-      case 'most_played':
-        return sorted.sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length);
-      case 'most_songs':
-        return sorted.sort((a, b) => b.songs.length - a.songs.length || b.totalPlays - a.totalPlays);
-      case 'name_asc':
-      default:
-        return sorted.sort((a, b) => a.label.localeCompare(b.label));
-    }
+    const matches = query ? artists.filter((artist) => artist.label.toLowerCase().includes(query)) : artists;
+    return sortGroups(matches, artistSort);
   }, [artists, artistQuery, artistSort]);
 
   const filteredGenres = useMemo(() => {
     const query = genreQuery.trim().toLowerCase();
-    const matches = query
-      ? genres.filter((genre) => genre.label.toLowerCase().includes(query))
-      : genres;
-
-    const sorted = [...matches];
-    switch (genreSort) {
-      case 'name_desc':
-        return sorted.sort((a, b) => b.label.localeCompare(a.label));
-      case 'most_played':
-        return sorted.sort((a, b) => b.totalPlays - a.totalPlays || b.songs.length - a.songs.length);
-      case 'most_songs':
-        return sorted.sort((a, b) => b.songs.length - a.songs.length || b.totalPlays - a.totalPlays);
-      case 'name_asc':
-      default:
-        return sorted.sort((a, b) => a.label.localeCompare(b.label));
-    }
+    const matches = query ? genres.filter((genre) => genre.label.toLowerCase().includes(query)) : genres;
+    return sortGroups(matches, genreSort);
   }, [genres, genreQuery, genreSort]);
+
+  /** Opens the album detail modal and, if no tracklist is cached, fetches one in the background. */
+  const openAlbum = useCallback(
+    (entry: AlbumEntry) => {
+      const cached = albumSummaries.get(entry.key);
+      const tracklist = cached?.tracklist ?? null;
+      const matches = cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
+      setActiveAlbum({
+        album: entry.album,
+        artist: getPrimaryArtistName(entry.artist),
+        songs: entry.songs,
+        tracklist,
+        total: matches.total,
+        available: matches.available,
+        missing: matches.missing,
+        orderedSongs: matches.orderedSongs,
+        viewItems: matches.viewItems,
+        artwork: entry.artwork,
+        isLoading: Boolean(!tracklist && !metadataFetchPaused),
+      });
+      if (!tracklist && !metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
+        void (async () => {
+          try {
+            const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
+            const cache = await loadAlbumTracklistCache();
+            setAlbumTracklists(cache);
+            if (!result) {
+              setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
+              return;
+            }
+            const fetched = buildAlbumTrackMatches(entry.songs, result);
+            setActiveAlbum((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    ...fetched,
+                    tracklist: result,
+                    isLoading: false,
+                  }
+                : prev,
+            );
+          } finally {
+            releaseMetadata('album_tracklist', entry.key);
+          }
+        })();
+      }
+    },
+    [albumSummaries, metadataFetchPaused],
+  );
+
+  const playGroup = useCallback(
+    (group: SongGroup) => {
+      const groupSongs = group.songs;
+      if (!groupSongs.length) {
+        return;
+      }
+      const queue = groupSongs.map((item) => item.id);
+      setQueue(queue, groupSongs[0].id);
+      void playSongById(groupSongs[0].id, false);
+    },
+    [playSongById, setQueue],
+  );
+
+  const playActiveAlbum = useCallback(() => {
+    if (!activeAlbum?.orderedSongs.length) {
+      return;
+    }
+    const firstSong = activeAlbum.orderedSongs[0];
+    if (!firstSong?.id) {
+      return;
+    }
+    const queue = activeAlbum.orderedSongs.map((song) => song.id).filter(Boolean);
+    if (!queue.length) {
+      return;
+    }
+    setQueue(queue, firstSong.id);
+    setAlbumQueueView({
+      album: activeAlbum.album,
+      artist: activeAlbum.artist,
+      items: activeAlbum.viewItems,
+    });
+    setNowPlayingTab('queue');
+    navigate('/now-playing');
+    void playSongById(firstSong.id, false);
+    setActiveAlbum(null);
+  }, [activeAlbum, navigate, playSongById, setAlbumQueueView, setNowPlayingTab, setQueue]);
+
+  const closeAlbum = useCallback(() => setActiveAlbum(null), []);
 
   return (
     <div className="space-y-5 pb-8">
       <PageHeader title="Library" description={`${deferredSongs.length.toLocaleString()} songs indexed`} />
 
-      <div
-        className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"
-        aria-busy={isTabPending}
-      >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between" aria-busy={isTabPending}>
         <SegmentedTabs
           tabs={tabs}
           value={activeTab}
           onChange={(tab) => startTabTransition(() => setActiveTab(tab))}
           variant="bare"
+          ariaLabel="Library sections"
           className="w-full justify-between sm:w-auto sm:justify-start"
         />
 
         {activeTab === 'songs' ? (
           <div className="flex min-w-0 items-center gap-2">
-            <input
+            <TextInput
               value={localPath}
-              onChange={(event) => setLocalPath(event.target.value)}
+              onValueChange={setLocalPath}
+              icon="folder"
               placeholder="Add folder path..."
-              className="hidden min-h-[44px] min-w-[260px] flex-1 rounded-2xl bg-[var(--control-surface)] px-4 py-2.5 text-[13px] text-amply-textPrimary shadow-[inset_0_0_0_1px_var(--control-border)] outline-none transition-colors placeholder:text-amply-textMuted focus:shadow-[inset_0_0_0_1px_rgb(var(--amply-accent))] md:block"
+              className="hidden min-w-[260px] flex-1 md:flex"
             />
             <IconButton
-              type="button"
+              name="add"
+              label="Add music folder"
               onClick={async () => {
                 if (localPath.trim()) {
                   await addLibraryPath(localPath.trim());
@@ -581,37 +352,40 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                   await setLibraryPaths(merged);
                 }
               }}
-              title="Add music folder"
-            >
-              <img src={addIcon} alt="" className="ui-icon h-4 w-4" />
-            </IconButton>
-            <PillButton
-              type="button"
+            />
+            <Button
+              variant="secondary"
+              icon="refresh"
               onClick={() => {
                 void scanLibrary();
               }}
             >
               {isScanning ? 'Scanning...' : 'Rescan'}
-            </PillButton>
+            </Button>
           </div>
         ) : null}
       </div>
 
-      {isScanning ? <p className="text-[13px] text-amply-textSecondary">Scanning library...</p> : null}
-      {scanError ? <p className="text-[13px] text-red-400">{scanError}</p> : null}
+      {isScanning ? (
+        <div className="space-y-2">
+          <ProgressBar indeterminate ariaLabel="Scanning library" />
+          <p className="text-[13px] text-amply-textSecondary">Scanning library...</p>
+        </div>
+      ) : null}
+      {scanError ? <p className="text-[13px] text-amply-danger">{scanError}</p> : null}
 
       {activeTab === 'songs' ? <SongList songs={deferredSongs} persistKey="library-songs" /> : null}
 
       {activeTab === 'albums' ? (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <UnifiedSearchInput
+            <SearchInput
               value={albumQuery}
               onValueChange={setAlbumQuery}
               placeholder="Search albums or artists..."
               className="min-w-0 flex-1"
             />
-            <UnifiedSelectInput
+            <Select
               label="Sort"
               value={albumSort}
               onChange={(event) => setAlbumSort(event.target.value as AlbumSort)}
@@ -622,163 +396,35 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                   {option.label}
                 </option>
               ))}
-            </UnifiedSelectInput>
+            </Select>
           </div>
 
-          <div className="h-[70vh]">
-            <AutoSizer>
-              {({ height, width }) => {
-                const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
-                const rowCount = Math.ceil(filteredAlbums.length / columns);
-                const data: CardGridData<AlbumEntry> = {
-                  items: filteredAlbums,
-                  columns,
-                  getKey: (entry) => entry.key,
-                  renderItem: (entry) => {
-                    const summary = albumSummaries.get(entry.key);
-                    const totalLocal = entry.songs.length;
-                    const meta = summary?.tracklist
-                      ? `${summary.available}/${summary.total} tracks`
-                      : `${totalLocal} tracks`;
-                    return (
-                      <LibraryCardShell>
-                        <AlbumCard
-                          key={`album-${entry.key}`}
-                          title={entry.album}
-                          subtitle={entry.artist}
-                          artwork={entry.artwork}
-                          meta={meta}
-                          onClick={() => {
-                            const cached = albumSummaries.get(entry.key);
-                            const tracklist = cached?.tracklist ?? null;
-                            const { total, available, missing, orderedSongs, viewItems } =
-                              cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
-                            setActiveAlbum({
-                              album: entry.album,
-                              artist: getPrimaryArtistName(entry.artist),
-                              songs: entry.songs,
-                              tracklist,
-                              total,
-                              available,
-                              missing,
-                              orderedSongs,
-                              viewItems,
-                              artwork: entry.artwork,
-                              isLoading: Boolean(!tracklist && !metadataFetchPaused),
-                            });
-                            if (!tracklist && !metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
-                              void (async () => {
-                                try {
-                                  const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
-                                  const cache = await loadAlbumTracklistCache();
-                                  setAlbumTracklists(cache);
-                                  if (!result) {
-                                    setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
-                                    return;
-                                  }
-                                  const matches = buildAlbumTrackMatches(entry.songs, result);
-                                  setActiveAlbum((prev) =>
-                                    prev
-                                      ? {
-                                          ...prev,
-                                          tracklist: result,
-                                          total: matches.total,
-                                          available: matches.available,
-                                          missing: matches.missing,
-                                          orderedSongs: matches.orderedSongs,
-                                          viewItems: matches.viewItems,
-                                          isLoading: false,
-                                        }
-                                      : prev,
-                                  );
-                                } finally {
-                                  releaseMetadata('album_tracklist', entry.key);
-                                }
-                              })();
-                            }
-                          }}
-                          onInfo={() => {
-                            const cached = albumSummaries.get(entry.key);
-                            const tracklist = cached?.tracklist ?? null;
-                            const { total, available, missing, orderedSongs, viewItems } =
-                              cached ?? buildAlbumTrackMatches(entry.songs, tracklist);
-                            setActiveAlbum({
-                              album: entry.album,
-                              artist: getPrimaryArtistName(entry.artist),
-                              songs: entry.songs,
-                              tracklist,
-                              total,
-                              available,
-                              missing,
-                              orderedSongs,
-                              viewItems,
-                              artwork: entry.artwork,
-                              isLoading: Boolean(!tracklist && !metadataFetchPaused),
-                            });
-                            if (!tracklist && !metadataFetchPaused && tryAcquireMetadata('album_tracklist', entry.key)) {
-                              void (async () => {
-                                try {
-                                  const result = await loadAlbumTracklist(getPrimaryArtistName(entry.artist), entry.album);
-                                  const cache = await loadAlbumTracklistCache();
-                                  setAlbumTracklists(cache);
-                                  if (!result) {
-                                    setActiveAlbum((prev) => (prev ? { ...prev, isLoading: false } : prev));
-                                    return;
-                                  }
-                                  const matches = buildAlbumTrackMatches(entry.songs, result);
-                                  setActiveAlbum((prev) =>
-                                    prev
-                                      ? {
-                                          ...prev,
-                                          tracklist: result,
-                                          total: matches.total,
-                                          available: matches.available,
-                                          missing: matches.missing,
-                                          orderedSongs: matches.orderedSongs,
-                                          viewItems: matches.viewItems,
-                                          isLoading: false,
-                                        }
-                                      : prev,
-                                  );
-                                } finally {
-                                  releaseMetadata('album_tracklist', entry.key);
-                                }
-                              })();
-                            }
-                          }}
-                        />
-                      </LibraryCardShell>
-                    );
-                  },
-                };
-                return (
-                  <List<CardGridData<AlbumEntry>>
-                    height={height}
-                    width={width}
-                    itemCount={rowCount}
-                    itemSize={CARD_HEIGHT + CARD_GAP}
-                    itemData={data}
-                    overscanCount={3}
-                  >
-                    {CardGridRow as ComponentType<ListChildComponentProps<CardGridData<AlbumEntry>>>}
-                  </List>
-                );
-              }}
-            </AutoSizer>
-          </div>
+          <LibraryCardGrid
+            items={filteredAlbums}
+            getKey={(entry) => entry.key}
+            renderItem={(entry) => {
+              const summary = albumSummaries.get(entry.key);
+              const meta = summary?.tracklist ? `${summary.available}/${summary.total} tracks` : `${entry.songs.length} tracks`;
+              return (
+                <AlbumCard
+                  title={entry.album}
+                  subtitle={entry.artist}
+                  artwork={entry.artwork}
+                  meta={meta}
+                  onClick={() => openAlbum(entry)}
+                  onInfo={() => openAlbum(entry)}
+                />
+              );
+            }}
+          />
         </div>
       ) : null}
 
       {activeTab === 'artists' ? (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <UnifiedSearchInput
-              value={artistQuery}
-              onValueChange={setArtistQuery}
-              placeholder="Search artists..."
-              className="min-w-0 flex-1"
-            />
-            <UnifiedSelectInput
+            <SearchInput value={artistQuery} onValueChange={setArtistQuery} placeholder="Search artists..." className="min-w-0 flex-1" />
+            <Select
               label="Sort"
               value={artistSort}
               onChange={(event) => setArtistSort(event.target.value as ArtistSort)}
@@ -789,66 +435,29 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                   {option.label}
                 </option>
               ))}
-            </UnifiedSelectInput>
+            </Select>
           </div>
 
-          <div className="h-[70vh]">
-            <AutoSizer>
-              {({ height, width }) => {
-                const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
-                const rowCount = Math.ceil(filteredArtists.length / columns);
-                const data: CardGridData<ArtistGroup> = {
-                  items: filteredArtists,
-                  columns,
-                  getKey: (entry) => entry.label.toLowerCase(),
-                  renderItem: (artistGroup) => (
-                    <LibraryCardShell>
-                      <AlbumCard
-                        key={`artist-${artistGroup.label.toLowerCase()}`}
-                        title={artistGroup.label}
-                        subtitle={`${artistGroup.songs.length} songs`}
-                        artwork={artistGroup.artwork}
-                        onClick={() => {
-                          const artistSongs = artistGroup.songs;
-                          if (!artistSongs.length) {
-                            return;
-                          }
-                          const queue = artistSongs.map((item) => item.id);
-                          setQueue(queue, artistSongs[0].id);
-                          void playSongById(artistSongs[0].id, false);
-                        }}
-                      />
-                    </LibraryCardShell>
-                  ),
-                };
-                return (
-                  <List<CardGridData<ArtistGroup>>
-                    height={height}
-                    width={width}
-                    itemCount={rowCount}
-                    itemSize={CARD_HEIGHT + CARD_GAP}
-                    itemData={data}
-                    overscanCount={3}
-                  >
-                    {CardGridRow as ComponentType<ListChildComponentProps<CardGridData<ArtistGroup>>>}
-                  </List>
-                );
-              }}
-            </AutoSizer>
-          </div>
+          <LibraryCardGrid
+            items={filteredArtists}
+            getKey={(entry) => entry.label.toLowerCase()}
+            renderItem={(artistGroup) => (
+              <AlbumCard
+                title={artistGroup.label}
+                subtitle={`${artistGroup.songs.length} songs`}
+                artwork={artistGroup.artwork}
+                onClick={() => playGroup(artistGroup)}
+              />
+            )}
+          />
         </div>
       ) : null}
 
       {activeTab === 'genres' ? (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <UnifiedSearchInput
-              value={genreQuery}
-              onValueChange={setGenreQuery}
-              placeholder="Search genres..."
-              className="min-w-0 flex-1"
-            />
-            <UnifiedSelectInput
+            <SearchInput value={genreQuery} onValueChange={setGenreQuery} placeholder="Search genres..." className="min-w-0 flex-1" />
+            <Select
               label="Sort"
               value={genreSort}
               onChange={(event) => setGenreSort(event.target.value as GenreSort)}
@@ -859,174 +468,27 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                   {option.label}
                 </option>
               ))}
-            </UnifiedSelectInput>
+            </Select>
           </div>
 
-          <div className="h-[70vh]">
-            <AutoSizer>
-              {({ height, width }) => {
-                const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
-                const rowCount = Math.ceil(filteredGenres.length / columns);
-                const data: CardGridData<GenreGroup> = {
-                  items: filteredGenres,
-                  columns,
-                  getKey: (entry) => entry.label.toLowerCase(),
-                  renderItem: (genreGroup) => (
-                    <LibraryCardShell>
-                      <AlbumCard
-                        key={`genre-${genreGroup.label.toLowerCase()}`}
-                        title={genreGroup.label}
-                        subtitle={`${genreGroup.songs.length} songs`}
-                        artwork={genreGroup.artwork}
-                        onClick={() => {
-                          const genreSongs = genreGroup.songs;
-                          if (!genreSongs.length) {
-                            return;
-                          }
-                          const queue = genreSongs.map((item) => item.id);
-                          setQueue(queue, genreSongs[0].id);
-                          void playSongById(genreSongs[0].id, false);
-                        }}
-                      />
-                    </LibraryCardShell>
-                  ),
-                };
-                return (
-                  <List<CardGridData<GenreGroup>>
-                    height={height}
-                    width={width}
-                    itemCount={rowCount}
-                    itemSize={CARD_HEIGHT + CARD_GAP}
-                    itemData={data}
-                    overscanCount={3}
-                  >
-                    {CardGridRow as ComponentType<ListChildComponentProps<CardGridData<GenreGroup>>>}
-                  </List>
-                );
-              }}
-            </AutoSizer>
-          </div>
+          <LibraryCardGrid
+            items={filteredGenres}
+            getKey={(entry) => entry.label.toLowerCase()}
+            renderItem={(genreGroup) => (
+              <AlbumCard
+                title={genreGroup.label}
+                subtitle={`${genreGroup.songs.length} songs`}
+                artwork={genreGroup.artwork}
+                onClick={() => playGroup(genreGroup)}
+              />
+            )}
+          />
         </div>
       ) : null}
 
-      {activeAlbum ? (
-        <div className="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
-          <div className="ui-soft-card w-full max-w-2xl rounded-[30px] p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="h-16 w-16 overflow-hidden rounded-xl bg-amply-bgSecondary">
-                  {activeAlbum.artwork ? (
-                    <ArtworkImage src={activeAlbum.artwork} alt={activeAlbum.album} className="h-full w-full object-cover" />
-                  ) : null}
-                </div>
-                <div>
-                  <h2 className="text-[18px] font-semibold text-amply-textPrimary">{activeAlbum.album}</h2>
-                  <p className="text-[12px] text-amply-textSecondary">{activeAlbum.artist}</p>
-                  <p className="mt-1 text-[11px] text-amply-textMuted">
-                    {activeAlbum.available}/{activeAlbum.total} tracks available
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveAlbum(null)}
-                className="rounded-full border border-amply-border/60 px-3 py-1 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="ui-soft-card mt-4 rounded-[30px]">
-              <div className="flex items-center justify-between border-b border-amply-border/60 px-4 py-3">
-                <p className="text-[12px] uppercase tracking-wide text-amply-textMuted">Tracklist</p>
-                <span className="text-[11px] text-amply-textMuted">{activeAlbum.total} tracks</span>
-              </div>
-              <div className="max-h-[50vh] overflow-y-auto">
-                {activeAlbum.isLoading ? (
-                  <div className="px-4 py-4 text-[12px] text-amply-textMuted">
-                    <div className="flex items-center gap-2 rounded-lg border border-amply-border/60 px-3 py-2">
-                      <div className="h-3 w-3 animate-spin rounded-full border-2 border-amply-border border-t-amply-accent" />
-                      Fetching album tracklist...
-                    </div>
-                  </div>
-                ) : activeAlbum.tracklist?.tracks?.length ? (
-                  <div className="divide-y divide-amply-border/40">
-                    {activeAlbum.viewItems.map((track) => {
-                      const isMissing = !track.available;
-                      return (
-                        <div
-                          key={`${track.position}-${track.title}`}
-                          className={`flex items-center justify-between gap-3 px-4 py-3 text-[12px] ${
-                            isMissing ? 'opacity-40' : ''
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-[13px] font-medium text-amply-textPrimary">
-                              {track.position}. {track.title}
-                            </p>
-                            <p className="truncate text-[12px] text-amply-textSecondary">{activeAlbum.album}</p>
-                          </div>
-                          <span className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted">
-                            {isMissing ? 'Missing' : 'Available'}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="px-4 py-6 text-[13px] text-amply-textMuted">No tracklist cached yet for this album.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!activeAlbum.orderedSongs.length) {
-                    return;
-                  }
-                  const firstSong = activeAlbum.orderedSongs[0];
-                  if (!firstSong?.id) {
-                    return;
-                  }
-                  const queue = activeAlbum.orderedSongs.map((song) => song.id).filter(Boolean);
-                  if (!queue.length) {
-                    return;
-                  }
-                  setQueue(queue, firstSong.id);
-                  setAlbumQueueView({
-                    album: activeAlbum.album,
-                    artist: activeAlbum.artist,
-                    items: activeAlbum.viewItems,
-                  });
-                  setNowPlayingTab('queue');
-                  navigate('/now-playing');
-                  void playSongById(firstSong.id, false);
-                  setActiveAlbum(null);
-                }}
-                className="rounded-full bg-amply-accent px-4 py-2 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover"
-              >
-                Play Album
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveAlbum(null)}
-                className="rounded-full border border-amply-border/60 px-4 py-2 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
+      <AlbumDetailModal album={activeAlbum} onClose={closeAlbum} onPlay={playActiveAlbum} />
     </div>
   );
 };
 
 export default LibraryPage;
-
-
-
-

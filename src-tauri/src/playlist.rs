@@ -1291,3 +1291,33 @@ pub fn generate_playlists(
     playlists.retain(|p| !p.song_ids.is_empty());
     post_process_playlists(playlists, &songs, seed)
 }
+
+#[tauri::command]
+pub fn generate_smart_playlists_rust(
+    songs: Vec<SongInput>,
+    seed: Option<u64>,
+    daily_seed: Option<u64>,
+    profile: Option<ListeningProfileInput>,
+    discovery_intensity: Option<f32>,
+    randomness_intensity: Option<f32>,
+    lite: Option<bool>,
+) -> Result<Vec<PlaylistOutput>, String> {
+    let seed_value = seed.unwrap_or_else(|| {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        now.as_secs()
+    });
+    let daily_seed_value = daily_seed.unwrap_or(seed_value);
+    let discovery = discovery_intensity.unwrap_or(0.35).clamp(0.0, 1.0);
+    let randomness = randomness_intensity.unwrap_or(0.3).clamp(0.0, 1.0);
+    let lite_flag = lite.unwrap_or(false);
+
+    Ok(generate_playlists(
+        songs,
+        seed_value,
+        daily_seed_value,
+        profile,
+        discovery,
+        randomness,
+        lite_flag,
+    ))
+}

@@ -1,6 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
-import clsx from 'clsx';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
+import { IconButton, Surface } from '@/components/ui';
 
 interface AlbumCardProps {
   title: string;
@@ -22,18 +22,22 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
     }
   };
 
+  // A nested info button makes a real <button> invalid HTML, so only then fall back to role="button".
+  const clickTargetProps = onInfo
+    ? { role: 'button', tabIndex: 0, onKeyDown: handleKeyDown }
+    : { type: 'button' as const };
+
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <Surface
+      as={onInfo ? 'div' : 'button'}
+      variant="raised-sm"
+      radius="md"
+      interactive
       onClick={onClick}
-      onKeyDown={handleKeyDown}
-      className={clsx(
-        'song-card-surface group flex min-h-[208px] w-full flex-col rounded-card p-3 text-left',
-        'transition-all duration-150 ease-smooth hover:-translate-y-px focus:outline-none focus:ring-1 focus:ring-amply-accent/40',
-      )}
+      className="group flex min-h-[208px] w-full flex-col p-3 text-left"
+      {...clickTargetProps}
     >
-      <div className="group relative h-[148px] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b2233] via-[#171b24] to-[#12151c]">
+      <div className="neu-well relative h-[148px] w-full overflow-hidden rounded-sm">
         <ArtworkImage
           src={artwork}
           alt={title}
@@ -41,23 +45,23 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
           placeholderContent={<span className="text-xs uppercase tracking-[0.14em] text-amply-textMuted">Amply</span>}
         />
         {onInfo ? (
-          <button
-            type="button"
+          <IconButton
+            name="info"
+            label="View tracklist"
+            size="xs"
+            variant="raised"
             onClick={(event) => {
               event.stopPropagation();
               onInfo();
             }}
-            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/40 text-[11px] font-semibold text-white/80 opacity-0 transition-opacity duration-200 ease-smooth group-hover:opacity-100"
-            aria-label="View tracklist"
-          >
-            i
-          </button>
+            className="absolute right-2 top-2 opacity-0 transition-opacity duration-200 ease-smooth focus-visible:opacity-100 group-hover:opacity-100"
+          />
         ) : null}
       </div>
       <p className="mt-2.5 truncate text-[14px] font-semibold text-amply-textPrimary">{title}</p>
       <p className="truncate text-[12px] text-amply-textSecondary">{subtitle}</p>
       {meta ? <p className="mt-1 text-[11px] text-amply-textMuted">{meta}</p> : null}
-    </div>
+    </Surface>
   );
 };
 

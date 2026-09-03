@@ -18,13 +18,62 @@ interface AudioSpectrumEvent {
 
 const BAND_COUNT = 8;
 
-const themeColors: Record<VisualTheme, [string, string, string]> = {
-  ember: ['255,112,30', '255,158,72', '255,207,148'],
-  aurora: ['62,204,175', '92,139,244', '211,105,196'],
-  mono: ['92,88,84', '145,139,132', '205,198,190'],
+/** Comma-separated "r,g,b" triplet, ready to drop into `rgba(...)` for canvas drawing. */
+type Triplet = string;
+type Palette = [Triplet, Triplet, Triplet];
+type Palettes = Record<VisualTheme, Palette>;
+
+/** Used only when the design tokens cannot be read (no document, or a token is unset). */
+const NEUTRAL_TRIPLET: Triplet = '128,128,128';
+
+const FALLBACK_PALETTES: Palettes = {
+  ember: [NEUTRAL_TRIPLET, NEUTRAL_TRIPLET, NEUTRAL_TRIPLET],
+  aurora: [NEUTRAL_TRIPLET, NEUTRAL_TRIPLET, NEUTRAL_TRIPLET],
+  mono: [NEUTRAL_TRIPLET, NEUTRAL_TRIPLET, NEUTRAL_TRIPLET],
 };
 
-const rgba = (color: string, alpha: number): string => `rgba(${color},${alpha})`;
+/** Design tokens are stored as "r g b"; normalise to "r,g,b" for the rgba() helper below. */
+const readTokenTriplet = (styles: CSSStyleDeclaration, token: string): Triplet => {
+  const parts = styles.getPropertyValue(token).trim().split(/[\s,]+/).filter(Boolean);
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(Number(part)))) {
+    return NEUTRAL_TRIPLET;
+  }
+  return parts.map((part) => Math.round(Number(part))).join(',');
+};
+
+const lightenTriplet = (triplet: Triplet, amount: number): Triplet =>
+  triplet
+    .split(',')
+    .map((part) => {
+      const channel = Number(part);
+      return Math.round(channel + (255 - channel) * amount);
+    })
+    .join(',');
+
+/**
+ * Builds the three visual palettes from the live design tokens so the visualizer follows the
+ * light/dark theme instead of carrying its own colour literals.
+ */
+const readPalettes = (): Palettes => {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
+    return FALLBACK_PALETTES;
+  }
+  const styles = getComputedStyle(document.documentElement);
+  const accent = readTokenTriplet(styles, '--amply-accent');
+  const accentHover = readTokenTriplet(styles, '--amply-accent-hover');
+  const info = readTokenTriplet(styles, '--amply-info');
+  const success = readTokenTriplet(styles, '--amply-success');
+  const textMuted = readTokenTriplet(styles, '--amply-text-muted');
+  const textSecondary = readTokenTriplet(styles, '--amply-text-secondary');
+  const textPrimary = readTokenTriplet(styles, '--amply-text-primary');
+  return {
+    ember: [accent, accentHover, lightenTriplet(accent, 0.45)],
+    aurora: [success, info, accent],
+    mono: [textMuted, textSecondary, textPrimary],
+  };
+};
+
+const rgba = (color: Triplet, alpha: number): string => `rgba(${color},${alpha})`;
 
 const roundedBar = (
   context: CanvasRenderingContext2D,
@@ -70,7 +119,7 @@ const drawEmber = (
   width: number,
   height: number,
   bands: Float32Array,
-  colors: [string, string, string],
+  colors: Palette,
 ): void => {
   const count = 17;
   const gap = Math.max(7, Math.min(15, width / 70));
@@ -101,7 +150,7 @@ const drawAurora = (
   width: number,
   height: number,
   bands: Float32Array,
-  colors: [string, string, string],
+  colors: Palette,
   time: number,
 ): void => {
   const centerY = height * 0.52;
@@ -140,7 +189,7 @@ const drawMono = (
   width: number,
   height: number,
   bands: Float32Array,
-  colors: [string, string, string],
+  colors: Palette,
   time: number,
 ): void => {
   const centerX = width / 2;
@@ -176,6 +225,23 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
   const [target] = useState(() => new Float32Array(BAND_COUNT));
   const [smoothed] = useState(() => new Float32Array(BAND_COUNT));
   const sizeRef = useRef({ width: 1, height: 1 });
+  // Palettes are derived from the design tokens and refreshed when the app theme flips, so the
+  // draw loop reads them through a ref instead of restarting.
+  const palettesRef = useRef<Palettes>(FALLBACK_PALETTES);
+
+  useEffect(() => {
+    palettesRef.current = readPalettes();
+    if (typeof MutationObserver === 'undefined') {
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      palettesRef.current = readPalettes();
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   // Spectrum events and canvas sizing are subscribed once per activation.
   useEffect(() => {
@@ -265,7 +331,7 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
       energy /= BAND_COUNT;
 
       drawTint(context, displayWidth, displayHeight, tint, energy);
-      const colors = themeColors[theme];
+      const colors = palettesRef.current[theme];
       if (theme === 'ember') {
         drawEmber(context, displayWidth, displayHeight, smoothed, colors);
       } else if (theme === 'aurora') {

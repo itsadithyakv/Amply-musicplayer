@@ -5,6 +5,8 @@ import clsx from 'clsx';
 const MAX_LOADED_SRC_KEYS = 1200;
 const loadedSrcKeys = new Set<string>();
 
+/** Artwork placeholder: a sunken well in the deep background tone. */
+const placeholderClass = 'neu-well flex items-center justify-center text-amply-textMuted';
 
 const getSrcCacheKey = (src: string): string => {
   if (src.length <= 512) {
@@ -119,10 +121,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
   if (!normalizedSrc && placeholderContent) {
     return (
       <div
-        className={clsx(
-          'flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900',
-          placeholderClassName || className,
-        )}
+        className={clsx(placeholderClass, placeholderClassName || className)}
         role="img"
         aria-label={alt}
       >
@@ -134,14 +133,11 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
   if ((!normalizedSrc || error) && !placeholderContent) {
     return (
       <div
-        className={clsx(
-          'flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900',
-          placeholderClassName || className,
-        )}
+        className={clsx(placeholderClass, placeholderClassName || className)}
         role="img"
         aria-label={alt}
       >
-        <span className="text-xs text-zinc-600">No image</span>
+        <span className="text-xs">No image</span>
       </div>
     );
   }
@@ -149,10 +145,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
   if (error && placeholderContent) {
     return (
       <div
-        className={clsx(
-          'flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900',
-          placeholderClassName || className,
-        )}
+        className={clsx(placeholderClass, placeholderClassName || className)}
         role="img"
         aria-label={alt}
       >
@@ -162,19 +155,10 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
   }
 
   return (
-    <div
-      className={clsx('relative overflow-hidden', className)}
-      style={{
-        backgroundColor: !isLoaded && !error ? 'rgba(0,0,0,0.2)' : undefined,
-      }}
-    >
+    <div className={clsx('relative overflow-hidden', !isLoaded && !error && 'bg-amply-bgDeep', className)}>
       {!isLoaded && !error && (
         <div
-          className={clsx(
-            'absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-900 to-zinc-950',
-            pulse && 'animate-pulse',
-            placeholderClassName,
-          )}
+          className={clsx('neu-well absolute inset-0', pulse && 'animate-pulse', placeholderClassName)}
           aria-hidden="true"
         />
       )}

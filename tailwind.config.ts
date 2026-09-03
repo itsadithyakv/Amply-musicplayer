@@ -23,17 +23,6 @@ export default {
           success: rgb('success'),
           info: rgb('info'),
           backdrop: rgb('backdrop'),
-          // LEGACY aliases — removed at the end of Phase A6 (page migrations).
-          bgPrimary: rgb('bg'),
-          bgSecondary: rgb('bg-deep'),
-          surface: rgb('bg'),
-          panel: rgb('bg'),
-          card: rgb('bg'),
-          hover: rgb('bg-deep'),
-          border: rgb('edge'),
-          accentBlue: rgb('info'),
-          accentGreen: rgb('success'),
-          accentPurple: rgb('info'),
         },
       },
       // Replaces Tailwind's default radius scale with the four-step neumorphic scale.
@@ -63,10 +52,6 @@ export default {
         pressed: 'var(--neu-pressed-shadow)',
         'pressed-sm': 'var(--neu-pressed-sm-shadow)',
         flat: 'var(--neu-flat-shadow)',
-        // LEGACY aliases — removed at the end of Phase A6.
-        card: 'var(--neu-raised-sm-shadow)',
-        lift: 'var(--neu-raised-shadow)',
-        glow: '0 0 0 1px rgb(var(--amply-accent) / 0.25)',
       },
       transitionTimingFunction: {
         smooth: 'var(--ease-smooth)',

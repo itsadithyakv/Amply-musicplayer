@@ -82,23 +82,6 @@ const resolvePerfMode = (): PerfMode => {
   return storedPerfMode ?? defaultPerfMode;
 };
 
-/** Override the perf mode (persisted in localStorage). Pass `null` to fall back to the build default. */
-export const setPerfMode = (mode: PerfMode | null): void => {
-  storedPerfMode = mode;
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    if (mode) {
-      window.localStorage.setItem(PERF_MODE_STORAGE_KEY, mode);
-    } else {
-      window.localStorage.removeItem(PERF_MODE_STORAGE_KEY);
-    }
-  } catch {
-    // localStorage unavailable; the in-memory override still applies for this session.
-  }
-};
-
 const shouldCapture = (mode = resolvePerfMode()): boolean => mode !== 'off';
 const shouldPersist = (mode = resolvePerfMode()): boolean => mode === 'full';
 
@@ -323,11 +306,6 @@ export const recordSongArrayReplacement = (reason: string, data?: Record<string,
     category: 'event',
     data: { reason, ...(data ?? {}) },
   });
-};
-
-export const subscribePerformanceSnapshot = (listener: () => void): (() => void) => {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
 };
 
 export const endPerfMeasure = (name: string, data?: Record<string, unknown>): void => {

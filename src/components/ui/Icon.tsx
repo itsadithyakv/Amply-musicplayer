@@ -184,4 +184,3 @@ export const Icon: FC<IconProps> = ({ name, size = 16, strokeWidth = 1.8, label,
   );
 };
 
-export default Icon;

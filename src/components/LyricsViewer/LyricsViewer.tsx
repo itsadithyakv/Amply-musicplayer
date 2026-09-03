@@ -1,7 +1,8 @@
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Song } from '@/types/music';
+import { Badge, Card, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
 import {
   readCachedLyrics,
   loadLyrics,
@@ -53,6 +54,31 @@ const buildChoicePreview = (candidate: LyricsCandidate): string => {
   }
 
   return firstLine.length > 96 ? `${firstLine.slice(0, 96)}...` : firstLine;
+};
+
+const OFFSET_STEP_MS = 250;
+
+const formatOffset = (offsetMs: number): string => {
+  const seconds = (Math.abs(offsetMs) / 1000).toFixed(2);
+  const sign = offsetMs > 0 ? '+' : offsetMs < 0 ? '-' : '';
+  return `Sync ${sign}${seconds}s`;
+};
+
+/**
+ * Artwork tints are cached as `rgb(r, g, b)` (older caches may hold a hex colour). Returns the
+ * channels so the tint can be re-emitted with a CSS alpha, which a string suffix cannot do.
+ */
+const parseTintChannels = (tint: string): [number, number, number] | null => {
+  const rgbMatch = tint.match(/rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})/i);
+  if (rgbMatch) {
+    return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
+  }
+  const hexMatch = tint.match(/^#([0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const value = Number.parseInt(hexMatch[1], 16);
+    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+  }
+  return null;
 };
 
 const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: LyricsViewerProps) => {
@@ -444,6 +470,17 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
 
   const lines = useMemo(() => (Array.isArray(lyrics?.lines) ? lyrics!.lines : []), [lyrics]);
 
+  // A faint wash of the artwork colour over the pressed well; the surface itself stays `bg-amply-bg`.
+  const tintStyle = useMemo<CSSProperties | undefined>(() => {
+    const channels = artworkTint ? parseTintChannels(artworkTint) : null;
+    if (!channels) {
+      return undefined;
+    }
+    return {
+      backgroundImage: `radial-gradient(ellipse at top, rgb(${channels.join(' ')} / 0.12), transparent 60%)`,
+    };
+  }, [artworkTint]);
+
   useEffect(() => {
     lineRefs.current = [];
   }, [lyrics?.raw]);
@@ -532,43 +569,36 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   }
 
   if (active && !surfaceReady) {
-    return (
-      <div className={clsx('rounded-card border border-amply-border bg-amply-card p-4', fullHeight && 'h-full')} />
-    );
+    return <Card className={clsx(fullHeight && 'h-full')} />;
   }
 
   if (active && !idleReady) {
     return (
-      <div className={clsx('rounded-card border border-amply-border bg-amply-card p-4', fullHeight && 'h-full')}>
+      <Card className={clsx(fullHeight && 'h-full')}>
         {interactionFeedback.visible ? null : <p className="text-[12px] text-amply-textMuted">Preparing lyrics...</p>}
-      </div>
+      </Card>
     );
   }
 
   if (loading) {
     return (
-      <div
-        className={clsx(
-          'flex items-center gap-3 rounded-card border border-amply-border bg-amply-card p-4 text-[13px] text-amply-textSecondary',
-          fullHeight && 'h-full',
-        )}
-      >
+      <Card className={clsx('flex items-center gap-3 text-[13px] text-amply-textSecondary', fullHeight && 'h-full')}>
         {interactionFeedback.visible ? null : (
           <>
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-amply-border border-t-amply-accent" />
+            <Spinner size={16} label="Loading lyrics" />
             <span>Loading lyrics...</span>
           </>
         )}
-      </div>
+      </Card>
     );
   }
 
   if (choices.length) {
     return (
-      <div className={clsx('space-y-3 rounded-card border border-amply-border bg-amply-card p-4', fullHeight && 'h-full overflow-y-auto')}>
+      <Card className={clsx('space-y-3', fullHeight && 'h-full overflow-y-auto')}>
         <div className="space-y-1">
           <p className="text-[14px] font-medium text-amply-textPrimary">Multiple lyric matches found</p>
-          <p className="text-[12px] text-amply-textSecondary">Pick the correct one. Your selection will be cached for offline playback.</p>
+          <Meta>Pick the correct one. Your selection will be cached for offline playback.</Meta>
         </div>
 
         <div className="space-y-2">
@@ -597,123 +627,149 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
                     setSavingChoiceId(null);
                   }
                 }}
-                className="w-full rounded-lg border border-amply-border bg-amply-bgSecondary p-3 text-left transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-70"
+                className={clsx(
+                  surfaceClass('flat'),
+                  'neu-interactive block w-full rounded-md p-3 text-left hover:neu-raised-sm disabled:cursor-not-allowed disabled:opacity-70',
+                )}
               >
                 <div className="flex items-center justify-between gap-3">
                   <p className="truncate text-[13px] font-medium text-amply-textPrimary">{candidate.trackName}</p>
-                  <span className={`text-[11px] ${candidate.isSynced ? 'text-amply-accent' : 'text-amply-textMuted'}`}>
-                    {candidate.isSynced ? 'Synced' : 'Unsynced'}
-                  </span>
+                  <Badge tone={candidate.isSynced ? 'accent' : 'neutral'}>{candidate.isSynced ? 'Synced' : 'Unsynced'}</Badge>
                 </div>
-                <p className="mt-1 truncate text-[12px] text-amply-textSecondary">{buildChoiceSubtitle(candidate)}</p>
-                <p className="mt-1 truncate text-[12px] text-amply-textMuted">{isSaving ? 'Saving selection...' : buildChoicePreview(candidate)}</p>
+                <Meta className="mt-1 truncate">{buildChoiceSubtitle(candidate)}</Meta>
+                <Meta className="mt-1 truncate text-amply-textMuted">{isSaving ? 'Saving selection...' : buildChoicePreview(candidate)}</Meta>
               </button>
             );
           })}
         </div>
 
-        {error ? <p className="text-[12px] text-red-400">{error}</p> : null}
-      </div>
+        {error ? <p className="text-[12px] text-amply-danger">{error}</p> : null}
+      </Card>
     );
   }
 
   if (!lyrics || error) {
     return (
-      <div className={clsx('rounded-card border border-amply-border bg-amply-card p-4', fullHeight && 'h-full')}>
+      <Card className={clsx(fullHeight && 'h-full')}>
         <p className="text-[13px] text-amply-textMuted">{error ?? 'No lyrics available.'}</p>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className={clsx('relative isolate space-y-3 overflow-hidden', fullHeight && 'flex h-full min-h-0 flex-col')}>
-      {lyricsVisualsEnabled && !getFlag('lowPerf') ? (
-        <LyricsVisualizer active={active} isPlaying={isPlaying} theme={lyricsVisualTheme} tint={artworkTint} />
-      ) : null}
-      <div
-        ref={lyricsContainerRef}
-        onScroll={() => {
-          if (!lyricsContainerRef.current) {
-            return;
-          }
-
-          const container = lyricsContainerRef.current;
-          if (programmaticScrollRef.current !== null) {
-            return;
-          }
-          const node = lineRefs.current[currentIndex];
-          if (!node) {
-            return;
-          }
-
-          const distance = Math.abs(node.offsetTop - container.scrollTop);
-          const disengageThreshold = container.clientHeight * 0.6;
-          const reengageThreshold = container.clientHeight * 0.25;
-          const lock = autoScrollLockRef.current;
-
-          if (distance > disengageThreshold && autoScroll) {
-            setAutoScroll(false);
-          } else if (!autoScroll && distance < reengageThreshold) {
-            if (lock) {
+    <div className={clsx('space-y-3', fullHeight && 'flex h-full min-h-0 flex-col')}>
+      <Surface
+        variant="pressed"
+        radius="lg"
+        className={clsx('relative isolate flex flex-col overflow-hidden bg-amply-bg', fullHeight ? 'min-h-0 flex-1' : 'h-[420px]')}
+        style={tintStyle}
+      >
+        {lyricsVisualsEnabled && !getFlag('lowPerf') ? (
+          <LyricsVisualizer active={active} isPlaying={isPlaying} theme={lyricsVisualTheme} tint={artworkTint} />
+        ) : null}
+        <div
+          ref={lyricsContainerRef}
+          onScroll={() => {
+            if (!lyricsContainerRef.current) {
               return;
             }
-            autoScrollLockRef.current = window.setTimeout(() => {
-              setAutoScroll(true);
-              autoScrollLockRef.current = null;
-            }, 600);
-          }
-        }}
-        className={clsx(
-          'lyrics-surface relative z-10 isolate overflow-y-auto px-[clamp(24px,7vw,96px)] scroll-smooth',
-          fullHeight ? 'min-h-0 flex-1' : 'h-[420px]',
-        )}
-      >
-        <div className="relative z-10 mx-auto w-full max-w-[760px] space-y-6 py-[22vh] text-center">
-          {lines.map((line, index) => {
-            const isCurrent = lyrics.isSynced && index === currentIndex;
-            const isPast = lyrics.isSynced && currentIndex >= 0 && index < currentIndex;
-            const isClickable = lyrics.isSynced && line.timeMs !== null;
 
-            return (
-              <p
-                key={`${line.timeMs ?? 'plain'}-${index}`}
-                ref={(node) => {
-                  lineRefs.current[index] = node;
-                }}
-                role={isClickable ? 'button' : undefined}
-                tabIndex={isClickable ? 0 : undefined}
-                onClick={() => {
-                  if (isClickable) {
-                    usePlayerStore.getState().seekTo(line.timeMs! / 1000);
-                    setAutoScroll(true);
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (isClickable && (event.key === 'Enter' || event.key === ' ')) {
-                    event.preventDefault();
-                    usePlayerStore.getState().seekTo(line.timeMs! / 1000);
-                    setAutoScroll(true);
-                  }
-                }}
-                className={[
-                  'mx-auto max-w-full break-words text-center leading-[1.28] [text-wrap:balance] transition-[transform,opacity,color] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]',
-                  isCurrent
-                    ? 'translate-y-0 scale-[1.02] text-[clamp(20px,2.6vw,30px)] font-bold tracking-[-0.025em] text-amply-textPrimary'
-                    : isPast
-                      ? '-translate-y-[1px] text-[clamp(14px,1.8vw,20px)] text-amply-textSecondary opacity-80'
-                      : lyrics.isSynced
-                        ? 'translate-y-[2px] text-[clamp(14px,1.8vw,20px)] text-amply-textMuted opacity-60'
-                        : 'text-[clamp(14px,1.8vw,20px)] text-amply-textSecondary',
-                  isClickable ? 'cursor-pointer hover:text-amply-textPrimary' : '',
-                ].join(' ')}
-              >
-                {line.text || '...'}
-              </p>
-            );
-          })}
+            const container = lyricsContainerRef.current;
+            if (programmaticScrollRef.current !== null) {
+              return;
+            }
+            const node = lineRefs.current[currentIndex];
+            if (!node) {
+              return;
+            }
+
+            const distance = Math.abs(node.offsetTop - container.scrollTop);
+            const disengageThreshold = container.clientHeight * 0.6;
+            const reengageThreshold = container.clientHeight * 0.25;
+            const lock = autoScrollLockRef.current;
+
+            if (distance > disengageThreshold && autoScroll) {
+              setAutoScroll(false);
+            } else if (!autoScroll && distance < reengageThreshold) {
+              if (lock) {
+                return;
+              }
+              autoScrollLockRef.current = window.setTimeout(() => {
+                setAutoScroll(true);
+                autoScrollLockRef.current = null;
+              }, 600);
+            }
+          }}
+          className="lyrics-surface relative z-10 min-h-0 flex-1 overflow-y-auto px-[clamp(24px,7vw,96px)] scroll-smooth"
+        >
+          <div className="relative z-10 mx-auto w-full max-w-[760px] space-y-6 py-[22vh] text-center">
+            {lines.map((line, index) => {
+              const isCurrent = lyrics.isSynced && index === currentIndex;
+              const isPast = lyrics.isSynced && currentIndex >= 0 && index < currentIndex;
+              const isClickable = lyrics.isSynced && line.timeMs !== null;
+
+              return (
+                <p
+                  key={`${line.timeMs ?? 'plain'}-${index}`}
+                  ref={(node) => {
+                    lineRefs.current[index] = node;
+                  }}
+                  role={isClickable ? 'button' : undefined}
+                  tabIndex={isClickable ? 0 : undefined}
+                  onClick={() => {
+                    if (isClickable) {
+                      usePlayerStore.getState().seekTo(line.timeMs! / 1000);
+                      setAutoScroll(true);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (isClickable && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      usePlayerStore.getState().seekTo(line.timeMs! / 1000);
+                      setAutoScroll(true);
+                    }
+                  }}
+                  className={clsx(
+                    'mx-auto max-w-full break-words text-center leading-[1.28] [text-wrap:balance] transition-[transform,opacity,color] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]',
+                    isCurrent
+                      ? 'translate-y-0 scale-[1.02] text-[clamp(20px,2.6vw,30px)] font-bold tracking-[-0.025em] text-amply-textPrimary'
+                      : isPast
+                        ? '-translate-y-[1px] text-[clamp(14px,1.8vw,20px)] text-amply-textSecondary opacity-80'
+                        : lyrics.isSynced
+                          ? 'translate-y-[2px] text-[clamp(14px,1.8vw,20px)] text-amply-textMuted opacity-60'
+                          : 'text-[clamp(14px,1.8vw,20px)] text-amply-textSecondary',
+                    isClickable && 'cursor-pointer hover:text-amply-textPrimary',
+                  )}
+                >
+                  {line.text || '...'}
+                </p>
+              );
+            })}
+          </div>
         </div>
-      </div>
-      {!lyrics.isSynced ? <p className="text-center text-[12px] text-amply-textMuted">Unsynced</p> : null}
+      </Surface>
+
+      {lyrics.isSynced ? (
+        <div className="flex shrink-0 items-center justify-center gap-2">
+          <IconButton
+            name="minus"
+            label="Shift lyrics later"
+            size="xs"
+            variant="ghost"
+            onClick={() => void handleOffsetChange(-OFFSET_STEP_MS)}
+          />
+          <Meta className="min-w-[88px] text-center tabular-nums text-amply-textMuted">{formatOffset(offsetMs)}</Meta>
+          <IconButton
+            name="plus"
+            label="Shift lyrics earlier"
+            size="xs"
+            variant="ghost"
+            onClick={() => void handleOffsetChange(OFFSET_STEP_MS)}
+          />
+        </div>
+      ) : (
+        <Meta className="shrink-0 text-center text-amply-textMuted">Unsynced</Meta>
+      )}
     </div>
   );
 };
