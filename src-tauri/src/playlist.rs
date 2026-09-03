@@ -411,6 +411,7 @@ fn shuffle_with_spacing(songs: Vec<SongInput>, seed: u64, salt: &str) -> Vec<Son
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn curate_from_pool(
     seed: u64,
     salt: &str,
@@ -493,7 +494,7 @@ fn generate_small_library_playlists(
     let all_mix = shuffle_with_spacing(songs.clone(), seed, "small-library");
     let all_mix = cap_variety(all_mix, max_per_album, max_per_artist, true);
 
-    let favorites_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.favorite).collect();
+    let favorites_pool: Vec<SongInput> = songs.iter().filter(|&s| s.favorite).cloned().collect();
     let favorites = if favorites_pool.is_empty() {
         Vec::new()
     } else {
@@ -516,7 +517,7 @@ fn generate_small_library_playlists(
 
     let recently_added_pool: Vec<SongInput> = {
         let mut list = songs.clone();
-        list.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+        list.sort_by_key(|song| std::cmp::Reverse(song.added_at));
         list.truncate(120.min(list.len()));
         list
     };
@@ -543,14 +544,12 @@ fn generate_small_library_playlists(
     let on_repeat_pool: Vec<SongInput> = {
         let threshold = now - 21 * DAY_SEC;
         let recent: Vec<SongInput> = songs
-            .iter()
-            .cloned()
-            .filter(|s| s.last_played.unwrap_or(0) >= threshold)
+            .iter().filter(|&s| s.last_played.unwrap_or(0) >= threshold).cloned()
             .collect();
         if recent.len() >= 12 {
             recent
         } else {
-            songs.iter().cloned().filter(|s| s.play_count > 0).collect()
+            songs.iter().filter(|&s| s.play_count > 0).cloned().collect()
         }
     };
     let on_repeat = cap_variety(
@@ -576,11 +575,9 @@ fn generate_small_library_playlists(
     let rediscover_pool: Vec<SongInput> = {
         let cutoff = now - 30 * DAY_SEC;
         let mut list: Vec<SongInput> = songs
-            .iter()
-            .cloned()
-            .filter(|s| s.last_played.unwrap_or(0) < cutoff)
+            .iter().filter(|&s| s.last_played.unwrap_or(0) < cutoff).cloned()
             .collect();
-        list.sort_by(|a, b| a.last_played.unwrap_or(0).cmp(&b.last_played.unwrap_or(0)));
+        list.sort_by_key(|a| a.last_played.unwrap_or(0));
         list.truncate(120.min(list.len()));
         list
     };
@@ -604,7 +601,7 @@ fn generate_small_library_playlists(
         true,
     );
 
-    let explore_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.play_count <= 2).collect();
+    let explore_pool: Vec<SongInput> = songs.iter().filter(|&s| s.play_count <= 2).cloned().collect();
     let explore = cap_variety(
         curate_from_pool(
             seed,
@@ -938,7 +935,7 @@ fn build_artwork_set(
             Some((art.to_string(), artwork_album_key(song), score))
         })
         .collect();
-    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+    candidates.sort_by_key(|entry| std::cmp::Reverse(entry.2));
 
     let mut seen_art = std::collections::HashSet::new();
     let mut seen_album = std::collections::HashSet::new();
@@ -1138,31 +1135,29 @@ pub fn generate_playlists(
 
     let recently_added_pool: Vec<SongInput> = {
         let mut list = songs.clone();
-        list.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+        list.sort_by_key(|song| std::cmp::Reverse(song.added_at));
         list.truncate(240.min(list.len()));
         list
     };
     let most_played_pool: Vec<SongInput> = {
         let mut list = songs.clone();
-        list.sort_by(|a, b| b.play_count.cmp(&a.play_count));
+        list.sort_by_key(|song| std::cmp::Reverse(song.play_count));
         list.truncate(300.min(list.len()));
         list
     };
     let rediscover_pool: Vec<SongInput> = {
         let cutoff = now - 45 * DAY_SEC;
         let mut list: Vec<SongInput> = songs
-            .iter()
-            .cloned()
-            .filter(|s| s.last_played.unwrap_or(0) < cutoff)
+            .iter().filter(|&s| s.last_played.unwrap_or(0) < cutoff).cloned()
             .collect();
-        list.sort_by(|a, b| a.last_played.unwrap_or(0).cmp(&b.last_played.unwrap_or(0)));
+        list.sort_by_key(|a| a.last_played.unwrap_or(0));
         list.truncate(240.min(list.len()));
         list
     };
-    let favorites_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.favorite).collect();
+    let favorites_pool: Vec<SongInput> = songs.iter().filter(|&s| s.favorite).cloned().collect();
     let recently_played: Vec<SongInput> = {
-        let mut list: Vec<SongInput> = songs.iter().cloned().filter(|s| s.last_played.is_some()).collect();
-        list.sort_by(|a, b| b.last_played.unwrap_or(0).cmp(&a.last_played.unwrap_or(0)));
+        let mut list: Vec<SongInput> = songs.iter().filter(|&s| s.last_played.is_some()).cloned().collect();
+        list.sort_by_key(|song| std::cmp::Reverse(song.last_played.unwrap_or(0)));
         list.truncate(120.min(list.len()));
         cap_by_album(list, max_per_album)
     };
@@ -1172,8 +1167,8 @@ pub fn generate_playlists(
 
     let on_repeat_pool: Vec<SongInput> = {
         let threshold = now - 14 * DAY_SEC;
-        let recent: Vec<SongInput> = songs.iter().cloned().filter(|s| s.last_played.unwrap_or(0) >= threshold).collect();
-        if recent.len() >= 20 { recent } else { songs.iter().cloned().filter(|s| s.play_count > 0).collect() }
+        let recent: Vec<SongInput> = songs.iter().filter(|&s| s.last_played.unwrap_or(0) >= threshold).cloned().collect();
+        if recent.len() >= 20 { recent } else { songs.iter().filter(|&s| s.play_count > 0).cloned().collect() }
     };
     let on_repeat = curate_from_pool(seed, "on-repeat", playlist_len, &on_repeat_pool, now, &profile, 0.2, randomness, "prefer", 7.0, false, 30.0);
     let on_repeat = cap_variety(on_repeat, max_per_album, max_per_artist, cap_artists);
@@ -1190,23 +1185,23 @@ pub fn generate_playlists(
     let favorites = curate_from_pool(seed, "favorites", playlist_len, &favorites_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
     let favorites = cap_variety(favorites, max_per_album, max_per_artist, cap_artists);
 
-    let quick_hits_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.duration > 0.0 && s.duration <= 180.0).collect();
+    let quick_hits_pool: Vec<SongInput> = songs.iter().filter(|&s| s.duration > 0.0 && s.duration <= 180.0).cloned().collect();
     let quick_hits = curate_from_pool(seed, "quick-hits", playlist_len, &quick_hits_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
     let quick_hits = cap_variety(quick_hits, max_per_album, max_per_artist, cap_artists);
 
-    let long_sessions_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.duration >= 360.0).collect();
+    let long_sessions_pool: Vec<SongInput> = songs.iter().filter(|&s| s.duration >= 360.0).cloned().collect();
     let long_sessions = curate_from_pool(seed, "long-sessions", playlist_len, &long_sessions_pool, now, &profile, discovery, randomness, "avoid", 5.0, false, 30.0);
     let long_sessions = cap_variety(long_sessions, max_per_album, max_per_artist, cap_artists);
 
-    let deep_cuts_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.play_count <= 1 && s.added_at < now - 21 * DAY_SEC).collect();
+    let deep_cuts_pool: Vec<SongInput> = songs.iter().filter(|&s| s.play_count <= 1 && s.added_at < now - 21 * DAY_SEC).cloned().collect();
     let deep_cuts = curate_from_pool(seed, "deep-cuts", playlist_len, &deep_cuts_pool, now, &profile, discovery, randomness, "avoid", 45.0, false, 30.0);
     let deep_cuts = cap_variety(deep_cuts, max_per_album, max_per_artist, cap_artists);
 
-    let loved_played_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.favorite && s.play_count > 0).collect();
+    let loved_played_pool: Vec<SongInput> = songs.iter().filter(|&s| s.favorite && s.play_count > 0).cloned().collect();
     let loved_played = curate_from_pool(seed, "loved-played", playlist_len, &loved_played_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
     let loved_played = cap_variety(loved_played, max_per_album, max_per_artist, cap_artists);
 
-    let explore_pool: Vec<SongInput> = songs.iter().cloned().filter(|s| s.play_count <= 4).collect();
+    let explore_pool: Vec<SongInput> = songs.iter().filter(|&s| s.play_count <= 4).cloned().collect();
     let explore = curate_from_pool(seed, "explore", playlist_len, &explore_pool, now, &profile, discovery, randomness, "avoid", 4.0, false, 30.0);
     let explore = cap_variety(explore, max_per_album, max_per_artist, cap_artists);
 
@@ -1258,6 +1253,7 @@ pub fn generate_playlists(
         }
 
         // Mood mixes (simple keyword scoring)
+        #[allow(clippy::type_complexity)]
         let moods: Vec<(&str, &str, &str, &[&str], &[&str])> = vec![
             ("happy", "Happy Mix", "Upbeat songs to lift the mood.", &["pop","dance","disco","funk","edm","electronic"], &["happy","joy","smile","sun","bright","good"]),
             ("sad", "Sad Mix", "Slower, mellow tracks for quieter moments.", &["acoustic","ballad","ambient","lofi","lo-fi","piano"], &["sad","cry","alone","lonely","tears","heart"]),

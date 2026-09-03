@@ -447,8 +447,7 @@ fn normalize_artist(value: &str) -> String {
     let stripped = PARENS_RE.replace_all(value, " ");
     let stripped = FEAT_RE.replace_all(&stripped, " ");
     let stripped = stripped
-        .replace('&', ",")
-        .replace('+', ",")
+        .replace(['&', '+'], ",")
         .replace("×", ",")
         .replace(" x ", ",")
         .replace(" & ", ",");
@@ -459,8 +458,7 @@ fn split_artists(value: &str) -> Vec<String> {
     let stripped = PARENS_RE.replace_all(value, " ");
     let stripped = FEAT_RE.replace_all(&stripped, " ");
     let stripped = stripped
-        .replace('&', ",")
-        .replace('+', ",")
+        .replace(['&', '+'], ",")
         .replace("×", ",")
         .replace(" x ", ",")
         .replace(" & ", ",");
@@ -635,10 +633,7 @@ fn split_artist_names(artist: &str) -> Vec<String> {
         .replace('+', ",")
         .replace("×", ",")
         .replace(" x ", ",")
-        .replace('&', ",")
-        .replace(';', ",")
-        .replace('/', ",")
-        .replace('|', ",");
+        .replace(['&', ';', '/', '|'], ",");
     let mut parts: Vec<String> = Vec::new();
     for part in normalized.split(',') {
         for piece in split_simple_and(part) {
@@ -844,7 +839,7 @@ struct WikipediaExtractPage {
 }
 
 fn wikipedia_summary_url(title: &str) -> Result<Url, String> {
-    let mut url = Url::parse("https://en.wikipedia.org/api/rest_v1/page/summary/").map_err(|err| err.to_string())?;
+    let mut url = Url::parse("https://en.wikipedia.org/api/rest_v1/page/summary").map_err(|err| err.to_string())?;
     url.path_segments_mut()
         .map_err(|_| "bad url".to_string())?
         .push(title);
@@ -1235,7 +1230,7 @@ async fn fetch_itunes_track_artwork_url(song: &SongInput) -> Result<Option<Strin
         .map(|hit| (score_itunes_hit(song, &hit), hit))
         .filter(|(score, hit)| *score >= 7 && hit.artwork_url_100.is_some())
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     Ok(ranked
         .into_iter()
         .find_map(|(_, hit)| hit.artwork_url_100.map(|url| normalize_artwork_url(&url))))
@@ -1265,10 +1260,7 @@ pub async fn load_track_artwork_rust(
         return Ok(Some(cached.clone()));
     }
 
-    let fetched = match fetch_track_artwork_data_url(&song).await {
-        Ok(value) => value,
-        Err(_) => None,
-    };
+    let fetched: Option<String> = fetch_track_artwork_data_url(&song).await.unwrap_or_default();
     if let Some(value) = fetched.clone() {
         cache.insert(key, value.clone());
         write_json(&app, TRACK_ARTWORK_CACHE_PATH, &cache).await?;
@@ -2000,7 +1992,7 @@ async fn fetch_musicbrainz_song_genre(song: &SongInput) -> Result<Option<String>
         let mut hit_genre_scores: HashMap<&'static str, i32> = HashMap::new();
         score_musicbrainz_tags(
             &mut hit_genre_scores,
-            hit.genres.unwrap_or_default().into_iter().chain(hit.tags.unwrap_or_default().into_iter()),
+            hit.genres.unwrap_or_default().into_iter().chain(hit.tags.unwrap_or_default()),
             1,
         );
         for (genre, score) in hit_genre_scores {
@@ -2103,7 +2095,7 @@ async fn fetch_itunes_song_genre(song: &SongInput) -> Result<Option<String>, Str
         .map(|hit| (score_itunes_hit(song, &hit), hit))
         .filter(|(score, _)| *score >= 7)
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     let genre = ranked
         .first()
         .and_then(|(_, hit)| hit.primary_genre_name.clone());
@@ -2469,7 +2461,7 @@ fn rank_candidates(song: &SongInput, candidates: Vec<LyricsCandidate>) -> Vec<Ly
         .into_iter()
         .map(|candidate| (score_candidate(song, &candidate), candidate))
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     ranked.into_iter().map(|(_, candidate)| candidate).take(8).collect()
 }
 

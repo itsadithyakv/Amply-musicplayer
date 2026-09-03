@@ -308,16 +308,16 @@ where
         self.analysis_enabled = true;
         let mut band_values = [0.0; AUDIO_SPECTRUM_BANDS];
         let mut previous_low = 0.0;
-        for index in 0..self.low_pass.len() {
-            self.low_pass[index] += self.alpha[index] * (mono - self.low_pass[index]);
-            band_values[index] = (self.low_pass[index] - previous_low).abs();
-            previous_low = self.low_pass[index];
+        for (index, low_pass) in self.low_pass.iter_mut().enumerate() {
+            *low_pass += self.alpha[index] * (mono - *low_pass);
+            band_values[index] = (*low_pass - previous_low).abs();
+            previous_low = *low_pass;
         }
         band_values[AUDIO_SPECTRUM_BANDS - 1] = (mono - previous_low).abs();
 
-        for index in 0..AUDIO_SPECTRUM_BANDS {
-            let speed = if band_values[index] > self.envelope[index] { 0.34 } else { 0.012 };
-            self.envelope[index] += (band_values[index] - self.envelope[index]) * speed;
+        for (envelope, band_value) in self.envelope.iter_mut().zip(band_values.iter()) {
+            let speed = if *band_value > *envelope { 0.34 } else { 0.012 };
+            *envelope += (*band_value - *envelope) * speed;
         }
 
         self.frames_until_publish = self.frames_until_publish.saturating_sub(1);
@@ -677,6 +677,7 @@ impl NativeAudio {
         self.spectrum.reset();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn load_song(
         &mut self,
         path: String,
@@ -930,11 +931,10 @@ fn to_unix_secs(metadata: &fs::Metadata) -> i64 {
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_else(|| {
-            let now = std::time::SystemTime::now()
+            std::time::SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_secs() as i64)
-                .unwrap_or(0);
-            now
+                .unwrap_or(0)
         })
 }
 
@@ -1061,8 +1061,7 @@ fn clean_title(raw: &str) -> String {
         title = left.to_string();
     }
     for (open, close) in [('[', ']'), ('(', ')'), ('{', '}')] {
-        loop {
-            let Some(start) = title.find(open) else { break };
+        while let Some(start) = title.find(open) {
             let Some(end) = title[start + 1..].find(close) else { break };
             let end = start + 1 + end;
             title.replace_range(start..=end, "");
@@ -1548,6 +1547,7 @@ async fn audio_preload(state: tauri::State<'_, AudioState>, paths: Vec<String>) 
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn audio_load_song(
     state: tauri::State<'_, AudioState>,
     path: String,
@@ -1915,7 +1915,7 @@ fn main() {
                     return;
                 }
                 let app = window.app_handle();
-                close_all_windows(&app);
+                close_all_windows(app);
                 app.exit(0);
             }
         })
@@ -2116,7 +2116,7 @@ fn process_name_from_pid(pid: u32) -> Option<String> {
         let result = QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_WIN32,
-            std::mem::transmute(buffer.as_mut_ptr()),
+            windows::core::PWSTR(buffer.as_mut_ptr()),
             &mut size,
         );
         let _ = windows::Win32::Foundation::CloseHandle(handle);
@@ -2161,8 +2161,8 @@ fn is_foreground_fullscreen() -> bool {
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
             return false;
         }
-        let win_w = (rect.right - rect.left) as i32;
-        let win_h = (rect.bottom - rect.top) as i32;
+        let win_w = rect.right - rect.left;
+        let win_h = rect.bottom - rect.top;
         let mon_w = (info.rcMonitor.right - info.rcMonitor.left) as i32;
         let mon_h = (info.rcMonitor.bottom - info.rcMonitor.top) as i32;
         if mon_w <= 0 || mon_h <= 0 {
