@@ -4,7 +4,10 @@ pub mod engine;
 
 use std::{
     fs,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc,
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -21,7 +24,13 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
         let mut last_emit = Instant::now();
         let mut last_spectrum_emit = Instant::now();
         loop {
-            match audio_rx.recv_timeout(Duration::from_millis(50)) {
+            // Sleep long when idle; only fades, playback progress and loop bookkeeping need the 50 ms tick.
+            let wait = if audio.needs_tick() {
+                Duration::from_millis(50)
+            } else {
+                Duration::from_secs(60)
+            };
+            match audio_rx.recv_timeout(wait) {
                 Ok(command) => match command {
                 AudioCommand::LoadSong {
                     path,
@@ -103,7 +112,7 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
                                 continue;
                             }
 
-                            audio.preloaded.insert(path, data);
+                            audio.preloaded.insert(path, Arc::from(data));
                         }
 
                         let _ = reply.send(Ok(()));
@@ -129,7 +138,9 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) -> 
                     }
                 }
 
-                if audio.is_playing && last_emit.elapsed() >= Duration::from_millis(250) {
+                let progress_due = audio.progress_dirty || last_emit.elapsed() >= Duration::from_millis(250);
+                audio.progress_dirty = false;
+                if audio.is_playing && progress_due {
                     last_emit = Instant::now();
                     let _ = app_handle.emit(
                         "amply://audio-progress",

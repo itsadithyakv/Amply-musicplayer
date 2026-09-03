@@ -7,7 +7,7 @@ use super::artist::{
     build_candidate_titles, cache_keys_for_artist, fetch_wikipedia_search_titles_for_query,
     fetch_wikipedia_summary, is_valid_artist_profile,
 };
-use super::cache::{read_json, to_storage_cache_path, write_json};
+use super::cache::{cache_all, cache_get, cache_put, read_json, to_storage_cache_path, CacheKind};
 use super::http::{fetch_json, musicbrainz_throttle, score_itunes_hit, ItunesSongHit, ItunesSongPayload};
 use super::normalize::{
     artist_identity_matches, clean_lyrics_title, get_primary_artist_name, identity_contains,
@@ -36,9 +36,7 @@ struct MbArtistRef {
 pub async fn load_song_genre_cache_rust(
     app: tauri::AppHandle,
 ) -> Result<HashMap<String, SongGenreCacheEntry>, String> {
-    Ok(read_json::<HashMap<String, SongGenreCacheEntry>>(&app, SONG_GENRE_CACHE_PATH)
-        .await?
-        .unwrap_or_default())
+    cache_all::<SongGenreCacheEntry>(&app, CacheKind::SongGenre).await
 }
 
 fn cache_key_for_song_genre(song: &SongInput) -> String {
@@ -716,15 +714,12 @@ pub async fn load_song_genre_rust(
         }
     }
 
-    let mut cache = read_json::<HashMap<String, SongGenreCacheEntry>>(&app, SONG_GENRE_CACHE_PATH)
-        .await?
-        .unwrap_or_default();
     let key = cache_key_for_song_genre(&song);
-    if let Some(entry) = cache.get(&key) {
+    if let Some(entry) = cache_get::<SongGenreCacheEntry>(&app, CacheKind::SongGenre, &key).await? {
         if !is_unknown_genre(&entry.genre) {
             return Ok(SongGenreLoadResult {
                 status: "ready".to_string(),
-                genre: Some(entry.genre.clone()),
+                genre: Some(entry.genre),
                 from_cache: Some(true),
                 cache_path,
             });
@@ -733,14 +728,16 @@ pub async fn load_song_genre_rust(
 
     let primary_artist = metadata_artist_for_song(&song);
     if let Ok(Some(genre)) = infer_cached_artist_profile_genre(&app, &primary_artist).await {
-        cache.insert(
-            key.clone(),
-            SongGenreCacheEntry {
+        cache_put(
+            &app,
+            CacheKind::SongGenre,
+            &key,
+            &SongGenreCacheEntry {
                 genre: genre.clone(),
                 fetched_at: now_unix(),
             },
-        );
-        write_json(&app, SONG_GENRE_CACHE_PATH, &cache).await?;
+        )
+        .await?;
         return Ok(SongGenreLoadResult {
             status: "ready".to_string(),
             genre: Some(genre),
@@ -751,14 +748,16 @@ pub async fn load_song_genre_rust(
 
     match fetch_song_genre(&song).await {
         Ok(Some(genre)) => {
-            cache.insert(
-                key,
-                SongGenreCacheEntry {
+            cache_put(
+                &app,
+                CacheKind::SongGenre,
+                &key,
+                &SongGenreCacheEntry {
                     genre: genre.clone(),
                     fetched_at: now_unix(),
                 },
-            );
-            write_json(&app, SONG_GENRE_CACHE_PATH, &cache).await?;
+            )
+            .await?;
             Ok(SongGenreLoadResult {
                 status: "ready".to_string(),
                 genre: Some(genre),

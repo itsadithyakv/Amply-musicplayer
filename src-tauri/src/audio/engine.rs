@@ -12,12 +12,17 @@ use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use serde::Serialize;
 
 use super::dsp::{
-    biquad_peaking, BiquadSource, SpectrumLevels, SpectrumSource, AUDIO_SPECTRUM_BANDS,
-    EQ_BAND_FREQUENCIES,
+    BiquadSource, SharedParams, SharedSpeed, SpectrumLevels, SpectrumSource,
+    AUDIO_SPECTRUM_BANDS, EQ_BAND_COUNT,
 };
 
 trait ReadSeek: Read + Seek + Send + Sync {}
 impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
+
+type BoxedSource = Box<dyn Source<Item = f32> + Send>;
+
+const MIN_RATE: f32 = 0.25;
+const EQ_GAIN_LIMIT_DB: f32 = 12.0;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,15 +47,22 @@ pub(crate) struct NativeAudio {
     handle: Option<OutputStreamHandle>,
     pub(crate) sink: Option<Sink>,
     fading_sink: Option<Sink>,
-    pub(crate) preloaded: HashMap<String, Vec<u8>>,
+    /// Preloaded file bytes, shared with every decoder built from them (no copy per sink).
+    pub(crate) preloaded: HashMap<String, Arc<[u8]>>,
     current_path: Option<String>,
     pub(crate) duration_sec: f64,
     pub(crate) paused_position: f64,
     pub(crate) start_instant: Option<Instant>,
+    /// Playback rate in effect since `start_instant`; wall-clock elapsed is scaled by it.
+    rate_at_start: f32,
     pub(crate) is_playing: bool,
     pub(crate) loop_current: bool,
-    eq_gains: [f32; 5],
-    rate: f32,
+    /// A second copy of the current track has been appended to the sink for looping.
+    loop_copy_queued: bool,
+    last_sink_len: usize,
+    /// Set by `tick()` when the position was reset (loop wrap) and progress should be emitted now.
+    pub(crate) progress_dirty: bool,
+    params: Arc<SharedParams>,
     volume: f32,
     pub(crate) ended_emitted: bool,
     fade_in: Option<FadeState>,
@@ -70,10 +82,13 @@ impl Default for NativeAudio {
             duration_sec: 0.0,
             paused_position: 0.0,
             start_instant: None,
+            rate_at_start: 1.0,
             is_playing: false,
             loop_current: false,
-            eq_gains: [0.0; 5],
-            rate: 1.0,
+            loop_copy_queued: false,
+            last_sink_len: 0,
+            progress_dirty: false,
+            params: Arc::new(SharedParams::default()),
             volume: 0.85,
             ended_emitted: false,
             fade_in: None,
@@ -125,38 +140,41 @@ pub(crate) enum AudioCommand {
     SetVolume { volume: f32, reply: mpsc::Sender<Result<(), String>> },
     SetRate { rate: f32, reply: mpsc::Sender<Result<(), String>> },
     SetLoop { enabled: bool, reply: mpsc::Sender<Result<(), String>> },
-    SetEqGains { gains: [f32; 5], reply: mpsc::Sender<Result<(), String>> },
+    SetEqGains { gains: [f32; EQ_BAND_COUNT], reply: mpsc::Sender<Result<(), String>> },
     SetVisualizerEnabled { enabled: bool, reply: mpsc::Sender<Result<(), String>> },
     SetOutputDevice { name: Option<String>, reply: mpsc::Sender<Result<(), String>> },
     Preload { paths: Vec<String>, reply: mpsc::Sender<Result<(), String>> },
 }
 
+/// Playback position given the position at the last (re)start, the wall-clock time
+/// elapsed since, and the playback rate in effect during that interval.
+pub(crate) fn position_from(paused_position: f64, elapsed: Duration, rate: f32) -> f64 {
+    paused_position + elapsed.as_secs_f64() * f64::from(rate)
+}
+
 impl NativeAudio {
     pub(crate) fn new() -> Self {
+        let mut audio = Self::default();
+        // Failure is logged inside; the engine retries lazily on the next load/play.
+        let _ = audio.ensure_output();
+        audio
+    }
+
+    /// Lazily (re)creates the default output stream when none is available.
+    fn ensure_output(&mut self) -> Result<(), String> {
+        if self.handle.is_some() {
+            return Ok(());
+        }
         match OutputStream::try_default() {
-            Ok((stream, handle)) => Self {
-                stream: Some(stream),
-                handle: Some(handle),
-                sink: None,
-                fading_sink: None,
-                preloaded: HashMap::new(),
-                current_path: None,
-                duration_sec: 0.0,
-                paused_position: 0.0,
-                start_instant: None,
-                is_playing: false,
-                loop_current: false,
-                    eq_gains: [0.0; 5],
-                    rate: 1.0,
-                volume: 0.85,
-                ended_emitted: false,
-                fade_in: None,
-                fade_out: None,
-                spectrum: Arc::new(SpectrumLevels::default()),
-            },
+            Ok((stream, handle)) => {
+                self.stream = Some(stream);
+                self.handle = Some(handle);
+                Ok(())
+            }
             Err(error) => {
+                log::error!("Failed to initialize audio output: {error}");
                 eprintln!("[Amply] Failed to initialize audio output: {error}");
-                Self::default()
+                Err(format!("Audio output unavailable: {error}"))
             }
         }
     }
@@ -165,50 +183,108 @@ impl NativeAudio {
         self.handle.as_ref().ok_or_else(|| "Audio output unavailable".to_string())
     }
 
-    fn build_source(
-        &self,
-        path: &str,
-        start_at_sec: f64,
-        rate: f32,
-        loop_current: bool,
-        preloaded: &HashMap<String, Vec<u8>>,
-    ) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
-        let reader: Box<dyn ReadSeek> = if let Some(data) = preloaded.get(path) {
-            Box::new(Cursor::new(data.clone()))
+    fn rate(&self) -> f32 {
+        self.params.rate()
+    }
+
+    /// Whether the audio thread needs its 50 ms tick (fades, progress, loop bookkeeping).
+    pub(crate) fn needs_tick(&self) -> bool {
+        self.is_playing
+            || self.fade_in.is_some()
+            || self.fade_out.is_some()
+            || (self.loop_current && self.sink.is_some())
+    }
+
+    fn open_reader(&self, path: &str) -> Result<Box<dyn ReadSeek>, String> {
+        if let Some(data) = self.preloaded.get(path) {
+            Ok(Box::new(Cursor::new(Arc::clone(data))))
         } else {
             let file = fs::File::open(path).map_err(|err| err.to_string())?;
-            Box::new(std::io::BufReader::new(file))
-        };
-
-        let decoder = Decoder::new(reader).map_err(|err: rodio::decoder::DecoderError| err.to_string())?;
-        let source = decoder
-            .convert_samples::<f32>()
-            .skip_duration(Duration::from_secs_f64(start_at_sec.max(0.0)))
-            .speed(rate.max(0.25));
-
-        let source = self.apply_eq(source);
-        let source = SpectrumSource::new(source, Arc::clone(&self.spectrum));
-
-        if loop_current {
-            Ok(Box::new(source.repeat_infinite()))
-        } else {
-            Ok(Box::new(source))
+            Ok(Box::new(std::io::BufReader::new(file)))
         }
     }
 
+    /// Decoder -> EQ stages -> spectrum tap -> shared-rate wrapper.
+    ///
+    /// `start_at_sec > 0` uses `skip_duration` (decode-and-discard); callers prefer
+    /// building from 0 and seeking the sink, using this only as a fallback.
+    fn build_source(&self, path: &str, start_at_sec: f64) -> Result<BoxedSource, String> {
+        let reader = self.open_reader(path)?;
+        let decoder = Decoder::new(reader).map_err(|err: rodio::decoder::DecoderError| err.to_string())?;
+        let decoded = decoder.convert_samples::<f32>();
+
+        let source: BoxedSource = if start_at_sec > 0.0 {
+            Box::new(decoded.skip_duration(Duration::from_secs_f64(start_at_sec)))
+        } else {
+            Box::new(decoded)
+        };
+
+        // EQ and spectrum operate at the decoder's native rate so their tuning does not
+        // move with the playback rate; the speed wrapper sits outermost.
+        let source = self.apply_eq(source);
+        let source = SpectrumSource::new(source, Arc::clone(&self.spectrum));
+        let source = SharedSpeed::new(source, Arc::clone(&self.params));
+        Ok(Box::new(source))
+    }
+
+    fn apply_eq<S>(&self, source: S) -> BoxedSource
+    where
+        S: Source<Item = f32> + Send + 'static,
+    {
+        let mut current: BoxedSource = Box::new(source);
+        for band in 0..EQ_BAND_COUNT {
+            current = Box::new(BiquadSource::new(current, Arc::clone(&self.params), band));
+        }
+        current
+    }
+
+    /// Seeks the sink to `position_sec` of *source* time.
+    ///
+    /// `Sink::try_seek` takes output time and rodio's `Speed` (and our `SharedSpeed`)
+    /// multiplies it by the factor on the way down, so divide by the rate here.
+    fn seek_sink(&self, sink: &Sink, position_sec: f64) -> Result<(), String> {
+        let output_secs = position_sec.max(0.0) / f64::from(self.rate());
+        sink.try_seek(Duration::from_secs_f64(output_secs))
+            .map_err(|err| err.to_string())
+    }
+
+    /// Creates a sink with the track loaded at `start_at_sec`, already at `volume`
+    /// and paused if requested (so no samples leak before the pause applies).
     fn create_sink(
         &self,
         path: &str,
         start_at_sec: f64,
-        rate: f32,
-        loop_current: bool,
-        preloaded: &HashMap<String, Vec<u8>>,
+        volume: f32,
+        paused: bool,
     ) -> Result<Sink, String> {
         let handle = self.ensure_handle()?;
-        let source = self.build_source(path, start_at_sec, rate, loop_current, preloaded)?;
-        let sink = Sink::try_new(handle).map_err(|err| err.to_string())?;
-        sink.append(source);
-        Ok(sink)
+        let start_at_sec = start_at_sec.max(0.0);
+
+        let new_sink = || -> Result<Sink, String> {
+            let sink = Sink::try_new(handle).map_err(|err| err.to_string())?;
+            sink.set_volume(volume);
+            if paused {
+                sink.pause();
+            }
+            Ok(sink)
+        };
+
+        let sink = new_sink()?;
+        sink.append(self.build_source(path, 0.0)?);
+        if start_at_sec <= 0.0 {
+            return Ok(sink);
+        }
+
+        match self.seek_sink(&sink, start_at_sec) {
+            Ok(()) => Ok(sink),
+            Err(err) => {
+                log::warn!("try_seek to {start_at_sec:.2}s failed ({err}); falling back to skip_duration");
+                sink.stop();
+                let sink = new_sink()?;
+                sink.append(self.build_source(path, start_at_sec)?);
+                Ok(sink)
+            }
+        }
     }
 
     pub(crate) fn current_position(&self) -> f64 {
@@ -218,35 +294,29 @@ impl NativeAudio {
 
         if self.is_playing {
             if let Some(started) = self.start_instant {
-                return (self.paused_position + started.elapsed().as_secs_f64()).min(self.duration_sec);
+                let position = position_from(self.paused_position, started.elapsed(), self.rate_at_start);
+                return if self.duration_sec > 0.0 {
+                    position.min(self.duration_sec)
+                } else {
+                    position
+                };
             }
         }
 
         self.paused_position
     }
 
-    fn apply_eq<S>(&self, source: S) -> Box<dyn Source<Item = f32> + Send>
-    where
-        S: Source<Item = f32> + Send + 'static,
-    {
-        if self.eq_gains.iter().all(|gain| gain.abs() < 0.01) {
-            return Box::new(source);
-        }
+    /// Restarts the wall-clock reference at `position` with the current rate.
+    fn set_position(&mut self, position: f64, playing: bool) {
+        self.paused_position = position.max(0.0);
+        self.start_instant = if playing { Some(Instant::now()) } else { None };
+        self.rate_at_start = self.rate();
+        self.is_playing = playing;
+    }
 
-        let sample_rate = source.sample_rate();
-        let mut current: Box<dyn Source<Item = f32> + Send> = Box::new(source);
-        for (index, gain) in self.eq_gains.iter().enumerate() {
-            if gain.abs() < 0.01 {
-                continue;
-            }
-            if let Some(freq) = EQ_BAND_FREQUENCIES.get(index) {
-                current = Box::new(BiquadSource::new(
-                    current,
-                    biquad_peaking(sample_rate, *freq, 1.0, *gain),
-                ));
-            }
-        }
-        current
+    fn reset_loop_tracking(&mut self) {
+        self.loop_copy_queued = false;
+        self.last_sink_len = self.sink.as_ref().map(Sink::len).unwrap_or(0);
     }
 
     fn rebuild_sink(&mut self, position: f64, was_playing: bool) -> Result<(), String> {
@@ -261,18 +331,12 @@ impl NativeAudio {
             sink.stop();
         }
 
-        let sink = self.create_sink(&path, position, self.rate, self.loop_current, &self.preloaded)?;
-        sink.set_volume(self.volume);
-        if !was_playing {
-            sink.pause();
-        }
-
+        let sink = self.create_sink(&path, position, self.volume, !was_playing)?;
         self.sink = Some(sink);
-        self.paused_position = position;
-        self.start_instant = if was_playing { Some(Instant::now()) } else { None };
-        self.is_playing = was_playing;
+        self.set_position(position, was_playing);
         self.ended_emitted = false;
         self.fade_in = None;
+        self.reset_loop_tracking();
         Ok(())
     }
 
@@ -284,6 +348,11 @@ impl NativeAudio {
     }
 
     pub(crate) fn tick(&mut self) {
+        self.tick_fades();
+        self.tick_loop();
+    }
+
+    fn tick_fades(&mut self) {
         if let Some(fade) = self.fade_in {
             if let Some(sink) = self.sink.as_ref() {
                 let elapsed = fade.start.elapsed();
@@ -315,6 +384,41 @@ impl NativeAudio {
         }
     }
 
+    /// Loop by queueing a second copy of the track behind the current one, and
+    /// resetting the position when the sink hands over to that copy.
+    fn tick_loop(&mut self) {
+        if !self.loop_current {
+            return;
+        }
+        let Some(len) = self.sink.as_ref().map(Sink::len) else {
+            return;
+        };
+
+        let wrapped = len < self.last_sink_len && (self.loop_copy_queued || len == 0);
+        if wrapped {
+            self.set_position(0.0, self.is_playing);
+            self.loop_copy_queued = false;
+            self.ended_emitted = false;
+            self.progress_dirty = true;
+        }
+
+        if len <= 1 && !self.loop_copy_queued {
+            if let Some(path) = self.current_path.clone() {
+                match self.build_source(&path, 0.0) {
+                    Ok(source) => {
+                        if let Some(sink) = self.sink.as_ref() {
+                            sink.append(source);
+                            self.loop_copy_queued = true;
+                        }
+                    }
+                    Err(err) => log::error!("Failed to queue loop copy of {path}: {err}"),
+                }
+            }
+        }
+
+        self.last_sink_len = self.sink.as_ref().map(Sink::len).unwrap_or(0);
+    }
+
     fn stop_all(&mut self) {
         if let Some(sink) = self.sink.take() {
             sink.stop();
@@ -328,6 +432,7 @@ impl NativeAudio {
         self.ended_emitted = false;
         self.fade_in = None;
         self.fade_out = None;
+        self.reset_loop_tracking();
         self.spectrum.reset();
     }
 
@@ -344,9 +449,7 @@ impl NativeAudio {
         track_volume: f32,
         gapless_enabled: bool,
     ) -> Result<(), String> {
-        if self.handle.is_none() {
-            return Err("Audio output unavailable".to_string());
-        }
+        self.ensure_output()?;
 
         let can_crossfade = transition && crossfade && self.sink.is_some();
         let fade_duration = Duration::from_secs_f64(crossfade_duration_sec.max(1.0));
@@ -361,13 +464,8 @@ impl NativeAudio {
             self.fading_sink = Some(sink);
         }
 
-        let sink = self.create_sink(&path, start_at_sec, self.rate, self.loop_current, &self.preloaded)?;
         let target_volume = if can_crossfade { 0.0 } else { track_volume };
-        sink.set_volume(target_volume);
-
-        if !autoplay {
-            sink.pause();
-        }
+        let sink = self.create_sink(&path, start_at_sec, target_volume, !autoplay)?;
 
         if let Some(old) = self.fading_sink.as_ref() {
             let old_volume = old.volume();
@@ -391,51 +489,29 @@ impl NativeAudio {
         self.sink = Some(sink);
         self.current_path = Some(path);
         self.duration_sec = duration_sec.max(0.0);
-        self.paused_position = start_at_sec.max(0.0);
-        self.start_instant = if autoplay { Some(Instant::now()) } else { None };
-        self.is_playing = autoplay;
+        self.set_position(start_at_sec, autoplay);
         self.volume = track_volume;
         self.ended_emitted = false;
-        if gapless_ready && !can_crossfade {
-            if let Some(old) = self.fading_sink.take() {
-                old.stop();
+        self.reset_loop_tracking();
+        Ok(())
+    }
+
+    pub(crate) fn play(&mut self) -> Result<(), String> {
+        self.ensure_output()?;
+        if let Some(sink) = &self.sink {
+            sink.play();
+            if !self.is_playing {
+                let position = self.current_position();
+                self.set_position(position, true);
             }
         }
         Ok(())
     }
 
-    pub(crate) fn play(&mut self) -> Result<(), String> {
-        if let Some(sink) = &self.sink {
-            sink.play();
-            self.start_instant = Some(Instant::now());
-            self.is_playing = true;
-        }
-        Ok(())
-    }
-
     pub(crate) fn play_from(&mut self, position_sec: f64) -> Result<(), String> {
-        let path = self
-            .current_path
-            .clone()
-            .ok_or_else(|| "No song loaded".to_string())?;
-
-        self.clear_fading_sink();
-
-        if let Some(sink) = self.sink.take() {
-            sink.stop();
-        }
-
-        let sink = self.create_sink(&path, position_sec, self.rate, self.loop_current, &self.preloaded)?;
-        sink.set_volume(self.volume);
-        sink.play();
-        self.sink = Some(sink);
-        self.paused_position = position_sec.max(0.0);
-        self.start_instant = Some(Instant::now());
-        self.is_playing = true;
-        self.ended_emitted = false;
-        self.fade_in = None;
-        self.fade_out = None;
-        Ok(())
+        self.ensure_output()?;
+        self.seek(position_sec)?;
+        self.play()
     }
 
     pub(crate) fn pause(&mut self) {
@@ -454,70 +530,85 @@ impl NativeAudio {
     }
 
     pub(crate) fn seek(&mut self, position_sec: f64) -> Result<(), String> {
-        let path = self
-            .current_path
-            .clone()
-            .ok_or_else(|| "No song loaded".to_string())?;
+        if self.current_path.is_none() {
+            return Err("No song loaded".to_string());
+        }
+        let position_sec = position_sec.max(0.0);
         let was_playing = self.is_playing;
 
+        // Fast path: seek the live sink in place. `Sink::try_seek` reports Ok without
+        // doing anything when the sink has drained, so treat that as a rebuild.
+        let seeked_in_place = match self.sink.as_ref() {
+            Some(sink) if !sink.empty() => match self.seek_sink(sink, position_sec) {
+                Ok(()) => true,
+                Err(err) => {
+                    log::warn!("In-place seek to {position_sec:.2}s failed ({err}); rebuilding sink");
+                    false
+                }
+            },
+            _ => false,
+        };
+
+        if !seeked_in_place {
+            return self.rebuild_sink(position_sec, was_playing);
+        }
+
         self.clear_fading_sink();
-
-        if let Some(sink) = self.sink.take() {
-            sink.stop();
+        if self.fade_in.take().is_some() {
+            if let Some(sink) = self.sink.as_ref() {
+                sink.set_volume(self.volume);
+            }
         }
-
-        let sink = self.create_sink(&path, position_sec, self.rate, self.loop_current, &self.preloaded)?;
-        sink.set_volume(self.volume);
-        if !was_playing {
-            sink.pause();
-        }
-
-        self.sink = Some(sink);
-        self.paused_position = position_sec.max(0.0);
-        self.start_instant = if was_playing { Some(Instant::now()) } else { None };
-        self.is_playing = was_playing;
+        self.set_position(position_sec, was_playing);
         self.ended_emitted = false;
-        self.fade_in = None;
         Ok(())
     }
 
     pub(crate) fn set_volume(&mut self, volume: f32) {
         self.volume = volume;
-        if let Some(sink) = &self.sink {
+        if let Some(fade) = self.fade_in.as_mut() {
+            // Let the running fade-in land on the new volume instead of jumping.
+            fade.to = volume;
+        } else if let Some(sink) = &self.sink {
             sink.set_volume(volume);
         }
-        if let Some(sink) = &self.fading_sink {
-            sink.set_volume(volume);
-        }
+        // `fading_sink` is owned by the fade-out ramp in `tick()`; never touch it here.
     }
 
     pub(crate) fn set_rate(&mut self, rate: f32) -> Result<(), String> {
-        self.rate = rate.max(0.25);
+        let rate = rate.max(MIN_RATE);
+        // Fold the time elapsed at the old rate into `paused_position` first.
         if self.sink.is_some() {
             let position = self.current_position();
-            let was_playing = self.is_playing;
-            self.rebuild_sink(position, was_playing)?;
+            self.paused_position = position;
+            if self.is_playing {
+                self.start_instant = Some(Instant::now());
+            }
         }
+        self.rate_at_start = rate;
+        self.params.set_rate(rate);
         Ok(())
     }
 
     pub(crate) fn set_loop(&mut self, enabled: bool) -> Result<(), String> {
         self.loop_current = enabled;
-        if self.sink.is_some() {
+        if enabled {
+            // `tick()` queues the loop copy on the next pass.
+            return Ok(());
+        }
+        if self.loop_copy_queued {
+            // The sink has no API to drop a queued source; rebuild without it.
             let position = self.current_position();
             let was_playing = self.is_playing;
             self.rebuild_sink(position, was_playing)?;
         }
+        self.loop_copy_queued = false;
         Ok(())
     }
 
-    pub(crate) fn set_eq_gains(&mut self, gains: [f32; 5]) -> Result<(), String> {
-        self.eq_gains = gains.map(|gain| gain.clamp(-12.0, 12.0));
-        if self.sink.is_some() {
-            let position = self.current_position();
-            let was_playing = self.is_playing;
-            self.rebuild_sink(position, was_playing)?;
-        }
+    pub(crate) fn set_eq_gains(&mut self, gains: [f32; EQ_BAND_COUNT]) -> Result<(), String> {
+        self.params
+            .set_gains(gains.map(|gain| gain.clamp(-EQ_GAIN_LIMIT_DB, EQ_GAIN_LIMIT_DB)));
         Ok(())
     }
 
@@ -538,8 +629,19 @@ impl NativeAudio {
             host.default_output_device()
         };
 
-        let device = device.ok_or_else(|| "No output device available".to_string())?;
-        let (stream, handle) = OutputStream::try_from_device(&device).map_err(|err| err.to_string())?;
+        let opened = device
+            .ok_or_else(|| "No output device available".to_string())
+            .and_then(|device| OutputStream::try_from_device(&device).map_err(|err| err.to_string()));
+
+        let (stream, handle) = match opened {
+            Ok(pair) => pair,
+            Err(err) => {
+                log::error!("Failed to open output device {name:?}: {err}");
+                // Still give a silent engine a chance to come back on the default device.
+                let _ = self.ensure_output();
+                return Err(err);
+            }
+        };
 
         let position = self.current_position();
         let was_playing = self.is_playing;
@@ -552,5 +654,63 @@ impl NativeAudio {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_scales_elapsed_by_rate() {
+        let position = position_from(10.0, Duration::from_secs(2), 1.5);
+        assert!((position - 13.0).abs() < 1e-9);
+
+        let position = position_from(4.0, Duration::from_millis(500), 1.0);
+        assert!((position - 4.5).abs() < 1e-9);
+
+        let position = position_from(0.0, Duration::from_secs(4), 0.5);
+        assert!((position - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn set_rate_clamps_and_snapshots_rate_at_start() {
+        let mut audio = NativeAudio::default();
+        audio.set_rate(1.5).unwrap();
+        assert_eq!(audio.rate(), 1.5);
+        assert_eq!(audio.rate_at_start, 1.5);
+
+        audio.set_rate(0.1).unwrap();
+        assert_eq!(audio.rate(), MIN_RATE);
+    }
+
+    #[test]
+    fn eq_gains_are_clamped() {
+        let mut audio = NativeAudio::default();
+        audio.set_eq_gains([20.0, -20.0, 3.0, 0.0, 0.0]).unwrap();
+        let gains = audio.params.gains();
+        assert_eq!(gains[0], EQ_GAIN_LIMIT_DB);
+        assert_eq!(gains[1], -EQ_GAIN_LIMIT_DB);
+        assert_eq!(gains[2], 3.0);
+    }
+
+    #[test]
+    fn needs_tick_only_when_there_is_work() {
+        let mut audio = NativeAudio::default();
+        assert!(!audio.needs_tick());
+        audio.is_playing = true;
+        assert!(audio.needs_tick());
+        audio.is_playing = false;
+        audio.fade_out = Some(FadeState {
+            start: Instant::now(),
+            duration: Duration::from_secs(1),
+            from: 1.0,
+            to: 0.0,
+        });
+        assert!(audio.needs_tick());
+        audio.fade_out = None;
+        audio.loop_current = true;
+        // Loop without a sink is idle.
+        assert!(!audio.needs_tick());
     }
 }

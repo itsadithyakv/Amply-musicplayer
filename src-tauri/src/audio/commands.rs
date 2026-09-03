@@ -5,8 +5,14 @@ use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
 use super::engine::{AudioCommand, AudioState, OutputDeviceInfo};
 
+/// Commands that may decode or open a device (load, seek, device switch).
+const LONG_TIMEOUT: Duration = Duration::from_secs(15);
+/// Everything else is an atomic store or a sink flag flip.
+const SHORT_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn send_audio_command<F>(
     sender: mpsc::Sender<AudioCommand>,
+    timeout: Duration,
     builder: F,
 ) -> Result<(), String>
 where
@@ -17,18 +23,19 @@ where
         .send(builder(reply_tx))
         .map_err(|_| "Audio thread unavailable".to_string())?;
     reply_rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(timeout)
         .map_err(|_| "Audio command timeout".to_string())?
 }
 
 async fn send_audio_command_async<F>(
     sender: mpsc::Sender<AudioCommand>,
+    timeout: Duration,
     builder: F,
 ) -> Result<(), String>
 where
     F: FnOnce(mpsc::Sender<Result<(), String>>) -> AudioCommand + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(move || send_audio_command(sender, builder))
+    tauri::async_runtime::spawn_blocking(move || send_audio_command(sender, timeout, builder))
         .await
         .map_err(|err| err.to_string())?
 }
@@ -36,7 +43,7 @@ where
 #[tauri::command]
 pub async fn audio_preload(state: tauri::State<'_, AudioState>, paths: Vec<String>) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::Preload { paths, reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, move |reply| AudioCommand::Preload { paths, reply }).await
 }
 
 #[tauri::command]
@@ -54,7 +61,7 @@ pub async fn audio_load_song(
     gapless_enabled: bool,
 ) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::LoadSong {
+    send_audio_command_async(sender, LONG_TIMEOUT, move |reply| AudioCommand::LoadSong {
         path,
         autoplay,
         transition,
@@ -72,50 +79,50 @@ pub async fn audio_load_song(
 #[tauri::command]
 pub async fn audio_play(state: tauri::State<'_, AudioState>) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, |reply| AudioCommand::Play { reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, |reply| AudioCommand::Play { reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_play_from(state: tauri::State<'_, AudioState>, position_sec: f64) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::PlayFrom { position_sec, reply }).await
+    send_audio_command_async(sender, LONG_TIMEOUT, move |reply| AudioCommand::PlayFrom { position_sec, reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_pause(state: tauri::State<'_, AudioState>) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, |reply| AudioCommand::Pause { reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, |reply| AudioCommand::Pause { reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_stop(state: tauri::State<'_, AudioState>) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, |reply| AudioCommand::Stop { reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, |reply| AudioCommand::Stop { reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_seek(state: tauri::State<'_, AudioState>, position_sec: f64) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::Seek { position_sec, reply }).await
+    send_audio_command_async(sender, LONG_TIMEOUT, move |reply| AudioCommand::Seek { position_sec, reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_set_volume(state: tauri::State<'_, AudioState>, volume: f32) -> Result<(), String> {
     let sender = state.sender.clone();
     let volume = volume.max(0.0);
-    send_audio_command_async(sender, move |reply| AudioCommand::SetVolume { volume, reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, move |reply| AudioCommand::SetVolume { volume, reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_set_rate(state: tauri::State<'_, AudioState>, rate: f32) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::SetRate { rate, reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, move |reply| AudioCommand::SetRate { rate, reply }).await
 }
 
 #[tauri::command]
 pub async fn audio_set_loop(state: tauri::State<'_, AudioState>, enabled: bool) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::SetLoop { enabled, reply }).await
+    send_audio_command_async(sender, SHORT_TIMEOUT, move |reply| AudioCommand::SetLoop { enabled, reply }).await
 }
 
 #[tauri::command]
@@ -126,7 +133,7 @@ pub async fn audio_set_eq_gains(state: tauri::State<'_, AudioState>, gains: Vec<
     }
 
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::SetEqGains {
+    send_audio_command_async(sender, SHORT_TIMEOUT, move |reply| AudioCommand::SetEqGains {
         gains: normalized,
         reply,
     })
@@ -139,7 +146,7 @@ pub async fn audio_set_visualizer_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::SetVisualizerEnabled {
+    send_audio_command_async(sender, SHORT_TIMEOUT, move |reply| AudioCommand::SetVisualizerEnabled {
         enabled,
         reply,
     })
@@ -152,7 +159,7 @@ pub async fn audio_set_output_device(
     name: Option<String>,
 ) -> Result<(), String> {
     let sender = state.sender.clone();
-    send_audio_command_async(sender, move |reply| AudioCommand::SetOutputDevice { name, reply }).await
+    send_audio_command_async(sender, LONG_TIMEOUT, move |reply| AudioCommand::SetOutputDevice { name, reply }).await
 }
 
 #[tauri::command]

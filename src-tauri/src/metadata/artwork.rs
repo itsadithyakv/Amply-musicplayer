@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
 use reqwest::Url;
 
-use super::cache::{read_json, write_json};
+use super::cache::{cache_get, cache_put, CacheKind};
 use super::http::{fetch_image_data_url, fetch_json, score_itunes_hit, ItunesSongHit, ItunesSongPayload};
 use super::normalize::{clean_lyrics_title, metadata_artist_for_song, slugify};
-use super::{SongInput, TRACK_ARTWORK_CACHE_PATH};
+use super::SongInput;
 
 fn cache_key_for_track_artwork(song: &SongInput) -> String {
     let primary_artist = metadata_artist_for_song(song);
@@ -68,18 +66,14 @@ pub async fn load_track_artwork_rust(
     app: tauri::AppHandle,
     song: SongInput,
 ) -> Result<Option<String>, String> {
-    let mut cache = read_json::<HashMap<String, String>>(&app, TRACK_ARTWORK_CACHE_PATH)
-        .await?
-        .unwrap_or_default();
     let key = cache_key_for_track_artwork(&song);
-    if let Some(cached) = cache.get(&key) {
-        return Ok(Some(cached.clone()));
+    if let Some(cached) = cache_get::<String>(&app, CacheKind::TrackArtwork, &key).await? {
+        return Ok(Some(cached));
     }
 
     let fetched: Option<String> = fetch_track_artwork_data_url(&song).await.unwrap_or_default();
-    if let Some(value) = fetched.clone() {
-        cache.insert(key, value.clone());
-        write_json(&app, TRACK_ARTWORK_CACHE_PATH, &cache).await?;
+    if let Some(value) = fetched.as_ref() {
+        cache_put(&app, CacheKind::TrackArtwork, &key, value).await?;
     }
     Ok(fetched)
 }

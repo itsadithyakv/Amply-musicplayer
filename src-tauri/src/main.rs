@@ -21,9 +21,14 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(AudioState::new(audio_tx.clone()))
         .setup(|app| {
+            let storage_root = storage::storage_root_path(app.handle())?;
+            app.manage(storage::StorageDb::open(storage_root)?);
+
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = storage::ensure_storage_dirs_async(&handle).await;
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = metadata::cache::migrate_legacy_blobs(&handle) {
+                    eprintln!("Failed to migrate legacy metadata caches: {error}");
+                }
             });
             #[cfg(desktop)]
             {

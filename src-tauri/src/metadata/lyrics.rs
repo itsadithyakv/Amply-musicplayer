@@ -20,6 +20,10 @@ use super::{
 
 static TIME_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]").unwrap());
 
+/// Serialises read-modify-write cycles on the lyrics index so concurrent lyrics
+/// loads cannot drop each other's entries.
+static LYRICS_INDEX_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 #[derive(Clone, Debug)]
 struct LyricLine {
     time_ms: Option<i64>,
@@ -94,6 +98,17 @@ async fn read_lyrics_index(app: &tauri::AppHandle) -> Result<HashMap<String, Str
 
 async fn write_lyrics_index(app: &tauri::AppHandle, index: &HashMap<String, String>) -> Result<(), String> {
     write_json(app, LYRICS_INDEX_PATH, index).await
+}
+
+/// Points `song_id` at `key` in the lyrics index (no-op when already mapped).
+async fn set_lyrics_index_entry(app: &tauri::AppHandle, song_id: &str, key: &str) -> Result<(), String> {
+    let _guard = LYRICS_INDEX_LOCK.lock().await;
+    let mut index = read_lyrics_index(app).await?;
+    if index.get(song_id).map(String::as_str) != Some(key) {
+        index.insert(song_id.to_string(), key.to_string());
+        write_lyrics_index(app, &index).await?;
+    }
+    Ok(())
 }
 
 async fn read_cached_lyrics_text(
@@ -541,12 +556,8 @@ pub async fn lyrics_save_selection_rust(
 ) -> Result<LyricsSaveResult, String> {
     let key = cache_key_for_song(&song);
     write_text(&app, &key, &candidate.raw).await?;
-    if let Some(song_id) = song.id.as_ref() {
-        let mut index = read_lyrics_index(&app).await?;
-        if index.get(song_id) != Some(&key) {
-            index.insert(song_id.clone(), key.clone());
-            write_lyrics_index(&app, &index).await?;
-        }
+    if let Some(song_id) = song.id.as_deref() {
+        set_lyrics_index_entry(&app, song_id, &key).await?;
     }
     Ok(LyricsSaveResult {
         status: "ready".to_string(),
@@ -563,12 +574,8 @@ pub async fn lyrics_load_rust(
     let key = cache_key_for_song(&song);
     if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
         if validate_lyrics_quality(&text) {
-            if let Some(song_id) = song.id.as_ref() {
-                let mut index = read_lyrics_index(&app).await?;
-                if index.get(song_id) != Some(&key) {
-                    index.insert(song_id.clone(), key.clone());
-                    write_lyrics_index(&app, &index).await?;
-                }
+            if let Some(song_id) = song.id.as_deref() {
+                set_lyrics_index_entry(&app, song_id, &key).await?;
             }
             if cache_key != key {
                 let _ = write_text(&app, &key, &text).await;
@@ -612,12 +619,8 @@ pub async fn lyrics_load_rust(
     }
 
     write_text(&app, &key, &best.raw).await?;
-    if let Some(song_id) = song.id.as_ref() {
-        let mut index = read_lyrics_index(&app).await?;
-        if index.get(song_id) != Some(&key) {
-            index.insert(song_id.clone(), key.clone());
-            write_lyrics_index(&app, &index).await?;
-        }
+    if let Some(song_id) = song.id.as_deref() {
+        set_lyrics_index_entry(&app, song_id, &key).await?;
     }
 
     Ok(build_lyrics_result(&best.raw, &key, false))

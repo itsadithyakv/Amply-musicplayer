@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use reqwest::Url;
 use serde::Deserialize;
 
-use super::cache::{read_json, write_json};
+use super::cache::{cache_all, cache_get, cache_put, CacheKind};
 use super::http::{fetch_json, musicbrainz_throttle};
 use super::normalize::{normalize_track_title, slugify};
-use super::{now_unix, AlbumTrack, AlbumTracklist, ALBUM_TRACKLIST_CACHE_PATH};
+use super::{now_unix, AlbumTrack, AlbumTracklist};
 
 fn get_album_tracklist_key(artist: &str, album: &str) -> String {
     format!(
@@ -96,9 +96,7 @@ fn parse_release_tracks(payload: &MbReleaseLookup) -> Vec<AlbumTrack> {
 pub async fn load_album_tracklist_cache_rust(
     app: tauri::AppHandle,
 ) -> Result<HashMap<String, AlbumTracklist>, String> {
-    Ok(read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
-        .await?
-        .unwrap_or_default())
+    cache_all::<AlbumTracklist>(&app, CacheKind::AlbumTracklist).await
 }
 
 #[tauri::command]
@@ -110,13 +108,10 @@ pub async fn load_album_tracklist_rust(
     if artist.trim().is_empty() || album.trim().is_empty() {
         return Ok(None);
     }
-    let mut cache = read_json::<HashMap<String, AlbumTracklist>>(&app, ALBUM_TRACKLIST_CACHE_PATH)
-        .await?
-        .unwrap_or_default();
     let key = get_album_tracklist_key(&artist, &album);
-    if let Some(cached) = cache.get(&key) {
+    if let Some(cached) = cache_get::<AlbumTracklist>(&app, CacheKind::AlbumTracklist, &key).await? {
         if !cached.tracks.is_empty() {
-            return Ok(Some(cached.clone()));
+            return Ok(Some(cached));
         }
     }
 
@@ -166,7 +161,6 @@ pub async fn load_album_tracklist_rust(
         source: "musicbrainz".to_string(),
         fetched_at: now_unix(),
     };
-    cache.insert(key, entry.clone());
-    write_json(&app, ALBUM_TRACKLIST_CACHE_PATH, &cache).await?;
+    cache_put(&app, CacheKind::AlbumTracklist, &key, &entry).await?;
     Ok(Some(entry))
 }
