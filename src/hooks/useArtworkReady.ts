@@ -1,9 +1,10 @@
+import { getFlag } from '@/services/runtimeFlags';
 import { useSyncExternalStore } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 
 const isLowMemoryStartup = (): boolean =>
   typeof window !== 'undefined' &&
-  (window as unknown as { __AMP_LOW_MEMORY_MODE__?: boolean; __AMP_LOW_PERF__?: boolean }).__AMP_LOW_MEMORY_MODE__ === true;
+  getFlag('lowMemoryMode') === true;
 
 let readyOnce = false;
 let startupTimer: number | null = null;

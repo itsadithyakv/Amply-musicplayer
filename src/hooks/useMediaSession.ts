@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { playbackActions, usePlayerStore } from '@/store/playerStore';
 import { isTauri } from '@/services/storageService';
 import { useCurrentSongSnapshot } from '@/hooks/useLibraryViews';
+import { recordPerfEvent } from '@/services/perfDiagnostics';
 
 export const useMediaSession = (): void => {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
@@ -11,6 +12,11 @@ export const useMediaSession = (): void => {
   const resumePlayback = usePlayerStore((state) => state.resumePlayback);
   const togglePlayPause = usePlayerStore((state) => state.togglePlayPause);
   const { song } = useCurrentSongSnapshot();
+  const songId = song?.id ?? null;
+  const songTitle = song?.title ?? '';
+  const songArtist = song?.artist ?? '';
+  const songAlbum = song?.album ?? '';
+  const songAlbumArt = song?.albumArt ?? null;
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
@@ -23,11 +29,11 @@ export const useMediaSession = (): void => {
 
     const mediaSession = navigator.mediaSession;
     const MediaMeta = (window as typeof window & { MediaMetadata?: typeof MediaMetadata }).MediaMetadata;
-    if (song && MediaMeta) {
-      const artwork = song.albumArt
+    if (songId && MediaMeta) {
+      const artwork = songAlbumArt
         ? [
             {
-              src: song.albumArt,
+              src: songAlbumArt,
               sizes: '512x512',
               type: 'image/png',
             },
@@ -35,9 +41,9 @@ export const useMediaSession = (): void => {
         : [];
 
       mediaSession.metadata = new MediaMeta({
-        title: song.title,
-        artist: song.artist,
-        album: song.album,
+        title: songTitle,
+        artist: songArtist,
+        album: songAlbum,
         artwork,
       });
     } else {
@@ -45,7 +51,7 @@ export const useMediaSession = (): void => {
     }
 
     mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-  }, [song?.id, song?.title, song?.artist, song?.album, song?.albumArt, isPlaying]);
+  }, [songId, songTitle, songArtist, songAlbum, songAlbumArt, isPlaying]);
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
@@ -123,6 +129,8 @@ export const useMediaSession = (): void => {
       } else {
         dispose();
       }
+    }).catch((error) => {
+      recordPerfEvent('media-session.listen-error', { error: error instanceof Error ? error.message : String(error) });
     });
 
     return () => {

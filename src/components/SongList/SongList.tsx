@@ -1,3 +1,5 @@
+import { usePersistedPreference } from '@/hooks/usePersistedPreference';
+import { oneOf } from '@/services/preferences';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
@@ -25,6 +27,16 @@ type SongSort =
   | 'album_asc'
   | 'duration_desc'
   | 'most_played';
+
+const isSongSort = oneOf<SongSort>([
+  'recently_added',
+  'title_asc',
+  'title_desc',
+  'artist_asc',
+  'album_asc',
+  'duration_desc',
+  'most_played',
+]);
 
 const sortOptions: Array<{ label: string; value: SongSort }> = [
   { label: 'Recently Added', value: 'recently_added' },
@@ -445,23 +457,15 @@ const SongList = ({ songs, persistKey, initialSort = 'recently_added', hideSort 
   const customPlaylists = useLibraryStore((state) => state.customPlaylists);
   const [editingSongId, setEditingSongId] = useState<string | null>(null);
   const genreListId = useMemo(() => `amply-genre-options-${persistKey ?? 'library'}`, [persistKey]);
-  const storageKey = !hideSort && persistKey ? `amply-songlist-sort:${persistKey}` : null;
-  const [sortBy, setSortBy] = useState<SongSort>(() => {
-    if (!storageKey || typeof window === 'undefined') {
-      return initialSort;
-    }
-
-    const stored = window.localStorage.getItem(storageKey) as SongSort | null;
-    return stored ?? initialSort;
-  });
-
-  useEffect(() => {
-    if (!storageKey || typeof window === 'undefined') {
-      return;
-    }
-
-    window.localStorage.setItem(storageKey, sortBy);
-  }, [storageKey, sortBy]);
+  const persistSort = !hideSort && Boolean(persistKey);
+  const [persistedSort, setPersistedSort] = usePersistedPreference<SongSort>(
+    `songlist-sort:${persistKey ?? 'default'}`,
+    isSongSort,
+    initialSort,
+  );
+  const [localSort, setLocalSort] = useState<SongSort>(initialSort);
+  const sortBy = persistSort ? persistedSort : localSort;
+  const setSortBy = persistSort ? setPersistedSort : setLocalSort;
 
   const sortedSongs = useMemo(() => {
     if (hideSort) {

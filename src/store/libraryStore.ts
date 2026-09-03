@@ -1,3 +1,4 @@
+import { getFlag } from '@/services/runtimeFlags';
 import { dayKey, isoWeekKey, seedFromKey } from '@/utils/dateSeed';
 import { yieldToIdle } from '@/utils/idle';
 import { create } from 'zustand';
@@ -201,6 +202,33 @@ let smartPlaylistBuildInFlight = false;
 let lastHeavyMixRegenAt = 0;
 const HEAVY_MIX_REGEN_COOLDOWN_MS = 10 * 60 * 1000;
 let smartPlaylistRefreshHandle: number | null = null;
+let heavyMixRetryHandle: number | null = null;
+let libraryInitStarted = false;
+
+/** (Re)arm the single smart-playlist refresh timer, clearing any previous one. */
+const armSmartPlaylistRefresh = (run: () => void, delayMs: number): void => {
+  if (smartPlaylistRefreshHandle !== null) {
+    window.clearTimeout(smartPlaylistRefreshHandle);
+  }
+  smartPlaylistRefreshHandle = window.setTimeout(() => {
+    smartPlaylistRefreshHandle = null;
+    run();
+  }, delayMs);
+};
+
+/** Single retry slot for the heavy mix refresh so blocked runs cannot multiply. */
+const rescheduleHeavyMixRefresh = (task: () => void, delayMs: number): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (heavyMixRetryHandle !== null) {
+    window.clearTimeout(heavyMixRetryHandle);
+  }
+  heavyMixRetryHandle = window.setTimeout(() => {
+    heavyMixRetryHandle = null;
+    task();
+  }, delayMs);
+};
 let listeningProfileRefreshHandle: number | null = null;
 let pendingSmartPlaylistRefresh:
   | {
@@ -220,7 +248,7 @@ const onlineRecommendationEnabledFromWindow = (): boolean | undefined => {
   if (typeof window === 'undefined') {
     return undefined;
   }
-  const flag = (window as unknown as { __AMP_ONLINE_RECS_ENABLED__?: boolean }).__AMP_ONLINE_RECS_ENABLED__;
+  const flag = getFlag('onlineRecsEnabled');
   return typeof flag === 'boolean' ? flag : undefined;
 };
 
@@ -670,11 +698,11 @@ const refreshSmartPlaylists = async (
   const songsById = new Map(songs.map((song) => [song.id, song]));
   const discoveryFromGlobal =
     typeof window !== 'undefined'
-      ? (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__
+      ? getFlag('discoveryIntensity')
       : undefined;
   const randomnessFromGlobal =
     typeof window !== 'undefined'
-      ? (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__
+      ? getFlag('randomnessIntensity')
       : undefined;
   let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
   let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
@@ -770,11 +798,7 @@ const shouldBlockMixRegen = (): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
-  const flags = window as unknown as {
-    __AMP_IS_PLAYING__?: boolean;
-    __AMP_MIX_REGEN_PAUSED__?: boolean;
-  };
-  return flags.__AMP_MIX_REGEN_PAUSED__ === true && flags.__AMP_IS_PLAYING__ === true;
+    return getFlag('mixRegenPaused') === true && getFlag('isPlaying') === true;
 };
 
 const refreshSmartPlaylistsLite = async (
@@ -794,11 +818,11 @@ const refreshSmartPlaylistsLite = async (
   const listeningProfile = useLibraryStore.getState().listeningProfile;
   const discoveryFromGlobal =
     typeof window !== 'undefined'
-      ? (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__
+      ? getFlag('discoveryIntensity')
       : undefined;
   const randomnessFromGlobal =
     typeof window !== 'undefined'
-      ? (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__
+      ? getFlag('randomnessIntensity')
       : undefined;
   let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
   let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
@@ -890,17 +914,13 @@ const scheduleIdleHeavyMixRefresh = (
 ): void => {
   const run = async () => {
     if (shouldBlockMixRegen()) {
-      if (typeof window !== 'undefined') {
-        window.setTimeout(() => scheduleIdleHeavyMixRefresh(songs, overrides, seed, delayMs), getNonCriticalDelay(4000));
-      }
+      rescheduleHeavyMixRefresh(() => scheduleIdleHeavyMixRefresh(songs, overrides, seed, delayMs), getNonCriticalDelay(4000));
       return;
     }
     const now = Date.now();
     if (lastHeavyMixRegenAt && now - lastHeavyMixRegenAt < HEAVY_MIX_REGEN_COOLDOWN_MS) {
       const wait = Math.max(1000, HEAVY_MIX_REGEN_COOLDOWN_MS - (now - lastHeavyMixRegenAt));
-      if (typeof window !== 'undefined') {
-        window.setTimeout(() => scheduleIdleHeavyMixRefresh(songs, overrides, seed, delayMs), getNonCriticalDelay(wait));
-      }
+      rescheduleHeavyMixRefresh(() => scheduleIdleHeavyMixRefresh(songs, overrides, seed, delayMs), getNonCriticalDelay(wait));
       return;
     }
     smartPlaylistBuildInFlight = true;
@@ -943,10 +963,7 @@ const scheduleSmartPlaylistRefresh = (
   const run = async () => {
     if (smartPlaylistBuildInFlight) {
       if (typeof window !== 'undefined') {
-        smartPlaylistRefreshHandle = window.setTimeout(() => {
-          smartPlaylistRefreshHandle = null;
-          void run();
-        }, getNonCriticalDelay(Math.min(delayMs, 1200)));
+        armSmartPlaylistRefresh(() => void run(), getNonCriticalDelay(Math.min(delayMs, 1200)));
       }
       return;
     }
@@ -957,10 +974,7 @@ const scheduleSmartPlaylistRefresh = (
     }
     if (shouldBlockMixRegen() || shouldThrottleNonCriticalWork()) {
       pendingSmartPlaylistRefresh = next;
-      smartPlaylistRefreshHandle = window.setTimeout(() => {
-        smartPlaylistRefreshHandle = null;
-        void run();
-      }, getNonCriticalDelay(Math.max(delayMs, 4000)));
+      armSmartPlaylistRefresh(() => void run(), getNonCriticalDelay(Math.max(delayMs, 4000)));
       recordPerfEvent('library.smart-playlists.refresh-paused', {
         includeHeavy,
         songs: next.songs.length,
@@ -993,14 +1007,7 @@ const scheduleSmartPlaylistRefresh = (
     return;
   }
 
-  if (smartPlaylistRefreshHandle !== null) {
-    window.clearTimeout(smartPlaylistRefreshHandle);
-  }
-
-  smartPlaylistRefreshHandle = window.setTimeout(() => {
-    smartPlaylistRefreshHandle = null;
-    void run();
-  }, getNonCriticalDelay(delayMs));
+  armSmartPlaylistRefresh(() => void run(), getNonCriticalDelay(delayMs));
 };
 
 const scheduleListeningProfileRefresh = (songs: Song[]): void => {
@@ -1016,7 +1023,7 @@ const scheduleListeningProfileRefresh = (songs: Song[]): void => {
   listeningProfileRefreshHandle = window.setTimeout(() => {
     listeningProfileRefreshHandle = null;
     const lastInteraction =
-      (window as unknown as { __AMP_LAST_INTERACTION__?: number }).__AMP_LAST_INTERACTION__ ?? 0;
+      getFlag('lastInteractionAt') ?? 0;
     const recentlyActive = Date.now() - lastInteraction < 15_000;
     if (recentlyActive || shouldBlockMixRegen() || shouldThrottleNonCriticalWork()) {
       scheduleListeningProfileRefresh(songs);
@@ -1115,7 +1122,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const maxMsPerRun = 4500;
       const shouldPause = () => {
         if (typeof window !== 'undefined') {
-          const isPlaying = (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
+          const isPlaying = getFlag('isPlaying') === true;
           if (!isPlaying) {
             return false;
           }
@@ -1123,14 +1130,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         return performance.now() - runStart > maxMsPerRun;
       };
 
-      const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-      const metadataPaused = settings.metadataFetchPaused ?? false;
-      const isPlaying =
-        typeof window !== 'undefined' &&
-        (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
-      if (settings.gameMode || metadataPaused || isPlaying) {
+      const gameMode = getFlag('gameMode');
+      const metadataPaused = getFlag('metadataPaused');
+      const isPlaying = getFlag('isPlaying');
+      if (gameMode || metadataPaused || isPlaying) {
         recordPerfEvent('metadata.bulk.paused', {
-          reason: metadataPaused ? 'user-paused' : settings.gameMode ? 'game-mode' : 'playback-active',
+          reason: metadataPaused ? 'user-paused' : gameMode ? 'game-mode' : 'playback-active',
         });
         set({
           metadataFetch: {
@@ -1143,7 +1148,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             pending: !metadataPaused,
             message: metadataPaused
               ? 'Paused by user. Resume from Settings when ready.'
-              : settings.gameMode
+              : gameMode
                 ? 'Game Mode pauses bulk metadata fetching.'
                 : 'Paused during playback. Current song metadata still updates.',
           },
@@ -1185,7 +1190,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
       const seenArtists = new Set<string>();
       let artistCount = 0;
-      let lyricCount = 0;
+      const lyricCount = 0;
       let genreCount = 0;
       let done = 0;
       let lastUpdate = performance.now();
@@ -1283,9 +1288,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       }
 
       if (typeof window !== 'undefined') {
-        const flags = window as unknown as { __AMP_CURRENT_SONG_ID__?: string | null; __AMP_UP_NEXT__?: string[] };
-        const currentId = flags.__AMP_CURRENT_SONG_ID__ ?? null;
-        const upNext = Array.isArray(flags.__AMP_UP_NEXT__) ? flags.__AMP_UP_NEXT__ : [];
+                const currentId = getFlag('currentSongId') ?? null;
+        const upNext = Array.isArray(getFlag('upNext')) ? getFlag('upNext') : [];
         const nextIndex = new Map<string, number>(upNext.map((id, index) => [id, index]));
         pendingEntries.sort((a, b) => {
           const aSong = a.song;
@@ -1328,7 +1332,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         const now = performance.now();
         const isPlaying =
           typeof window !== 'undefined' &&
-          (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
+          getFlag('isPlaying') === true;
         const minInterval = isPlaying ? 900 : 300;
         if (!force && now - lastUpdate < minInterval) {
           return;
@@ -1452,11 +1456,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         }
       }
 
-      const flags =
-        typeof window !== 'undefined'
-          ? (window as unknown as { __AMP_IS_PLAYING__?: boolean; __AMP_LOW_PERF__?: boolean })
-          : {};
-      const concurrency = flags.__AMP_LOW_PERF__ ? 2 : flags.__AMP_IS_PLAYING__ ? 1 : 5;
+            const concurrency = getFlag('lowPerf') ? 2 : getFlag('isPlaying') ? 1 : 5;
       let abortedByUser = false;
       let taskIndex = 0;
 
@@ -1464,11 +1464,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         while (taskIndex < metadataTasks.length && !abortedByUser && !shouldPause()) {
           if (typeof window !== 'undefined') {
             const paused =
-              (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ === true;
+              getFlag('metadataPaused') === true;
             const playing =
-              (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
+              getFlag('isPlaying') === true;
             const gameMode =
-              (window as unknown as { __AMP_GAME_MODE__?: boolean }).__AMP_GAME_MODE__ === true;
+              getFlag('gameMode') === true;
             if (paused || playing || gameMode) {
               abortedByUser = true;
               break;
@@ -1552,9 +1552,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     if (get().metadataFetch.running && !allowWhenPaused) {
       return;
     }
-    const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-    const metadataPaused = settings.metadataFetchPaused ?? false;
-    if ((settings.gameMode || metadataPaused) && !allowWhenPaused) {
+    const metadataPaused = getFlag('metadataPaused');
+    if ((getFlag('gameMode') || metadataPaused) && !allowWhenPaused) {
       return;
     }
     const forceRetry = options?.forceRetry === true;
@@ -1568,6 +1567,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           return;
         }
         metadataPlayRetryCache.set(songId, Date.now());
+        if (metadataPlayRetryCache.size > 500) {
+          const oldest = metadataPlayRetryCache.keys().next().value;
+          if (oldest !== undefined) {
+            metadataPlayRetryCache.delete(oldest);
+          }
+        }
       }
     }
     const song = get().getSongById(songId);
@@ -1753,9 +1758,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   initialize: async () => {
-    if (get().initialized) {
+    if (get().initialized || libraryInitStarted) {
       return;
     }
+    libraryInitStarted = true;
     markPerf('library.initialize');
     await measurePerfAsync('library.initialize.total', async () => {
       await ensureStorageDirs();

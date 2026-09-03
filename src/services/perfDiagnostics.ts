@@ -1,4 +1,5 @@
 import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { getFlag } from '@/services/runtimeFlags';
 
 type PerfEvent = {
   id: number;
@@ -24,9 +25,10 @@ type BackgroundTaskStatus = 'completed' | 'failed' | 'skipped' | 'cancelled';
 const PERF_PATH = 'system/perf_diagnostics.json';
 const MAX_EVENTS = 400;
 const PERF_MODE_STORAGE_KEY = 'amply.perf-mode';
+const PERSIST_DELAY_MS = 1200;
 const persistedDefault: PerfSnapshot = {
-  startupAt: Date.now(),
-  updatedAt: Date.now(),
+  startupAt: 0,
+  updatedAt: 0,
   events: [],
   counters: {},
   lastMeasures: {},
@@ -37,23 +39,64 @@ const measureStarts = new Map<string, number>();
 const devWarningLastSeen = new Map<string, number>();
 let nextEventId = 0;
 let hydrated = false;
-let snapshot: PerfSnapshot = { ...persistedDefault };
-let perfMode: PerfMode =
-  typeof import.meta !== 'undefined' && import.meta.env?.DEV ? 'full' : 'sampled';
 
-const notify = (): void => {
-  listeners.forEach((listener) => listener());
+// Snapshot state is kept as mutable primitives plus a fixed-capacity ring buffer so that recording an
+// event never rebuilds arrays or objects. `getPerformanceSnapshot()` materialises (and caches) a
+// PerfSnapshot on demand; `version` tells it when that cache is stale.
+const eventRing: Array<PerfEvent | undefined> = new Array(MAX_EVENTS);
+let ringHead = 0; // slot the next event is written to
+let ringSize = 0;
+let startupAt = Date.now();
+let updatedAt = startupAt;
+let counters: Record<string, number> = {};
+let lastMeasures: Record<string, number> = {};
+let version = 0;
+let cachedSnapshot: PerfSnapshot | null = null;
+let cachedSnapshotVersion = -1;
+let persistTimer: number | null = null;
+
+const defaultPerfMode: PerfMode =
+  typeof import.meta !== 'undefined' && import.meta.env?.DEV ? 'full' : 'sampled';
+// `undefined` = localStorage not consulted yet; `null` = consulted, nothing stored.
+let storedPerfMode: PerfMode | null | undefined;
+
+const isPerfMode = (value: unknown): value is PerfMode =>
+  value === 'off' || value === 'sampled' || value === 'full';
+
+const readStoredPerfMode = (): PerfMode | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const explicit = window.localStorage.getItem(PERF_MODE_STORAGE_KEY);
+    return isPerfMode(explicit) ? explicit : null;
+  } catch {
+    return null;
+  }
 };
 
 const resolvePerfMode = (): PerfMode => {
+  if (storedPerfMode === undefined) {
+    storedPerfMode = readStoredPerfMode();
+  }
+  return storedPerfMode ?? defaultPerfMode;
+};
+
+/** Override the perf mode (persisted in localStorage). Pass `null` to fall back to the build default. */
+export const setPerfMode = (mode: PerfMode | null): void => {
+  storedPerfMode = mode;
   if (typeof window === 'undefined') {
-    return perfMode;
+    return;
   }
-  const explicit = window.localStorage.getItem(PERF_MODE_STORAGE_KEY);
-  if (explicit === 'off' || explicit === 'sampled' || explicit === 'full') {
-    return explicit;
+  try {
+    if (mode) {
+      window.localStorage.setItem(PERF_MODE_STORAGE_KEY, mode);
+    } else {
+      window.localStorage.removeItem(PERF_MODE_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage unavailable; the in-memory override still applies for this session.
   }
-  return perfMode;
 };
 
 const shouldCapture = (mode = resolvePerfMode()): boolean => mode !== 'off';
@@ -61,12 +104,7 @@ const shouldPersist = (mode = resolvePerfMode()): boolean => mode === 'full';
 
 const isDev = (): boolean => typeof import.meta !== 'undefined' && Boolean(import.meta.env?.DEV);
 
-const isPlaybackBusy = (): boolean => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  return (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ === true;
-};
+const isPlaybackBusy = (): boolean => getFlag('isPlaying');
 
 const warnDevBudget = (key: string, message: string, data?: Record<string, unknown>): void => {
   if (!isDev() || typeof console === 'undefined') {
@@ -81,12 +119,57 @@ const warnDevBudget = (key: string, message: string, data?: Record<string, unkno
   console.warn(`[Amply perf] ${message}`, data ?? {});
 };
 
-const persist = (): void => {
-  if (!shouldPersist()) {
+const notify = (): void => {
+  listeners.forEach((listener) => listener());
+};
+
+const resetEvents = (): void => {
+  eventRing.fill(undefined);
+  ringHead = 0;
+  ringSize = 0;
+};
+
+const appendEvent = (event: PerfEvent): void => {
+  eventRing[ringHead] = event;
+  ringHead = (ringHead + 1) % MAX_EVENTS;
+  if (ringSize < MAX_EVENTS) {
+    ringSize += 1;
+  }
+};
+
+const materialiseEvents = (): PerfEvent[] => {
+  const events: PerfEvent[] = new Array(ringSize);
+  const start = (ringHead - ringSize + MAX_EVENTS) % MAX_EVENTS;
+  for (let index = 0; index < ringSize; index += 1) {
+    events[index] = eventRing[(start + index) % MAX_EVENTS] as PerfEvent;
+  }
+  return events;
+};
+
+export const getPerformanceSnapshot = (): PerfSnapshot => {
+  if (cachedSnapshot && cachedSnapshotVersion === version) {
+    return cachedSnapshot;
+  }
+  cachedSnapshot = {
+    startupAt,
+    updatedAt,
+    events: materialiseEvents(),
+    counters: { ...counters },
+    lastMeasures: { ...lastMeasures },
+  };
+  cachedSnapshotVersion = version;
+  return cachedSnapshot;
+};
+
+// Coalesce persistence so a burst of events materialises the snapshot once, not once per event.
+const schedulePersist = (): void => {
+  if (typeof window === 'undefined' || persistTimer !== null) {
     return;
   }
-  snapshot.updatedAt = Date.now();
-  void writeStorageJsonDebounced(PERF_PATH, snapshot, 1200);
+  persistTimer = window.setTimeout(() => {
+    persistTimer = null;
+    void writeStorageJsonDebounced(PERF_PATH, getPerformanceSnapshot(), 200);
+  }, PERSIST_DELAY_MS);
 };
 
 const pushEvent = (event: Omit<PerfEvent, 'id' | 'at'>): void => {
@@ -95,38 +178,19 @@ const pushEvent = (event: Omit<PerfEvent, 'id' | 'at'>): void => {
     return;
   }
 
-  const counters = {
-    ...snapshot.counters,
-    [event.name]: (snapshot.counters[event.name] ?? 0) + 1,
-  };
-  const lastMeasures =
-    typeof event.durationMs === 'number'
-      ? {
-          ...snapshot.lastMeasures,
-          [event.name]: event.durationMs,
-        }
-      : snapshot.lastMeasures;
-
-  snapshot = {
-    ...snapshot,
-    updatedAt: Date.now(),
-    counters,
-    lastMeasures,
-    events:
-      mode === 'full'
-        ? [
-            ...snapshot.events,
-            {
-              id: ++nextEventId,
-              at: Date.now(),
-              ...event,
-            },
-          ].slice(-MAX_EVENTS)
-        : snapshot.events,
-  };
+  const now = Date.now();
+  updatedAt = now;
+  counters[event.name] = (counters[event.name] ?? 0) + 1;
+  if (typeof event.durationMs === 'number') {
+    lastMeasures[event.name] = event.durationMs;
+  }
+  if (mode === 'full') {
+    appendEvent({ id: ++nextEventId, at: now, ...event });
+  }
+  version += 1;
   notify();
   if (mode === 'full') {
-    persist();
+    schedulePersist();
   }
 };
 
@@ -135,29 +199,28 @@ export const hydratePerfDiagnostics = async (): Promise<void> => {
     return;
   }
   hydrated = true;
-  perfMode = resolvePerfMode();
-  if (!shouldPersist(perfMode)) {
-    snapshot = {
-      ...persistedDefault,
-      startupAt: Date.now(),
-      updatedAt: Date.now(),
-      events: [],
-      counters: {},
-      lastMeasures: {},
-    };
+  const mode = resolvePerfMode();
+  if (!shouldPersist(mode)) {
+    startupAt = Date.now();
+    updatedAt = startupAt;
+    resetEvents();
+    counters = {};
+    lastMeasures = {};
+    version += 1;
     notify();
     return;
   }
 
   const persisted = await readStorageJson<PerfSnapshot>(PERF_PATH, persistedDefault);
-  snapshot = {
-    startupAt: persisted.startupAt || Date.now(),
-    updatedAt: persisted.updatedAt || Date.now(),
-    events: Array.isArray(persisted.events) ? persisted.events.slice(-MAX_EVENTS) : [],
-    counters: persisted.counters ?? {},
-    lastMeasures: persisted.lastMeasures ?? {},
-  };
-  nextEventId = snapshot.events[snapshot.events.length - 1]?.id ?? 0;
+  startupAt = persisted.startupAt || Date.now();
+  updatedAt = persisted.updatedAt || Date.now();
+  resetEvents();
+  const events = Array.isArray(persisted.events) ? persisted.events.slice(-MAX_EVENTS) : [];
+  events.forEach(appendEvent);
+  counters = persisted.counters ?? {};
+  lastMeasures = persisted.lastMeasures ?? {};
+  nextEventId = events[events.length - 1]?.id ?? 0;
+  version += 1;
   notify();
 };
 
@@ -261,8 +324,6 @@ export const recordSongArrayReplacement = (reason: string, data?: Record<string,
     data: { reason, ...(data ?? {}) },
   });
 };
-
-export const getPerformanceSnapshot = (): PerfSnapshot => snapshot;
 
 export const subscribePerformanceSnapshot = (listener: () => void): (() => void) => {
   listeners.add(listener);

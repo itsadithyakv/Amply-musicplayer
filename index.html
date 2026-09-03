@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/src/assets/icons/LogoAmply.png" />
     <title>Amply</title>
+    <style>
+      html { background: #ece8e1; }
+      html[data-theme='dark'] { background: #1c1b19; }
+    </style>
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('amply:pref:theme');
+          document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

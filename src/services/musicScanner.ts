@@ -77,11 +77,8 @@ export const scanMusicFolder = async (folder?: string): Promise<Song[]> => {
     return demoSongs;
   }
 
-  try {
-    const scanned = await invoke<ScannedSong[]>('scan_music', { folder: folder?.trim() || null });
-    // Artwork fetching is deferred to the idle metadata pipeline to keep scans fast.
-    return scanned.map(normalizeSong);
-  } catch {
-    return [];
-  }
+  // Errors propagate: libraryStore.scanLibrary owns the try/catch and surfaces them as `scanError`.
+  const scanned = await invoke<ScannedSong[]>('scan_music', { folder: folder?.trim() || null });
+  // Artwork fetching is deferred to the idle metadata pipeline to keep scans fast.
+  return scanned.map(normalizeSong);
 };

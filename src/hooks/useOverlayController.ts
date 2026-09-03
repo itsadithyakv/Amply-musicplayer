@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { PhysicalPosition, currentMonitor } from '@tauri-apps/api/window';
 import { emitTo, listen } from '@tauri-apps/api/event';
@@ -55,13 +55,16 @@ export const useOverlayController = (enabled: boolean): void => {
   });
   const lastPayloadKeyRef = useRef<string | null>(null);
 
-  payloadRef.current = {
-    title: song?.title?.trim() || 'Nothing Playing',
-    artist: song?.artist?.trim() || 'Amply',
-    albumArt: song?.albumArt?.trim() || null,
-    isPlaying,
-    spinningArtwork: overlaySpinningArtwork,
-  };
+  // Refreshed before the effects below run, so `emitOverlayState` always reads the current payload.
+  useLayoutEffect(() => {
+    payloadRef.current = {
+      title: song?.title?.trim() || 'Nothing Playing',
+      artist: song?.artist?.trim() || 'Amply',
+      albumArt: song?.albumArt?.trim() || null,
+      isPlaying,
+      spinningArtwork: overlaySpinningArtwork,
+    };
+  }, [song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork]);
 
   const emitOverlayState = async (force = false): Promise<void> => {
     const payload = payloadRef.current;

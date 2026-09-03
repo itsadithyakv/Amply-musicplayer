@@ -103,15 +103,16 @@ const scoreSongForQuery = (song: Song, tokens: string[]): number => {
   return score;
 };
 
-const filterAndRankSongsLocal = (songs: Song[], query: string, limit = Number.POSITIVE_INFINITY): Song[] => {
+/** Ranks `songs` against `query`. An empty or whitespace-only query yields no results. */
+export const filterAndRankSongs = (songs: Song[], query: string, limit = Number.POSITIVE_INFINITY): Song[] => {
   const normalizedQuery = normalize(query);
   if (!normalizedQuery) {
-    return songs;
+    return [];
   }
 
   const tokens = tokenize(normalizedQuery);
   if (!tokens.length) {
-    return songs;
+    return [];
   }
 
   const finiteLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : Number.POSITIVE_INFINITY;
@@ -146,16 +147,4 @@ const filterAndRankSongsLocal = (songs: Song[], query: string, limit = Number.PO
   matches.sort(compareMatches);
 
   return matches.map((entry) => entry.song);
-};
-
-export const filterAndRankSongs = async (
-  songs: Song[],
-  query: string,
-  limit = Number.POSITIVE_INFINITY,
-): Promise<Song[]> => {
-  const normalizedQuery = normalize(query);
-  if (!normalizedQuery) {
-    return [];
-  }
-  return filterAndRankSongsLocal(songs, normalizedQuery, limit);
 };

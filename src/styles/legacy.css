@@ -1,0 +1,254 @@
+/*
+ * LEGACY COMPATIBILITY LAYER — maps the pre-neumorphism class names and CSS variables that
+ * un-migrated pages still reference onto the new recipes. Every rule here is scheduled for
+ * deletion once the page that uses it has been migrated (Phase A6). Do not add to this file.
+ */
+:root {
+  --bg-primary: rgb(var(--amply-bg));
+  --bg-secondary: rgb(var(--amply-bg-deep));
+  --bg-surface: rgb(var(--amply-bg));
+  --bg-panel: rgb(var(--amply-bg));
+  --bg-card: rgb(var(--amply-bg));
+  --bg-hover: rgb(var(--amply-bg-deep));
+  --border: rgb(var(--amply-edge) / var(--edge-a));
+  --text-primary: rgb(var(--amply-text-primary));
+  --text-secondary: rgb(var(--amply-text-secondary));
+  --text-muted: rgb(var(--amply-text-muted));
+  --accent: rgb(var(--amply-accent));
+  --accent-hover: rgb(var(--amply-accent-hover));
+  --accent-blue: rgb(var(--amply-info));
+  --accent-green: rgb(var(--amply-success));
+  --accent-purple: rgb(var(--amply-info));
+  --icon-filter: none;
+  --icon-muted-opacity: 0.72;
+  --soft-white-overlay: rgb(var(--amply-shadow-light) / 0.35);
+  --soft-white-overlay-strong: rgb(var(--amply-shadow-light) / 0.5);
+  --card-glow: transparent;
+  --text-shadow-color: transparent;
+  --artwork-shadow: var(--neu-raised-sm-shadow);
+  --artwork-border: transparent;
+  --range-track: rgb(var(--amply-bg-deep));
+  --eq-grid-line: rgb(var(--amply-edge) / 0.25);
+  --lyrics-surface-base: rgb(var(--amply-bg));
+  --lyrics-surface-overlay-start: rgb(var(--amply-bg) / 0.95);
+  --lyrics-surface-overlay-end: rgb(var(--amply-bg) / 0.92);
+  --lyrics-surface-mix-strong: 30%;
+  --lyrics-surface-mix-soft: 16%;
+  --control-surface: rgb(var(--amply-bg));
+  --control-border: rgb(var(--amply-edge) / var(--edge-a));
+  --divider-soft: rgb(var(--amply-edge) / var(--edge-a));
+  --sidebar-active: rgb(var(--amply-bg));
+  --sidebar-hover: rgb(var(--amply-bg-deep) / 0.6);
+  --sidebar-selected-shadow: var(--neu-pressed-sm-shadow);
+  --modal-backdrop: rgb(var(--amply-backdrop) / 0.55);
+  --soft-card-start: rgb(var(--amply-bg));
+  --soft-card-end: rgb(var(--amply-bg));
+  --amply-shadow-card: var(--neu-raised-sm-shadow);
+  --amply-shadow-lift: var(--neu-raised-shadow);
+  --amply-shadow-glow: 0 0 0 1px rgb(var(--amply-accent) / 0.25);
+  --amply-footer-shadow: 0 -6px 14px var(--neu-l);
+  --focus-ring: 0 0 0 3px rgb(var(--amply-accent) / 0.25);
+  --radius-card: var(--radius-md);
+  --radius-xl: var(--radius-sm);
+  --radius-2xl: var(--radius-md);
+  --radius-3xl: var(--radius-lg);
+}
+
+:root[data-theme='dark'] {
+  --icon-filter: brightness(0) invert(1);
+  --icon-muted-opacity: 0.8;
+  --modal-backdrop: rgb(var(--amply-backdrop) / 0.7);
+}
+
+/* Radius shim: Tailwind's borderRadius scale was replaced; these keep old utilities working. */
+.rounded-xl {
+  border-radius: var(--radius-sm);
+}
+.rounded-2xl,
+.rounded-card {
+  border-radius: var(--radius-md);
+}
+.rounded-3xl {
+  border-radius: var(--radius-lg);
+}
+
+.app-shell {
+  background: rgb(var(--amply-bg));
+}
+
+.panel-surface {
+  background: rgb(var(--amply-bg));
+}
+
+.ui-soft-card {
+  background: rgb(var(--amply-bg));
+  box-shadow: var(--neu-raised-shadow);
+  border: 0;
+}
+
+.ui-control-surface {
+  background: rgb(var(--amply-bg));
+  box-shadow: var(--neu-pressed-sm-shadow);
+  border: 0;
+}
+
+.sidebar-nav-active,
+.sidebar-nav-active:hover,
+.playlist-card-selected-surface,
+.playlist-card-selected-surface:hover {
+  background: rgb(var(--amply-bg));
+  box-shadow: var(--neu-pressed-sm-shadow);
+  border-color: transparent;
+}
+
+.song-card-surface,
+.song-card-surface:hover {
+  background: rgb(var(--amply-bg));
+  box-shadow: var(--neu-raised-sm-shadow);
+  border: 1px solid transparent;
+}
+
+.song-row-card:hover,
+.song-row-card--current {
+  background: rgb(var(--amply-bg));
+  box-shadow: var(--neu-raised-sm-shadow);
+}
+
+.playlist-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow: var(--neu-raised-shadow);
+}
+
+.playlist-card-media {
+  position: absolute;
+  inset: 8px;
+  border-radius: calc(var(--radius-md) - 4px);
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+
+.glass-overlay {
+  display: none;
+}
+
+.playlist-text-shadow {
+  text-shadow: 0 1px 10px rgb(0 0 0 / 0.28);
+}
+
+.made-for-you-card,
+.made-for-you-card .playlist-text-shadow {
+  color: #fff;
+}
+
+.artwork-collage {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  justify-items: center;
+  align-items: center;
+  z-index: 1;
+}
+
+.artwork-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.artwork-tile--soft {
+  background: rgb(var(--amply-bg-deep));
+  box-shadow: var(--neu-pressed-sm-shadow);
+}
+
+.artwork-tile--soft > * {
+  position: relative;
+  z-index: 1;
+}
+
+.playlist-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  z-index: 3;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+
+.playlist-card:hover .playlist-play {
+  opacity: 1;
+}
+
+.play-fab {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  background: rgb(var(--amply-accent));
+  color: rgb(var(--amply-on-accent));
+  display: grid;
+  place-items: center;
+  z-index: 4;
+  box-shadow: var(--neu-raised-sm-shadow);
+}
+
+.ui-icon {
+  filter: var(--icon-filter);
+}
+
+.ui-icon--muted {
+  opacity: var(--icon-muted-opacity);
+}
+
+.ui-range-track {
+  background: var(--range-track);
+}
+
+.ui-progress-range {
+  accent-color: rgb(var(--amply-accent));
+}
+
+.ui-progress-range::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.ui-progress-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  border: 0;
+  background: rgb(var(--amply-accent));
+  box-shadow: var(--neu-raised-sm-shadow);
+}
+
+.ui-progress-range::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+.ui-progress-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--amply-accent));
+}
+
+.ui-section-divider {
+  border-color: rgb(var(--amply-edge) / var(--edge-a));
+}
+
+.ui-modal-backdrop {
+  background: var(--modal-backdrop);
+}
+
+.ui-modal-backdrop .ui-soft-card {
+  background: rgb(var(--amply-bg));
+}

@@ -5,6 +5,8 @@ import App from '@/App';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { primeStartupSafetyFlags, requestSafeModeNextStart } from '@/services/safeModeService';
 import '@/index.css';
+// Temporary compatibility layer for not-yet-migrated pages; deleted at the end of Phase A6.
+import '@/styles/legacy.css';
 
 if (window.location.hash.includes('/overlay')) {
   document.documentElement.dataset.amplyWindow = 'overlay';

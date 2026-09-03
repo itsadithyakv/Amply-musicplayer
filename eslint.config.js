@@ -12,7 +12,6 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
       'react-refresh/only-export-components': 'off',
@@ -32,7 +31,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/services/storageService.ts', 'src/services/perfDiagnostics.ts', 'src/hooks/useThemeSync.ts'],
+    files: ['src/services/storageService.ts', 'src/services/preferences.ts', 'src/services/perfDiagnostics.ts', 'src/hooks/useThemeSync.ts'],
     rules: { 'no-restricted-globals': 'off' },
   },
   {

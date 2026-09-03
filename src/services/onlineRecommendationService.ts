@@ -1,3 +1,4 @@
+import { getFlag, setFlags } from '@/services/runtimeFlags';
 import { normalizeSlug as normalizeKey, normalizeToken } from '@/utils/text';
 import type { AppSettings, OnlineRecommendationProvider, Song } from '@/types/music';
 import {
@@ -187,8 +188,7 @@ const isPlaybackBusy = (): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
-  const flags = window as unknown as { __AMP_IS_PLAYING__?: boolean };
-  return flags.__AMP_IS_PLAYING__ === true;
+    return getFlag('isPlaying') === true;
 };
 
 const bumpDiagnostic = (mutate: (next: RecommendationDiagnostics) => void): void => {
@@ -608,7 +608,7 @@ export const enableOnlineRecommendations = (settings: Partial<AppSettings>): voi
   config = normalizeConfig(settings);
   configHydrated = true;
   if (typeof window !== 'undefined') {
-    (window as unknown as { __AMP_ONLINE_RECS_ENABLED__?: boolean }).__AMP_ONLINE_RECS_ENABLED__ = config.enabled;
+    setFlags({ onlineRecsEnabled: config.enabled });
   }
   recordPerfEvent('recommendation.online.config', {
     enabled: config.enabled,

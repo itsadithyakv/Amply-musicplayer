@@ -1,8 +1,8 @@
+import { clearPreferences } from '@/services/preferences';
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 const LOCAL_PREFIX = 'amply-storage:';
-const SORT_PREFIX = 'amply-songlist-sort:';
 
 const inMemoryTextCache = new Map<string, string>();
 const browserWriteQueue = new Map<string, IdleHandle>();
@@ -103,11 +103,8 @@ export const pickMusicFolders = async (): Promise<string[]> => {
 
 export const readStorageText = async (relativePath: string): Promise<string | null> => {
   if (isTauri()) {
-    const content = await invoke<string | null>('read_storage_file', { relativePath });
-    if (content !== null) {
-      inMemoryTextCache.set(relativePath, content);
-    }
-    return content;
+    // Native reads go straight to the Rust kv store; no in-memory copy is retained.
+    return invoke<string | null>('read_storage_file', { relativePath });
   }
 
   if (typeof window === 'undefined') {
@@ -127,13 +124,13 @@ export const readStorageText = async (relativePath: string): Promise<string | nu
 };
 
 export const writeStorageText = async (relativePath: string, content: string): Promise<void> => {
-  inMemoryTextCache.set(relativePath, content);
-
   if (isTauri()) {
     await invoke('write_storage_file', { relativePath, content });
     return;
   }
 
+  // Browser mode: the in-memory map is the write buffer drained by scheduleBrowserWrite.
+  inMemoryTextCache.set(relativePath, content);
   scheduleBrowserWrite(relativePath);
 };
 
@@ -169,6 +166,7 @@ export const readStorageJson = async <T>(relativePath: string, fallback: T): Pro
 };
 
 const lastWrittenJson = new Map<string, string>();
+const LARGE_JSON_DEDUPE_BYTES = 256_000;
 
 export const writeStorageJson = async <T>(relativePath: string, value: T): Promise<void> => {
   const serialized = JSON.stringify(value, null, 2);
@@ -176,8 +174,13 @@ export const writeStorageJson = async <T>(relativePath: string, value: T): Promi
   if (last === serialized) {
     return;
   }
-  lastWrittenJson.set(relativePath, serialized);
   await writeStorageText(relativePath, serialized);
+  // Only remember the payload after a successful write, and never retain very large ones.
+  if (serialized.length <= LARGE_JSON_DEDUPE_BYTES) {
+    lastWrittenJson.set(relativePath, serialized);
+  } else {
+    lastWrittenJson.delete(relativePath);
+  }
 };
 
 const debouncedJsonWrites = new Map<
@@ -238,6 +241,7 @@ export const clearStorageCache = async (): Promise<void> => {
     lastWrittenJson.clear();
     debouncedJsonWrites.forEach((entry) => window.clearTimeout(entry.timeout));
     debouncedJsonWrites.clear();
+    clearPreferences();
     return;
   }
 
@@ -255,10 +259,11 @@ export const clearStorageCache = async (): Promise<void> => {
     if (!key) {
       continue;
     }
-    if (key.startsWith(LOCAL_PREFIX) || key.startsWith(SORT_PREFIX)) {
+    if (key.startsWith(LOCAL_PREFIX)) {
       keys.push(key);
     }
   }
 
   keys.forEach((key) => window.localStorage.removeItem(key));
+  clearPreferences();
 };

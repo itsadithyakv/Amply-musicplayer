@@ -1,3 +1,4 @@
+import { setFlags } from '@/services/runtimeFlags';
 import { readStorageJson, writeStorageJson } from '@/services/storageService';
 
 const SAFE_MODE_PATH = 'system/startup_state.json';
@@ -68,14 +69,7 @@ const publishStartupSafetyFlags = (): void => {
   if (typeof window === 'undefined') {
     return;
   }
-  const target = window as unknown as {
-    __AMP_SAFE_MODE__?: boolean;
-    __AMP_CONSTRAINED_DEVICE__?: boolean;
-    __AMP_LOW_MEMORY_MODE__?: boolean;
-  };
-  target.__AMP_SAFE_MODE__ = safeMode;
-  target.__AMP_CONSTRAINED_DEVICE__ = constrainedDevice;
-  target.__AMP_LOW_MEMORY_MODE__ = lowMemoryMode;
+  setFlags({ safeMode, constrainedDevice, lowMemoryMode });
 };
 
 export const primeStartupSafetyFlags = (): StartupSafetyState => {

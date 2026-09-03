@@ -38,6 +38,14 @@ import {
   shouldThrottleNonCriticalWork,
 } from '@/services/appScheduler';
 import { useCurrentSongSnapshot } from '@/hooks/useLibraryViews';
+import { recordPerfEvent } from '@/services/perfDiagnostics';
+
+const reportArtistProfileError = (stage: string, error: unknown): void => {
+  recordPerfEvent('now-playing.artist-profile.error', {
+    stage,
+    error: error instanceof Error ? error.message : String(error),
+  });
+};
 
 const scheduleIdle = (task: () => void, timeoutMs = 300): (() => void) => {
   return scheduleNonCriticalTask(() => {
@@ -71,6 +79,8 @@ const NowPlayingPanel = () => {
   const setAlbumQueueView = usePlayerStore((state) => state.setAlbumQueueView);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const { song } = useCurrentSongSnapshot();
+  const songId = song?.id ?? null;
+  const songGenre = song?.genre ?? null;
   const navigate = useNavigate();
   const primaryArtist = song ? getMetadataArtistName(song.artist, song.title) : null;
   const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
@@ -85,6 +95,13 @@ const NowPlayingPanel = () => {
   const idleReady = useIdleRender(300);
   const { onSongChange, shouldLoadExpensiveMetadata } = useMetadataPriority();
   const lastArtistRef = useRef<string | null>(null);
+  // Mirrors `artistProfile` for the deferred artist-load callback below, which must see the latest
+  // value without re-running the effect (and re-fetching) every time the profile changes.
+  const artistProfileRef = useRef<ArtistProfile | null>(null);
+
+  useEffect(() => {
+    artistProfileRef.current = artistProfile;
+  }, [artistProfile]);
 
   useEffect(() => {
     if (gameMode) {
@@ -92,17 +109,17 @@ const NowPlayingPanel = () => {
       return;
     }
 
-    if (!song) {
+    if (!songId) {
       setResolvedGenre('Unknown Genre');
       return;
     }
 
-    const currentGenre = song.genre?.trim() || 'Unknown Genre';
+    const currentGenre = songGenre?.trim() || 'Unknown Genre';
     setResolvedGenre(currentGenre);
 
     // Notify priority system of song change
     onSongChange();
-  }, [song?.id, song?.genre, gameMode, onSongChange]);
+  }, [songId, songGenre, gameMode, onSongChange]);
 
   useEffect(() => {
     if (gameMode) {
@@ -159,6 +176,7 @@ const NowPlayingPanel = () => {
               setArtistProfile(fresh.profile);
             }
           })
+          .catch((error) => reportArtistProfileError('retry-load', error))
           .finally(() => {
             releaseMetadata('artist', artistKey);
             if (alive) {
@@ -173,7 +191,7 @@ const NowPlayingPanel = () => {
       if (!alive) {
         return;
       }
-      if (isSameArtist && artistProfile) {
+      if (isSameArtist && artistProfileRef.current) {
         return;
       }
       setArtistLoading(true);
@@ -221,10 +239,12 @@ const NowPlayingPanel = () => {
                 setArtistProfile(fresh.profile);
               }
             })
+            .catch((error) => reportArtistProfileError('load', error))
             .finally(() => {
               releaseMetadata('artist', artistKey);
             });
         })
+        .catch((error) => reportArtistProfileError('read-cache', error))
         .finally(() => {
           if (alive) {
             setArtistLoading(false);
@@ -564,7 +584,9 @@ const NowPlayingPanel = () => {
                       forceRetry: true,
                       ignoreCooldown: true,
                       allowWhenPaused: true,
-                    }).then(() => setArtistRefreshToken((current) => current + 1));
+                    })
+                      .then(() => setArtistRefreshToken((current) => current + 1))
+                      .catch((error) => reportArtistProfileError('retry-metadata', error));
                   }}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-amply-border/60 text-amply-textSecondary transition-colors hover:text-amply-textPrimary disabled:cursor-not-allowed disabled:opacity-50"
                 >

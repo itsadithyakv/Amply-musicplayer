@@ -74,8 +74,10 @@ const OverlayPage = () => {
     resizingRef.current = true;
     const overlayWindow = getCurrentWindow();
     void (async () => {
+      // Apply the latest desired size, then re-check at most twice for hover changes that landed
+      // mid-await. Bounded so a pointer bouncing across the edge cannot keep this loop spinning.
       let applied: boolean | null = null;
-      while (applied !== desiredExpandedRef.current) {
+      for (let attempt = 0; attempt < 3 && applied !== desiredExpandedRef.current; attempt += 1) {
         const nextExpanded: boolean = desiredExpandedRef.current;
         await overlayWindow.setSize(new LogicalSize(
           nextExpanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH,
@@ -107,7 +109,9 @@ const OverlayPage = () => {
       void Promise.all([
         overlayWindow.setBackgroundColor([0, 0, 0, 0]),
         overlayWindow.setSize(new LogicalSize(COLLAPSED_WIDTH, OVERLAY_HEIGHT)),
-      ]);
+      ]).catch((error) => {
+        console.warn('[Amply] Overlay window setup failed', error);
+      });
     }
     return () => {
       document.documentElement.style.background = previous.htmlBackground;

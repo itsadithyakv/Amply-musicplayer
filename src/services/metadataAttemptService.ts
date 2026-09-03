@@ -1,4 +1,4 @@
-import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 
 const cachePath = 'metadata_cache/metadata_attempts.json';
 const ATTEMPT_CACHE_VERSION = 3;
@@ -9,6 +9,8 @@ const MIN_DIRTY_BEFORE_FLUSH = 12;
 const MAX_DIRTY_FLUSH_DELAY_MS = 15000;
 let dirtyCount = 0;
 let lastPersistAt = 0;
+let pendingCache: MetadataAttempts | null = null;
+let unloadFlushRegistered = false;
 
 type AttemptState = {
   attempts: number;
@@ -51,7 +53,33 @@ export const loadMetadataAttempts = async (): Promise<MetadataAttempts> => {
   };
 };
 
+/** Writes the throttled attempt cache immediately if anything is dirty (used on unload). */
+export const flushMetadataAttempts = async (): Promise<void> => {
+  const cache = pendingCache;
+  if (!cache || dirtyCount === 0) {
+    return;
+  }
+  dirtyCount = 0;
+  lastPersistAt = Date.now();
+  cache.version = ATTEMPT_CACHE_VERSION;
+  await writeStorageJson(cachePath, cache);
+};
+
+const registerUnloadFlush = (): void => {
+  if (unloadFlushRegistered || typeof window === 'undefined') {
+    return;
+  }
+  unloadFlushRegistered = true;
+  const flush = () => {
+    void flushMetadataAttempts();
+  };
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('beforeunload', flush);
+};
+
 export const saveMetadataAttempts = async (cache: MetadataAttempts): Promise<void> => {
+  pendingCache = cache;
+  registerUnloadFlush();
   const now = Date.now();
   if (dirtyCount < MIN_DIRTY_BEFORE_FLUSH && now - lastPersistAt < MAX_DIRTY_FLUSH_DELAY_MS) {
     return;

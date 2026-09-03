@@ -1,10 +1,11 @@
+import { getFlag } from '@/services/runtimeFlags';
 import { isSchedulerBackgroundHidden, isSchedulerInRestoreGrace } from '@/services/appScheduler';
 
 const getLastInteraction = (): number => {
   if (typeof window === 'undefined') {
     return 0;
   }
-  const value = (window as unknown as { __AMP_LAST_INTERACTION__?: number }).__AMP_LAST_INTERACTION__;
+  const value = getFlag('lastInteractionAt');
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 };
 

@@ -1,6 +1,6 @@
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Song } from '@/types/music';
 import {
   readCachedLyrics,
@@ -16,6 +16,7 @@ import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageSe
 import { useIdleRender } from '@/hooks/useIdleRender';
 import { useInteractionFeedback } from '@/services/interactionFeedback';
 import { beginPerfInteraction } from '@/services/perfDiagnostics';
+import { getFlag } from '@/services/runtimeFlags';
 import { scheduleAfterPaint } from '@/services/interactionTrace';
 import { usePlaybackProgress } from '@/store/playbackProgressStore';
 import LyricsVisualizer from './LyricsVisualizer';
@@ -72,9 +73,13 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   const [autoScroll, setAutoScroll] = useState(true);
   const [offsetMs, setOffsetMs] = useState(0);
   const [surfaceReady, setSurfaceReady] = useState(false);
+  const songId = song?.id ?? null;
 
   // Use refs to avoid triggering re-renders
   const offsetRef = useRef(0);
+  // Latest song object for effects keyed on `songId`: the snapshot identity changes on every activity
+  // update, and re-fetching lyrics for the same track each time would be wasteful.
+  const songRef = useRef<Song | null>(song);
   const offsetsCacheRef = useRef<Record<string, number>>({});
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
@@ -84,6 +89,10 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   const backdropAbortRef = useRef<AbortController | null>(null);
   const shellReadyRef = useRef(false);
   const lyricsReadyRef = useRef<ReturnType<typeof beginPerfInteraction> | null>(null);
+
+  useEffect(() => {
+    songRef.current = song;
+  }, [song]);
 
   useEffect(() => {
     if (!active) {
@@ -146,7 +155,8 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
       return;
     }
 
-    if (!song || !active || !surfaceReady) {
+    const currentSong = songRef.current;
+    if (!currentSong || !active || !surfaceReady) {
       return;
     }
 
@@ -170,7 +180,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
 
     const load = async () => {
       try {
-        const cached = await readCachedLyrics(song);
+        const cached = await readCachedLyrics(currentSong);
         if (abortController.signal.aborted || !alive) {
           return;
         }
@@ -181,7 +191,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
         }
 
         // No cache yet: attempt a live fetch once.
-        const fetched = await loadLyrics(song);
+        const fetched = await loadLyrics(currentSong);
         if (abortController.signal.aborted || !alive) {
           return;
         }
@@ -199,7 +209,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
           if (abortController.signal.aborted || !alive) {
             return;
           }
-          readCachedLyrics(song)
+          readCachedLyrics(currentSong)
             .then((retryResult) => {
               if (abortController.signal.aborted || !alive) {
                 return;
@@ -236,7 +246,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
         window.clearTimeout(retryHandle);
       }
     };
-  }, [active, song?.id, gameMode, surfaceReady]);
+  }, [active, songId, gameMode, surfaceReady]);
 
   useEffect(() => {
     if (!song?.id) {
@@ -269,28 +279,28 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     offsetRef.current = offsetMs;
   }, [offsetMs]);
 
-  const handleOffsetChange = async (deltaMs: number) => {
-    if (!song?.id) {
+  const handleOffsetChange = useCallback(async (deltaMs: number) => {
+    if (!songId) {
       return;
     }
     const next = Math.max(-8000, Math.min(8000, offsetRef.current + deltaMs));
     setOffsetMs(next);
     offsetsCacheRef.current = {
       ...offsetsCacheRef.current,
-      [song.id]: next,
+      [songId]: next,
     };
     await writeStorageJsonDebounced('lyrics_offsets.json', offsetsCacheRef.current, 600);
-  };
+  }, [songId]);
 
-  const handleManualChoose = async () => {
-    if (!song || loading) {
+  const handleManualChoose = useCallback(async () => {
+    if (!songId || loading) {
       return;
     }
     setSavingChoiceId(null);
     setError(null);
     setLoading(true);
     try {
-      const candidates = await fetchLyricsCandidatesForSong(song.id);
+      const candidates = await fetchLyricsCandidatesForSong(songId);
       if (!candidates.length) {
         setError('No alternate lyrics found.');
         return;
@@ -301,13 +311,13 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchLyricsCandidatesForSong, loading, songId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
-    if (!song) {
+    if (!songId) {
       return;
     }
     const handleOffset = (event: Event) => {
@@ -326,7 +336,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
       window.removeEventListener('amply://lyrics-offset', handleOffset as EventListener);
       window.removeEventListener('amply://lyrics-choose', handleChoose);
     };
-  }, [song?.id, loading]);
+  }, [songId, handleOffsetChange, handleManualChoose]);
 
   useEffect(() => {
     if (gameMode) {
@@ -476,7 +486,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     }
 
     return best;
-  }, [lyrics?.isSynced, timedIndex, positionSec]);
+  }, [lyrics?.isSynced, timedIndex, positionSec, offsetMs]);
 
   useEffect(() => {
     if (currentIndex < 0 || !lyrics?.isSynced || !autoScroll || !active || !surfaceReady) {
@@ -617,8 +627,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
 
   return (
     <div className={clsx('relative isolate space-y-3 overflow-hidden', fullHeight && 'flex h-full min-h-0 flex-col')}>
-      {lyricsVisualsEnabled &&
-      !(typeof window !== 'undefined' && (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ === true) ? (
+      {lyricsVisualsEnabled && !getFlag('lowPerf') ? (
         <LyricsVisualizer active={active} isPlaying={isPlaying} theme={lyricsVisualTheme} tint={artworkTint} />
       ) : null}
       <div

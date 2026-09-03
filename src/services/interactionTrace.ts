@@ -2,6 +2,7 @@ import { beginPerfInteraction } from '@/services/perfDiagnostics';
 
 type TrackedInteractionHandle = ReturnType<typeof beginPerfInteraction>;
 
+const MAX_PENDING_INTERACTIONS = 200;
 const pendingInteractions = new Map<string, TrackedInteractionHandle>();
 
 export const beginTrackedInteraction = (
@@ -10,6 +11,15 @@ export const beginTrackedInteraction = (
   data?: Record<string, unknown>,
 ): TrackedInteractionHandle => {
   pendingInteractions.get(key)?.cancel({ reason: 'replaced' });
+  // Delete before re-inserting so the key moves to the end of the Map's insertion order.
+  pendingInteractions.delete(key);
+  if (pendingInteractions.size >= MAX_PENDING_INTERACTIONS) {
+    const oldestKey = pendingInteractions.keys().next().value;
+    if (oldestKey !== undefined) {
+      pendingInteractions.get(oldestKey)?.cancel({ reason: 'evicted' });
+      pendingInteractions.delete(oldestKey);
+    }
+  }
   const handle = beginPerfInteraction(name, data);
   pendingInteractions.set(key, handle);
   return handle;

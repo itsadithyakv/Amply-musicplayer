@@ -1,3 +1,5 @@
+import { usePersistedPreference } from '@/hooks/usePersistedPreference';
+import { oneOf } from '@/services/preferences';
 import { useEffect, useMemo, useRef, useState, useTransition, type ComponentType } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
@@ -159,6 +161,11 @@ const buildArtistGroups = (songs: Song[], artworkFor: (songs: Song[]) => string 
 type AlbumSort = 'title_asc' | 'title_desc' | 'artist_asc' | 'most_played' | 'most_songs';
 type ArtistSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
 type GenreSort = 'name_asc' | 'name_desc' | 'most_played' | 'most_songs';
+
+const isLibraryTab = oneOf<LibraryTab>(['songs', 'albums', 'artists', 'genres']);
+const isAlbumSort = oneOf<AlbumSort>(['title_asc', 'title_desc', 'artist_asc', 'most_played', 'most_songs']);
+const isArtistSort = oneOf<ArtistSort>(['name_asc', 'name_desc', 'most_played', 'most_songs']);
+const isGenreSort = oneOf<GenreSort>(['name_asc', 'name_desc', 'most_played', 'most_songs']);
 
 type AlbumEntry = {
   album: string;
@@ -327,37 +334,13 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
 
-  const [activeTab, setActiveTab] = useState<LibraryTab>(() => {
-    if (typeof window === 'undefined') {
-      return initialTab;
-    }
-    const stored = window.localStorage.getItem('amply-library-tab') as LibraryTab | null;
-    return stored ?? initialTab;
-  });
+  const [activeTab, setActiveTab] = usePersistedPreference<LibraryTab>('library-tab', isLibraryTab, initialTab);
   const navigate = useNavigate();
-  const [albumSort, setAlbumSort] = useState<AlbumSort>(() => {
-    if (typeof window === 'undefined') {
-      return 'title_asc';
-    }
-    const stored = window.localStorage.getItem('amply-library-sort:albums') as AlbumSort | null;
-    return stored ?? 'title_asc';
-  });
+  const [albumSort, setAlbumSort] = usePersistedPreference<AlbumSort>('library-sort:albums', isAlbumSort, 'title_asc');
   const [albumQuery, setAlbumQuery] = useState('');
-  const [artistSort, setArtistSort] = useState<ArtistSort>(() => {
-    if (typeof window === 'undefined') {
-      return 'name_asc';
-    }
-    const stored = window.localStorage.getItem('amply-library-sort:artists') as ArtistSort | null;
-    return stored ?? 'name_asc';
-  });
+  const [artistSort, setArtistSort] = usePersistedPreference<ArtistSort>('library-sort:artists', isArtistSort, 'name_asc');
   const [artistQuery, setArtistQuery] = useState('');
-  const [genreSort, setGenreSort] = useState<GenreSort>(() => {
-    if (typeof window === 'undefined') {
-      return 'name_asc';
-    }
-    const stored = window.localStorage.getItem('amply-library-sort:genres') as GenreSort | null;
-    return stored ?? 'name_asc';
-  });
+  const [genreSort, setGenreSort] = usePersistedPreference<GenreSort>('library-sort:genres', isGenreSort, 'name_asc');
   const [genreQuery, setGenreQuery] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [albumTracklists, setAlbumTracklists] = useState<Record<string, AlbumTracklist>>({});
@@ -400,34 +383,6 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       alive = false;
     };
   }, [deferredSongs.length]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('amply-library-tab', activeTab);
-  }, [activeTab]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('amply-library-sort:albums', albumSort);
-  }, [albumSort]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('amply-library-sort:artists', artistSort);
-  }, [artistSort]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('amply-library-sort:genres', genreSort);
-  }, [genreSort]);
 
   const albums = useMemo<AlbumEntry[]>(() => {
     if (!shouldBuildAlbums) {

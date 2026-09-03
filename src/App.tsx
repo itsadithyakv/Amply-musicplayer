@@ -1,3 +1,5 @@
+import { useThemeSync } from '@/hooks/useThemeSync';
+import { setFlags } from '@/services/runtimeFlags';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -40,7 +42,6 @@ import {
   markPerf,
   recordBudgetLatency,
   recordPerfEvent,
-  subscribePerformanceSnapshot,
 } from '@/services/perfDiagnostics';
 import { beginInteractionFeedback, useInteractionFeedback } from '@/services/interactionFeedback';
 import { scheduleAfterPaint, settleTrackedInteraction } from '@/services/interactionTrace';
@@ -83,7 +84,6 @@ const MainApp = () => {
   const playerInitialized = usePlayerStore((state) => state.initialized);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
-  const appTheme = usePlayerStore((state) => state.settings.appTheme);
   const miniNowPlayingOverlay = usePlayerStore((state) => state.settings.miniNowPlayingOverlay);
   const toastMessage = usePlayerStore((state) => state.toastMessage);
   const location = useLocation();
@@ -161,23 +161,9 @@ const MainApp = () => {
     if (!import.meta.env.DEV || typeof window === 'undefined') {
       return;
     }
-    const debugWindow = window as typeof window & {
-      __AMP_PERF_SNAPSHOT__?: ReturnType<typeof getPerformanceSnapshot>;
-      __AMP_GET_PERF_SNAPSHOT__?: typeof getPerformanceSnapshot;
-      __AMP_GET_LIBRARY_VERSIONS__?: typeof getLibraryVersions;
-    };
-    debugWindow.__AMP_GET_PERF_SNAPSHOT__ = getPerformanceSnapshot;
-    debugWindow.__AMP_GET_LIBRARY_VERSIONS__ = getLibraryVersions;
-    const syncSnapshot = () => {
-      debugWindow.__AMP_PERF_SNAPSHOT__ = getPerformanceSnapshot();
-    };
-    syncSnapshot();
-    const unsubscribe = subscribePerformanceSnapshot(syncSnapshot);
+    window.__AMPLY_DEBUG__ = { getPerfSnapshot: getPerformanceSnapshot, getLibraryVersions };
     return () => {
-      unsubscribe();
-      delete debugWindow.__AMP_PERF_SNAPSHOT__;
-      delete debugWindow.__AMP_GET_PERF_SNAPSHOT__;
-      delete debugWindow.__AMP_GET_LIBRARY_VERSIONS__;
+      delete window.__AMPLY_DEBUG__;
     };
   }, []);
 
@@ -186,6 +172,7 @@ const MainApp = () => {
     initializeLibrary();
   }, [initializeLibrary, initializePlayer]);
 
+  useThemeSync();
   useOverlayController(miniNowPlayingOverlay);
   useMediaSession();
   useGlobalShortcuts();
@@ -296,7 +283,7 @@ const MainApp = () => {
     const markInput = () => {
       const now = Date.now();
       lastUserInputRef.current = now;
-      (window as unknown as { __AMP_LAST_INTERACTION__?: number }).__AMP_LAST_INTERACTION__ = now;
+      setFlags({ lastInteractionAt: now });
       noteUserInteraction();
     };
     const handleVisibility = () => {
@@ -512,15 +499,9 @@ const MainApp = () => {
   }, [location.pathname, gameMode]);
 
   useEffect(() => {
-    (window as unknown as { __AMP_LOW_PERF__?: boolean }).__AMP_LOW_PERF__ = lowPerf || gameMode || startupLowMemoryMode;
-    (window as unknown as { __AMP_GAME_MODE__?: boolean }).__AMP_GAME_MODE__ = gameMode;
+    setFlags({ lowPerf: lowPerf || gameMode || startupLowMemoryMode });
+    setFlags({ gameMode: gameMode });
   }, [lowPerf, gameMode, startupLowMemoryMode]);
-
-  useEffect(() => {
-    const theme = appTheme === 'dark' ? 'dark' : 'light';
-    document.documentElement.dataset.theme = theme;
-    document.body.dataset.theme = theme;
-  }, [appTheme]);
 
   const isLoading = !playerInitialized;
 

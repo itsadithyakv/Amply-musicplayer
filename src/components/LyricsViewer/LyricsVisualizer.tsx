@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AppSettings } from '@/types/music';
 import { isTauri } from '@/services/storageService';
@@ -171,31 +171,33 @@ const drawMono = (
 
 const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Band levels live outside React state: the spectrum listener writes `target`, the draw loop eases
+  // `smoothed` towards it. Both survive play/pause and theme changes without re-subscribing.
+  const [target] = useState(() => new Float32Array(BAND_COUNT));
+  const [smoothed] = useState(() => new Float32Array(BAND_COUNT));
+  const sizeRef = useRef({ width: 1, height: 1 });
 
+  // Spectrum events and canvas sizing are subscribed once per activation.
   useEffect(() => {
     if (!active) {
       return;
     }
     const canvas = canvasRef.current;
-    const context = canvas?.getContext('2d');
-    if (!canvas || !context) {
+    if (!canvas) {
       return;
     }
 
-    const target = new Float32Array(BAND_COUNT);
-    const smoothed = new Float32Array(BAND_COUNT);
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let displayWidth = Math.max(1, canvas.clientWidth);
-    let displayHeight = Math.max(1, canvas.clientHeight);
-    let animationFrame = 0;
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
+    sizeRef.current = { width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight) };
     const resizeObserver = new ResizeObserver(([entry]) => {
       if (!entry) {
         return;
       }
-      displayWidth = Math.max(1, entry.contentRect.width);
-      displayHeight = Math.max(1, entry.contentRect.height);
+      sizeRef.current = {
+        width: Math.max(1, entry.contentRect.width),
+        height: Math.max(1, entry.contentRect.height),
+      };
     });
     resizeObserver.observe(canvas);
 
@@ -214,7 +216,35 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
       }).catch(() => undefined);
     }
 
+    return () => {
+      disposed = true;
+      resizeObserver.disconnect();
+      unlisten?.();
+      target.fill(0);
+    };
+  }, [active, target]);
+
+  // The draw loop is cheap to restart, so it follows the visual inputs directly.
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context) {
+      return;
+    }
+
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let reduceMotion = motionQuery.matches;
+    const handleMotionChange = (event: MediaQueryListEvent) => {
+      reduceMotion = event.matches;
+    };
+    motionQuery.addEventListener('change', handleMotionChange);
+    let animationFrame = 0;
+
     const draw = (time: number): void => {
+      const { width: displayWidth, height: displayHeight } = sizeRef.current;
       const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
       const nextWidth = Math.max(1, Math.round(displayWidth * pixelRatio));
       const nextHeight = Math.max(1, Math.round(displayHeight * pixelRatio));
@@ -248,12 +278,10 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
 
     animationFrame = window.requestAnimationFrame(draw);
     return () => {
-      disposed = true;
       window.cancelAnimationFrame(animationFrame);
-      resizeObserver.disconnect();
-      unlisten?.();
+      motionQuery.removeEventListener('change', handleMotionChange);
     };
-  }, [active, isPlaying, theme, tint]);
+  }, [active, isPlaying, theme, tint, target, smoothed]);
 
   return <canvas ref={canvasRef} className="lyrics-visualizer absolute inset-0 h-full w-full" aria-hidden="true" />;
 });

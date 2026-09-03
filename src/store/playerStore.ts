@@ -1,3 +1,5 @@
+import { DEFAULT_SETTINGS, normalizeSettings } from '@/store/defaultSettings';
+import { getFlag, setFlags } from '@/services/runtimeFlags';
 import { pickRandom, shuffle } from '@/utils/random';
 import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, OnlineRecommendationProvider, RepeatMode } from '@/types/music';
@@ -30,15 +32,15 @@ const setGlobalPlayingFlag = (playing: boolean): void => {
   if (typeof window === 'undefined') {
     return;
   }
-  (window as unknown as { __AMP_IS_PLAYING__?: boolean }).__AMP_IS_PLAYING__ = playing;
+  setFlags({ isPlaying: playing });
 };
 
 const setGlobalPlaybackHints = (currentSongId: string | null, upcoming: string[]): void => {
   if (typeof window === 'undefined') {
     return;
   }
-  (window as unknown as { __AMP_CURRENT_SONG_ID__?: string | null }).__AMP_CURRENT_SONG_ID__ = currentSongId ?? null;
-  (window as unknown as { __AMP_UP_NEXT__?: string[] }).__AMP_UP_NEXT__ = upcoming;
+  setFlags({ currentSongId: currentSongId ?? null });
+  setFlags({ upNext: upcoming });
 };
 
 let lastManualSkipAt = 0;
@@ -56,11 +58,10 @@ const getPreloadCount = (): number => {
   if (typeof window === 'undefined') {
     return 1;
   }
-  const flags = window as unknown as { __AMP_LOW_PERF__?: boolean; __AMP_GAME_MODE__?: boolean };
-  if (flags.__AMP_GAME_MODE__ === true) {
+    if (getFlag('gameMode') === true) {
     return 1;
   }
-  return flags.__AMP_LOW_PERF__ === true ? 1 : 2;
+  return getFlag('lowPerf') === true ? 1 : 2;
 };
 
 const enterRapidPlaybackLane = (reason: string): void => {
@@ -193,34 +194,7 @@ interface PlayerState {
   reshuffleQueue: () => void;
 }
 
-const defaultSettings: AppSettings = {
-  libraryPath: 'music',
-  appTheme: 'light',
-  crossfadeEnabled: false,
-  crossfadeDurationSec: 6,
-  gaplessEnabled: true,
-  playbackSpeed: 1,
-  outputDeviceName: undefined,
-  eqPreset: 'flat',
-  eqBands: [0, 0, 0, 0, 0],
-  launchOnStartup: false,
-  gameMode: false,
-  miniNowPlayingOverlay: false,
-  overlaySpinningArtwork: true,
-  overlayAutoHide: true,
-  lyricsVisualsEnabled: false,
-  lyricsVisualTheme: 'ember',
-  metadataFetchPaused: false,
-  discoveryIntensity: 0.35,
-  randomnessIntensity: 0.3,
-  pauseMixRegenDuringPlayback: true,
-  onlineRecommendationsEnabled: false,
-  lastFmApiKey: '',
-  onlineRecommendationProviderOrder: ['lastfm', 'musicbrainz'],
-  autoPauseOnFocus: true,
-  autoPauseIgnoreApps: [],
-  autoPauseIgnoreFullscreen: true,
-};
+const defaultSettings = DEFAULT_SETTINGS;
 
 type PersistedPlaybackState = {
   songId: string | null;
@@ -325,6 +299,7 @@ let audioFocusUnlisten: UnlistenFn | null = null;
 let audioFocusResumeTimer: number | null = null;
 let audioFocusResumeToken = 0;
 let toastTimer: number | null = null;
+let playerInitStarted = false;
 
 const cancelAudioFocusResume = (): void => {
   audioFocusResumeToken += 1;
@@ -374,13 +349,44 @@ const startDefaultOutputWatcher = (): void => {
   defaultOutputPollHandle = window.setInterval(poll, 20_000);
 };
 
-const persistSettings = async (settings: AppSettings): Promise<void> => {
-  const current = await readStorageJson<Record<string, unknown>>('settings.json', {});
+const stopDefaultOutputWatcher = (): void => {
+  if (defaultOutputPollHandle !== null) {
+    window.clearInterval(defaultOutputPollHandle);
+    defaultOutputPollHandle = null;
+  }
+};
+
+/** Release long-lived listeners and timers. Runs on page hide and on HMR module dispose. */
+export const disposePlayerRuntime = (): void => {
+  stopDefaultOutputWatcher();
+  clearSleepTimerHandle();
+  cancelAudioFocusResume();
+  if (audioFocusUnlisten) {
+    audioFocusUnlisten();
+    audioFocusUnlisten = null;
+  }
+  audioEngine.dispose();
+};
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', disposePlayerRuntime, { once: true });
+  import.meta.hot?.dispose(disposePlayerRuntime);
+}
+
+let settingsWriteChain: Promise<void> = Promise.resolve();
+
+/** Serialised read-modify-write so concurrent setters cannot drop each other's changes. */
+const persistSettings = (settings: AppSettings): Promise<void> => {
   const { libraryPath: _libraryPath, ...audioSettings } = settings;
-  await writeStorageJson('settings.json', {
-    ...current,
-    ...audioSettings,
-  });
+  settingsWriteChain = settingsWriteChain
+    .then(async () => {
+      const current = await readStorageJson<Record<string, unknown>>('settings.json', {});
+      await writeStorageJson('settings.json', { ...current, ...audioSettings });
+    })
+    .catch((error) => {
+      recordPerfEvent('settings.persist-failed', { error: error instanceof Error ? error.message : String(error) });
+    });
+  return settingsWriteChain;
 };
 
 const readPluginLaunchOnStartup = async (): Promise<boolean | null> => {
@@ -577,16 +583,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   lastQueuePlaylistId: null,
 
   initialize: async () => {
-    if (get().initialized) {
+    if (get().initialized || playerInitStarted) {
       return;
     }
+    playerInitStarted = true;
 
     const persisted = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
     const persistedPlayback = await readStorageJson<PersistedPlaybackState | null>(playbackStatePath, null);
-    let settings: AppSettings = {
-      ...defaultSettings,
-      ...persisted,
-    };
+    let settings: AppSettings = normalizeSettings(persisted);
     settings = {
       ...settings,
       eqBands: normalizeEqBands(settings.eqBands, settings.eqPreset),
@@ -612,22 +616,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__ = settings.discoveryIntensity;
-      (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__ = settings.randomnessIntensity;
-      (window as unknown as { __AMP_MIX_REGEN_PAUSED__?: boolean }).__AMP_MIX_REGEN_PAUSED__ =
-        settings.pauseMixRegenDuringPlayback;
-      (window as unknown as { __AMP_ONLINE_RECS_ENABLED__?: boolean }).__AMP_ONLINE_RECS_ENABLED__ =
-        settings.onlineRecommendationsEnabled;
+      setFlags({ discoveryIntensity: settings.discoveryIntensity });
+      setFlags({ randomnessIntensity: settings.randomnessIntensity });
+      setFlags({ mixRegenPaused: settings.pauseMixRegenDuringPlayback });
+      setFlags({ onlineRecsEnabled: settings.onlineRecommendationsEnabled });
     }
     enableOnlineRecommendations(settings);
 
     audioEngine.setCallbacks({
       onProgress: (position, duration) => {
         const currentId = get().currentSongId;
-        if (currentId && duration > 0 && position / duration >= 0.75 && lastPreloadSongId !== currentId) {
-          if (preloadOnceCache.has(currentId)) {
-            return;
-          }
+        if (
+          currentId &&
+          duration > 0 &&
+          position / duration >= 0.75 &&
+          lastPreloadSongId !== currentId &&
+          !preloadOnceCache.has(currentId)
+        ) {
           preloadOnceCache.set(currentId, Date.now());
           if (preloadOnceCache.size > PRELOAD_CACHE_LIMIT) {
             const oldestKey = preloadOnceCache.keys().next().value as string | undefined;
@@ -771,7 +776,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     audioEngine.applySettings(settings);
     audioEngine.setVolume(get().volume);
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ = settings.metadataFetchPaused;
+      setFlags({ metadataPaused: settings.metadataFetchPaused });
     }
 
     set({ initialized: true, settings });
@@ -883,7 +888,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const updatedHistory = [...state.historySongIds, songId].slice(-100);
     const preloadCount = fastSkip ? 1 : 2;
     const preloadIds = buildUpcomingSongIds({ ...state, currentSongId: songId, queueCursor }, preloadCount);
-    setGlobalPlaybackHints(songId, preloadIds);
     set((prev) => ({
       currentSongId: songId,
       queueCursor: queueCursor >= 0 ? queueCursor : prev.queueCursor,
@@ -983,7 +987,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ isPlaying: true, positionSec: resumeAt, autoPausedByFocus: false });
       persistPlaybackState(get(), { positionSec: resumeAt });
       recordPlaybackLatency('resume', performance.now() - latencyStart);
-    });
+    }).catch((error: unknown) => {
+        recordPerfEvent('player.resume-failed', { error: error instanceof Error ? error.message : String(error) });
+        get().showToast('Track failed to load');
+      });
   },
 
   pausePlayback: () => {
@@ -1024,7 +1031,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ isPlaying: true, positionSec: resumeAt, autoPausedByFocus: false });
       setGlobalPlaybackHints(get().currentSongId, buildUpcomingSongIds(get()));
       persistPlaybackState(get(), { positionSec: resumeAt });
-    });
+    }).catch((error: unknown) => {
+        recordPerfEvent('player.resume-failed', { error: error instanceof Error ? error.message : String(error) });
+        get().showToast('Track failed to load');
+      });
   },
 
   playNext: async (manual = false) => {
@@ -1325,7 +1335,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({ settings });
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_METADATA_PAUSED__?: boolean }).__AMP_METADATA_PAUSED__ = paused;
+      setFlags({ metadataPaused: paused });
     }
     await persistSettings(settings);
   },
@@ -1339,7 +1349,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({ settings });
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_DISCOVERY_INTENSITY__?: number }).__AMP_DISCOVERY_INTENSITY__ = clamped;
+      setFlags({ discoveryIntensity: clamped });
     }
     await persistSettings(settings);
     void useLibraryStore.getState().regenerateSmartPlaylists();
@@ -1354,7 +1364,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({ settings });
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_RANDOMNESS_INTENSITY__?: number }).__AMP_RANDOMNESS_INTENSITY__ = clamped;
+      setFlags({ randomnessIntensity: clamped });
     }
     await persistSettings(settings);
     void useLibraryStore.getState().regenerateSmartPlaylists();
@@ -1368,7 +1378,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({ settings });
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_MIX_REGEN_PAUSED__?: boolean }).__AMP_MIX_REGEN_PAUSED__ = enabled;
+      setFlags({ mixRegenPaused: enabled });
     }
     await persistSettings(settings);
   },
@@ -1381,7 +1391,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({ settings });
     if (typeof window !== 'undefined') {
-      (window as unknown as { __AMP_ONLINE_RECS_ENABLED__?: boolean }).__AMP_ONLINE_RECS_ENABLED__ = enabled;
+      setFlags({ onlineRecsEnabled: enabled });
     }
     enableOnlineRecommendations(settings);
     await persistSettings(settings);

@@ -1,6 +1,7 @@
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import { useSyncExternalStore } from 'react';
 import { endPerfMeasure, markPerf, recordPerfEvent } from '@/services/perfDiagnostics';
+import { setFlags } from '@/services/runtimeFlags';
 
 type SchedulerPhase = 'foreground-active' | 'background-hidden' | 'restore-grace-period';
 
@@ -10,7 +11,6 @@ type SchedulerState = {
   focused: boolean;
   minimized: boolean;
   playingBusy: boolean;
-  lastInteractionAt: number;
   lastRestoreAt: number | null;
   lastHiddenAt: number | null;
   restoreGraceUntil: number;
@@ -29,6 +29,8 @@ const BACKGROUND_DELAY_MS = 5000;
 const listeners = new Set<() => void>();
 let renderStateCache: SchedulerRenderState | null = null;
 let restoreGraceTimer: number | null = null;
+// Updated from wheel/pointer handlers; kept out of `state` so it never allocates or notifies.
+let lastInteractionAt = Date.now();
 
 let state: SchedulerState = {
   startupAt: Date.now(),
@@ -36,7 +38,6 @@ let state: SchedulerState = {
   focused: typeof document === 'undefined' ? true : document.hasFocus(),
   minimized: false,
   playingBusy: false,
-  lastInteractionAt: Date.now(),
   lastRestoreAt: null,
   lastHiddenAt: null,
   restoreGraceUntil: 0,
@@ -122,8 +123,14 @@ export const getNonCriticalDelay = (baseDelayMs = 0): number => {
 };
 
 export const noteUserInteraction = (): void => {
-  patchState({ lastInteractionAt: Date.now() });
+  // No scheduler phase derives from this timestamp, so there is no state object to rebuild and no
+  // listener to notify; just record it and mirror it into the runtime flags.
+  const now = Date.now();
+  lastInteractionAt = now;
+  setFlags({ lastInteractionAt: now });
 };
+
+export const getLastInteractionAt = (): number => lastInteractionAt;
 
 export const setSchedulerPlayingBusy = (playingBusy: boolean): void => {
   if (state.playingBusy === playingBusy) {
