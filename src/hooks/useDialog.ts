@@ -23,7 +23,9 @@ export const useDialog = ({ open, onClose, containerRef, initialFocusRef }: UseD
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     const focusables = (): HTMLElement[] =>
-      Array.from(container?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []).filter((el) => el.offsetParent !== null || el === document.activeElement);
+      Array.from(container?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []).filter(
+        (el) => !el.hidden && el.getAttribute('aria-hidden') !== 'true' && !el.closest('[hidden]'),
+      );
 
     const initial = initialFocusRef?.current ?? focusables()[0] ?? container;
     const focusHandle = window.requestAnimationFrame(() => initial?.focus({ preventScroll: true }));
