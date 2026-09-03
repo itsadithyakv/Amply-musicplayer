@@ -134,7 +134,7 @@ const PlaylistsPage = () => {
       />
 
       {playlistCards.length ? (
-        <Surface variant="pressed" radius="lg" className="h-[70vh] min-w-0 overflow-hidden p-1">
+        <Surface variant="pressed" radius="lg" className="anim-rise h-[70vh] min-w-0 overflow-hidden p-1">
           <AutoSizer>{({ height, width }) => {
             const columnCount = width >= 820 ? 2 : 1;
             const columnWidth = Math.floor((width - 12) / columnCount);

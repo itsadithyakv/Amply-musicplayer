@@ -39,7 +39,7 @@ export interface LibraryCardGridProps<T> {
 
 /** Virtualised, responsive card grid (react-window rows of N cards) used by the album / artist / genre tabs. */
 export const LibraryCardGrid = <T,>({ items, getKey, renderItem }: LibraryCardGridProps<T>) => (
-  <div className="h-[70vh]">
+  <div className="anim-rise h-[70vh]">
     <AutoSizer>
       {({ height, width }) => {
         const columns = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));

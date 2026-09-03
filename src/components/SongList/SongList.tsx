@@ -532,7 +532,7 @@ const SongList = ({
         ))}
       </datalist>
 
-      <div className="render-contained h-[62vh]">
+      <div className="anim-rise render-contained h-[62vh]">
         <AutoSizer>
           {({ height, width }) => (
             <List
