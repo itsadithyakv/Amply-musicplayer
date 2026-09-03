@@ -1,6 +1,6 @@
-# Amply v1.6.3
+# Amply
 
-A modern, offline-first desktop music player built for local libraries. Amply combines fast scanning, smart mixes, and a smooth desktop UI while keeping your music fully local.
+A modern, offline-first desktop music player for local libraries. Amply combines fast scanning, smart mixes and a soft neumorphic desktop UI while keeping your music fully local.
 
 ## Highlights
 
@@ -8,134 +8,86 @@ A modern, offline-first desktop music player built for local libraries. Amply co
 - Daily Mix refreshes daily; other smart mixes refresh weekly
 - Smart mixes (On Repeat, Genre and Mood mixes)
 - Lyrics sync with caching and manual corrections
-- Native audio engine with gapless, crossfade, and normalization
-- EQ presets, output device selection, and playback speed controls
+- Native Rust audio engine (rodio + symphonia): gapless preloading, crossfade, live 5-band EQ, playback speed, output-device selection
 - Game Mode for low-resource playback
 - Always-on-top mini overlay player
 - Sleep timer with countdown and auto-stop
-- Large-library performance upgrades (virtualized grids, cached lookups)
+- Light and dark neumorphic themes
+- Large-library performance (virtualised grids, cached lookups)
 
-## New in 1.6.2
+## Tech stack
 
-- Low-memory startup protections reduce WebView2 out-of-memory risk on constrained devices by delaying artwork-heavy panels, pausing background jobs, and avoiding search warming during startup.
-- Embedded artwork load-state caching now uses compact bounded keys instead of retaining full base64 artwork strings.
-- Startup diagnostics now record device memory and CPU thread count where WebView exposes them, making low-end crash reports easier to interpret.
-
-## New in 1.6.1
-
-- Production-grade mini overlay pass with safer window creation, self-healing visibility checks, stable sizing, readable translucent styling, and guarded play/pause/next/previous commands.
-- Launch-on-startup now verifies the real Windows startup registration state instead of only trusting the saved preference.
-- Auto-pause for other audio is more reliable on Windows and respects ignored app names with or without `.exe`.
-- App branding now consistently uses `LogoAmply.png`, including the browser/dev favicon path.
-- Native compile and production frontend build remain clean after the overlay/startup/audio-focus changes.
-
-## New in 1.6
-
-- Large-library performance passes across startup, search, library views, metadata fetch, and smart playlist refresh paths.
-- Leaner Game Mode with a stripped-down player bar, disabled search warming, and fewer always-on background loops.
-- Improved overlay compatibility and reduced redundant overlay state sync traffic from the main app.
-- Fixed smart-playlist refresh conflicts and restored deterministic ordering in the optimized search path.
-
-## Core Concepts
-
-**Library-first**  
-A local library is the source of truth. Everything (search, mixes, stats) is derived from your on-disk songs.
-
-**Smart mixes**  
-Generated playlists adapt to your listening behavior and metadata. Mixes are seeded weekly and can be manually regenerated on demand.
-
-**Pipelines over pages**  
-Data flows through a deterministic pipeline: scan ? enrich ? cache ? generate mixes ? play. UI is a projection of this pipeline state.
-
-## Pipelines
-
-### 1) Library Pipeline
-
-```text
-Folders ? Scan ? Normalize ? Cache ? Library Index
-```
-
-**Scan**  
-Reads local folders, de-dupes, normalizes tags, and builds the library index.
-
-**Cache**  
-Persists song data and playlist state in `storage/` so the app starts fast.
-
-### 2) Enrichment Pipeline (Idle-Only)
-
-```text
-Library ? (Idle) Lyrics / Artist / Genre ? Cache ? UI
-```
-
-- Runs only when the app is idle and not playing.
-- Results are cached for offline use.
-
-### 3) Smart Mix Pipeline
-
-```text
-Library + Usage ? Rules ? Seeded Shuffle ? Smart Playlists
-```
-
-- Weekly seed provides consistency.
-- Manual regen re-seeds immediately for fresh ordering.
-
-### 4) Playback Pipeline
-
-```text
-Queue ? Native Audio Engine ? Progress Events ? UI
-```
-
-- Native Rust audio engine handles playback, timing, EQ, and normalization.
-
-## Smart Mix Rules (Simplified)
-
-- **Daily Mix**: non-recent tracks + favorites, interleaved by genre, refreshed daily.
-- **On Repeat**: high play count + recent plays, seeded shuffle.
-- **Genre / Mood mixes**: keyword scoring on genre/title with a favorites boost.
-
-## Tech Stack
-
-- **Frontend**: React + TypeScript + Vite + TailwindCSS
-- **Desktop**: Tauri
-- **Audio**: Native Rust audio engine (rodio + cpal)
-- **State**: Zustand
-- **Storage**: JSON files in `storage/` via Tauri commands
-
-## Project Structure
-
-```text
-amply/
-  src/
-    components/
-    pages/
-    hooks/
-    services/
-    store/
-  src-tauri/
-    src/main.rs
-  storage/
-    lyrics_cache/
-    playlists/
-    metadata_cache/
-```
+- **Frontend**: React 18 + TypeScript + Vite 6 + Tailwind 3, Zustand for state
+- **Desktop**: Tauri 2 (WebView2 on Windows)
+- **Audio**: Rust — rodio with the symphonia decoders (mp3, flac, wav, vorbis, aac/m4a)
+- **Storage**: a single SQLite key-value store (`amply_cache.db`) under the app data dir, accessed through Tauri commands
 
 ## Development
 
 ```bash
 npm install
-npm run dev
+npm run dev          # frontend only, in a browser (silent stub audio engine, demo songs)
+npm run tauri dev    # full desktop app
 ```
 
-## Desktop (Tauri)
+Quality gates (all must be clean before a commit):
 
 ```bash
-npm run tauri dev
+npm run check        # typecheck + eslint + vitest
+npm run lint:dead    # knip: unused files / exports / dependencies
+cd src-tauri && cargo check && cargo clippy --all-targets && cargo test
 ```
+
+Production build: `npm run tauri build`.
+
+## Project structure
+
+```text
+src/
+  App.tsx / AppShell.tsx   overlay window vs. main shell (both lazy)
+  components/ui/           the design system: Surface, Card, Button, IconButton, Icon, Toggle,
+                           Slider, ProgressBar, Modal, ConfirmDialog, Badge/Chip, Divider,
+                           PageHeader, SegmentedTabs, TextInput/SearchInput/Select, Typography
+  components/              feature components (Player, SongList, NowPlayingPanel, LyricsViewer, ...)
+  pages/                   Home, Library, Playlists, PlaylistDetail, NowPlaying, Search, Settings,
+                           GameMode, Overlay — each large page is split into sibling files
+  store/                   Zustand stores (playerStore, libraryStore) + defaultSettings
+  services/                storage, audio engine bridge, metadata clients, schedulers,
+                           runtimeFlags (typed process-wide flags), preferences (validated UI prefs)
+  hooks/                   view models (useLibraryViews), theme sync, dialogs, persisted preferences
+  utils/                   hash, random (seeded shuffle), text normalisation, idle scheduling, date seeds
+  index.css                design tokens (light + dark) and the neumorphic surface recipes
+src-tauri/src/
+  main.rs                  Tauri builder, plugins, command registration
+  storage.rs               SQLite kv store (StorageDb)
+  library.rs               scanning (lofty), embedded artwork, folder picker, delete
+  audio/                   engine (rodio), dsp (biquad EQ, spectrum, shared speed), commands
+  platform/                Windows audio-focus watcher and media keys
+  metadata/                Wikipedia / iTunes / MusicBrainz / lrclib clients, per-key caches
+  playlist.rs              smart playlist generation
+```
+
+## Design system
+
+Everything visible is a `Surface` with one of a few recipes defined in `src/index.css`:
+`neu-raised` (cards, modals), `neu-raised-sm` (buttons, chips), `neu-pressed` / `neu-pressed-sm`
+(inputs, selected state, tab tracks), `neu-flat` (list rows at rest), `neu-well` (artwork and empty
+states), `neu-accent` / `neu-danger` (primary and destructive actions). Colours come from the
+`--amply-*` tokens (RGB triplets exposed to Tailwind as `amply-*`), radii from `rounded-sm/md/lg/full`,
+and icons from the `Icon` component. Focus is drawn with `outline`, so shadows never hide it.
+`html[data-low-perf="true"]` collapses every shadow to a hairline on weak machines.
+
+## Smart mix rules (simplified)
+
+- **Daily Mix**: non-recent tracks + favourites, interleaved by genre, refreshed daily
+- **On Repeat**: high play count + recent plays, seeded shuffle
+- **Genre / Mood mixes**: keyword scoring on genre/title with a favourites boost
+
+Mixes are seeded from the ISO week / day so they stay stable within a period; manual regeneration reseeds.
 
 ## Notes
 
-- Default scan path is `music` in the project root; configurable in Settings.
-- In non-Tauri browser mode, the app falls back to demo songs.
-- Overlay and Game Mode are controlled in Settings.
-- On low-memory WebView2 systems, Amply may briefly defer artwork-heavy panels and background metadata/search warming to keep startup responsive.
-
+- The default scan path is the `music` folder inside your system Music directory; add more folders in Settings.
+- Only folders you have scanned (plus the system Music folder) are reachable through the asset protocol, and songs can only be deleted from inside those folders.
+- In browser mode (`npm run dev`) the app runs with two demo songs and a silent audio engine.
+- Logs are written to `%APPDATA%\AdithyaKV.AmplyMusicPlayer\logs`.
