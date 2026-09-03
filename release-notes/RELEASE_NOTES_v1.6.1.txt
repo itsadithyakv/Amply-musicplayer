@@ -1,0 +1,29 @@
+Amply v1.6.1
+Release date: 2026-06-05
+
+Highlights
+- Hardened the mini now-playing overlay for production use.
+- Improved Windows launch-on-startup verification.
+- Fixed Windows auto-pause detection for other audio sessions.
+- Kept the current Amply logo wired through the app and browser fallback.
+
+Mini overlay
+- Overlay window creation now has a timeout instead of hanging indefinitely.
+- The main app now periodically checks that the overlay still exists and recreates it if needed.
+- Disabling the overlay now closes stale overlay windows instead of leaving hidden instances alive.
+- Overlay positioning now uses the active monitor work area so it behaves better with taskbars and multi-monitor setups.
+- Overlay controls use reserved space and stable sizing to avoid hover resize jitter.
+- Play, pause, previous, and next commands are guarded against duplicate rapid clicks and retry against the main window if the event target goes stale.
+- Overlay state listeners now clean up correctly if the overlay is recreated.
+
+Startup and audio focus
+- Launch on startup now checks both the Tauri autostart plugin and the Windows registry fallback, then persists the verified result.
+- Startup enable/disable failures now revert the setting to the actual system state and show feedback.
+- Windows auto-pause no longer treats every audio session as a system-sounds session.
+- Ignored audio apps now match process names both with and without `.exe`.
+
+Validation
+- TypeScript typecheck passes.
+- Production web build passes.
+- Tauri Rust cargo check passes.
+- Overlay route was smoke-tested in headless Edge for readable rendering and stable sizing.

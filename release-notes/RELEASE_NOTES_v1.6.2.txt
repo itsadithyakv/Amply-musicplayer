@@ -1,0 +1,23 @@
+Amply v1.6.2
+Release date: 2026-06-19
+
+Highlights
+- Added low-memory startup protections for constrained WebView2 systems.
+- Reduced embedded-artwork memory retention in React image loading.
+- Added startup diagnostics for low-end device crash analysis.
+
+Low-memory stability
+- Constrained WebView2 devices delay artwork-heavy panel mounting during startup.
+- Startup safe mode and constrained-device startup pause background jobs before metadata, recommendation, and artwork work can compete with first paint.
+- Browser-mode search warming is skipped during low-memory startup.
+- Embedded artwork load-state caching now stores compact bounded keys instead of retaining full base64 artwork strings.
+- Startup diagnostics now record device memory and hardware concurrency when available.
+
+Why this exists
+- This release targets rare WebView2 out-of-memory crashes such as `EmbeddedBrowserWebView.dll!partition_alloc::internal::OnNoMemoryInternal` on low-end systems.
+- Normal devices keep the current app behavior; the conservative path activates only for safe-mode startup or constrained-device signals.
+
+Validation
+- TypeScript typecheck passes.
+- Production web build passes.
+- Tauri Rust cargo check passes.

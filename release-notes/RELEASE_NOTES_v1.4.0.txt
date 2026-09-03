@@ -1,0 +1,15 @@
+﻿Amply v1.4.0
+
+Highlights
+- Native Rust audio engine (rodio + cpal) with low-latency playback and reliable progress sync.
+- Output device selection + EQ presets in Settings.
+- Loudness (LUFS) analysis with per-track stats.
+- Daily Mix now becomes the default play target when no song is selected.
+- Overlay improvements: auto-hide, tray behavior wording, and tab-specific tools.
+- Lyrics upgrades: adaptive typography, smoother animations, per-song sync offset (+/-), and manual lyric selection.
+- Queue improvements: current song highlight, trimmed played songs, re-shuffle action.
+- Settings UI tightened with status/progress blocks and grouped overlay controls.
+
+Downloads
+- Amply_1.4.0_x64_en-US.msi
+- Amply_1.4.0_x64-setup.exe

@@ -1,0 +1,1301 @@
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useLibraryStore } from '@/store/libraryStore';
+import { usePlayerStore } from '@/store/playerStore';
+import { useLibraryTabView } from '@/hooks/useLibraryViews';
+import { PageHeader } from '@/components/ui/AmplyUI';
+import packageInfo from '../../../package.json';
+import addIcon from '@/assets/icons/add.svg';
+import homeIcon from '@/assets/icons/home.svg';
+import libraryIcon from '@/assets/icons/library.svg';
+import lyricsIcon from '@/assets/icons/lyrics.svg';
+import playIcon from '@/assets/icons/play.svg';
+import playlistsIcon from '@/assets/icons/playlists.svg';
+import queueIcon from '@/assets/icons/queue.svg';
+import searchIcon from '@/assets/icons/search.svg';
+import settingsIcon from '@/assets/icons/settings.svg';
+import statsIcon from '@/assets/icons/stats.svg';
+import trashIcon from '@/assets/icons/trash.svg';
+import {
+  clearStorageCache,
+  isTauri,
+  openStorageDir,
+  pickMusicFolders,
+} from '@/services/storageService';
+import { listOutputDevices, type OutputDeviceInfo } from '@/services/audioDeviceService';
+import { resetMetadataCacheIndex } from '@/services/metadataCacheIndex';
+import type { AppSettings } from '@/types/music';
+
+const EQ_BANDS = [
+  { freq: '60Hz', short: 'Sub' },
+  { freq: '250Hz', short: 'Bass' },
+  { freq: '1kHz', short: 'Mid' },
+  { freq: '4kHz', short: 'Presence' },
+  { freq: '12kHz', short: 'Air' },
+] as const;
+
+const EQ_PRESET_LABELS = {
+  flat: 'Flat',
+  warm: 'Warm',
+  bass: 'Bass Boost',
+  treble: 'Treble Lift',
+  vocal: 'Vocal Focus',
+  club: 'Club',
+  custom: 'Custom',
+} as const;
+
+const EQ_GRAPH_WIDTH = 100;
+const EQ_GRAPH_HEIGHT = 52;
+const EQ_MIN_DB = -12;
+const EQ_MAX_DB = 12;
+const APP_PACKAGE_VERSION = packageInfo.version;
+
+const clampEqGain = (value: number): number => Math.max(EQ_MIN_DB, Math.min(EQ_MAX_DB, value));
+
+const getEqPoint = (bands: number[], index: number) => {
+  const x = bands.length > 1 ? (index * EQ_GRAPH_WIDTH) / (bands.length - 1) : EQ_GRAPH_WIDTH / 2;
+  const normalized = (clampEqGain(bands[index] ?? 0) - EQ_MIN_DB) / (EQ_MAX_DB - EQ_MIN_DB);
+  const y = Number((EQ_GRAPH_HEIGHT - normalized * EQ_GRAPH_HEIGHT).toFixed(2));
+  return { x: Number(x.toFixed(2)), y };
+};
+
+const buildEqLinePath = (bands: number[]): string => {
+  if (!bands.length) {
+    return '';
+  }
+
+  const points = bands.map((_, index) => getEqPoint(bands, index));
+  if (points.length === 1) {
+    return `M ${points[0].x} ${points[0].y}`;
+  }
+
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const midX = Number(((current.x + next.x) / 2).toFixed(2));
+    path += ` Q ${current.x} ${current.y} ${midX} ${Number(((current.y + next.y) / 2).toFixed(2))}`;
+  }
+  const penultimate = points[points.length - 2];
+  const last = points[points.length - 1];
+  path += ` Q ${penultimate.x} ${penultimate.y} ${last.x} ${last.y}`;
+  return path;
+};
+
+const buildEqAreaPath = (bands: number[]): string => {
+  if (!bands.length) {
+    return '';
+  }
+
+  const linePath = buildEqLinePath(bands);
+  const first = getEqPoint(bands, 0);
+  const last = getEqPoint(bands, bands.length - 1);
+  return `${linePath} L ${last.x} ${EQ_GRAPH_HEIGHT} L ${first.x} ${EQ_GRAPH_HEIGHT} Z`;
+};
+
+const EQGraphEditor = ({
+  bands,
+  onChange,
+}: {
+  bands: number[];
+  onChange: (bands: number[]) => void;
+}) => {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (activeIndex === null) {
+      return;
+    }
+
+    const updateFromPointer = (clientY: number) => {
+      const svg = svgRef.current;
+      if (!svg) {
+        return;
+      }
+      const rect = svg.getBoundingClientRect();
+      if (!rect.height) {
+        return;
+      }
+      const relativeY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+      const ratio = 1 - relativeY / rect.height;
+      const gain = clampEqGain(Number((EQ_MIN_DB + ratio * (EQ_MAX_DB - EQ_MIN_DB)).toFixed(1)));
+      const next = [...bands];
+      next[activeIndex] = gain;
+      onChange(next);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      updateFromPointer(event.clientY);
+    };
+
+    const handlePointerUp = () => {
+      setActiveIndex(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [activeIndex, bands, onChange]);
+
+  return (
+    <div className="px-1 py-1">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${EQ_GRAPH_WIDTH} ${EQ_GRAPH_HEIGHT}`}
+        className="h-40 w-full touch-none sm:h-48"
+      >
+        <defs>
+          <linearGradient id="eqCurveStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ff9b46" />
+            <stop offset="100%" stopColor="#ff8a2b" />
+          </linearGradient>
+          <linearGradient id="eqCurveFill" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="rgba(255,138,43,0.20)" />
+            <stop offset="100%" stopColor="rgba(255,138,43,0.02)" />
+          </linearGradient>
+        </defs>
+
+        {[0, 25, 50, 75, 100].map((line) => {
+          const y = (EQ_GRAPH_HEIGHT * line) / 100;
+          return (
+            <line
+              key={line}
+              x1="0"
+              y1={y}
+              x2={EQ_GRAPH_WIDTH}
+              y2={y}
+              stroke="var(--eq-grid-line)"
+              strokeDasharray="1.5 2.5"
+              strokeWidth="0.45"
+            />
+          );
+        })}
+
+        {EQ_BANDS.map((_, index) => {
+          const point = getEqPoint(bands, index);
+          return (
+            <line
+              key={`guide-${index}`}
+              x1={point.x}
+              y1="0"
+              x2={point.x}
+              y2={EQ_GRAPH_HEIGHT}
+              stroke="var(--eq-grid-line)"
+              strokeDasharray="1.5 3"
+              strokeWidth="0.45"
+            />
+          );
+        })}
+
+        <path d={buildEqAreaPath(bands)} fill="url(#eqCurveFill)" />
+        <path
+          d={buildEqLinePath(bands)}
+          fill="none"
+          stroke="url(#eqCurveStroke)"
+          strokeWidth="1.55"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+
+        {EQ_BANDS.map((band, index) => {
+          const point = getEqPoint(bands, index);
+          const isActive = activeIndex === index;
+          return (
+            <g key={band.freq}>
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r={isActive ? '4.1' : '3.4'}
+                fill="var(--bg-primary)"
+                stroke="#ff8a2b"
+                strokeWidth="1.15"
+              />
+              <circle cx={point.x} cy={point.y} r={isActive ? '1.5' : '1.2'} fill="#ff8a2b" />
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="8"
+                fill="transparent"
+                className="cursor-pointer"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  setActiveIndex(index);
+                }}
+              />
+            </g>
+          );
+        })}
+      </svg>
+
+      <div className="mt-3 grid grid-cols-5 gap-2 text-center">
+        {EQ_BANDS.map((band, index) => (
+          <button
+            key={band.freq}
+            type="button"
+            onClick={() => setActiveIndex(index)}
+            className={`rounded-xl px-2 py-2 text-[10px] transition-colors sm:text-[11px] ${
+              activeIndex === index
+                ? 'bg-amply-hover text-amply-textPrimary'
+                : 'text-amply-textMuted hover:bg-amply-hover hover:text-amply-textSecondary'
+            }`}
+          >
+            <span className="block font-semibold">{band.short}</span>
+            <span className="block mt-1">
+              {bands[index] > 0 ? '+' : ''}
+              {bands[index].toFixed(1)}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const ToggleRow = ({
+  icon,
+  title,
+  description,
+  checked,
+  onChange,
+}: {
+  icon?: string;
+  title: string;
+  description?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) => {
+  return (
+    <label className="ui-control-surface flex flex-wrap items-center justify-between gap-3 rounded-[22px] px-3 py-2.5 sm:flex-nowrap sm:gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {icon ? (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-amply-bgPrimary/40">
+            <img src={icon} alt="" className="ui-icon ui-icon--muted h-4 w-4" />
+          </span>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-semibold tracking-[0.01em] text-amply-textPrimary">{title}</p>
+          {description ? <p className="mt-0.5 text-[10px] text-amply-textMuted">{description}</p> : null}
+        </div>
+      </div>
+      <span className="relative inline-flex shrink-0 items-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          className="peer sr-only"
+        />
+        <span className="h-5 w-9 rounded-full bg-amply-border transition-colors peer-checked:bg-amply-accent" />
+        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-amply-textPrimary transition-transform peer-checked:translate-x-4" />
+      </span>
+    </label>
+  );
+};
+
+const SectionHeader = ({ icon, title, description }: { icon: string; title: string; description?: string }) => (
+  <div className="flex items-center gap-3">
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amply-bgPrimary/48 shadow-[inset_0_0_0_1px_var(--control-border)]">
+      <img src={icon} alt="" className="ui-icon ui-icon--muted h-4 w-4" />
+    </span>
+    <div className="min-w-0">
+      <h2 className="font-display text-[15px] font-bold tracking-[0.01em] text-amply-textPrimary">{title}</h2>
+      {description ? <p className="mt-0.5 text-[11px] text-amply-textMuted">{description}</p> : null}
+    </div>
+  </div>
+);
+
+const SectionCard = ({ children }: { children: ReactNode }) => (
+  <section className="ui-soft-card rounded-[28px] px-4 py-4 shadow-[0_1px_2px_rgba(79,60,39,0.08),0_8px_20px_rgba(79,60,39,0.05)]">
+    {children}
+  </section>
+);
+
+const AppVersionCard = () => {
+  return (
+    <SectionCard>
+      <SectionHeader icon={settingsIcon} title="App Version" description="Current Amply release." />
+      <div className="ui-control-surface mt-3 flex min-h-[42px] items-center justify-between gap-3 rounded-2xl px-3 py-2">
+        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-amply-textMuted">
+          Amply
+        </span>
+        <span className="text-[12px] font-medium text-amply-textSecondary">
+          {APP_PACKAGE_VERSION}
+        </span>
+      </div>
+    </SectionCard>
+  );
+};
+
+const SettingsPage = () => {
+  const libraryPaths = useLibraryStore((state) => state.libraryPaths);
+  const isScanning = useLibraryStore((state) => state.isScanning);
+  const addLibraryPath = useLibraryStore((state) => state.addLibraryPath);
+  const removeLibraryPath = useLibraryStore((state) => state.removeLibraryPath);
+  const setLibraryPaths = useLibraryStore((state) => state.setLibraryPaths);
+  const scanLibrary = useLibraryStore((state) => state.scanLibrary);
+
+  const appTheme = usePlayerStore((state) => state.settings.appTheme);
+  const autoPauseIgnoreApps = usePlayerStore((state) => state.settings.autoPauseIgnoreApps);
+  const autoPauseIgnoreFullscreen = usePlayerStore((state) => state.settings.autoPauseIgnoreFullscreen);
+  const autoPauseOnFocus = usePlayerStore((state) => state.settings.autoPauseOnFocus);
+  const crossfadeDurationSec = usePlayerStore((state) => state.settings.crossfadeDurationSec);
+  const crossfadeEnabled = usePlayerStore((state) => state.settings.crossfadeEnabled);
+  const discoveryIntensity = usePlayerStore((state) => state.settings.discoveryIntensity);
+  const eqBands = usePlayerStore((state) => state.settings.eqBands);
+  const eqPreset = usePlayerStore((state) => state.settings.eqPreset);
+  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const gaplessEnabled = usePlayerStore((state) => state.settings.gaplessEnabled);
+  const lastFmApiKey = usePlayerStore((state) => state.settings.lastFmApiKey);
+  const launchOnStartup = usePlayerStore((state) => state.settings.launchOnStartup);
+  const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
+  const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
+  const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
+  const miniNowPlayingOverlay = usePlayerStore((state) => state.settings.miniNowPlayingOverlay);
+  const overlaySpinningArtwork = usePlayerStore((state) => state.settings.overlaySpinningArtwork);
+  const onlineRecommendationsEnabled = usePlayerStore((state) => state.settings.onlineRecommendationsEnabled);
+  const outputDeviceName = usePlayerStore((state) => state.settings.outputDeviceName);
+  const overlayAutoHide = usePlayerStore((state) => state.settings.overlayAutoHide);
+  const pauseMixRegenDuringPlayback = usePlayerStore((state) => state.settings.pauseMixRegenDuringPlayback);
+  const playbackSpeed = usePlayerStore((state) => state.settings.playbackSpeed);
+  const randomnessIntensity = usePlayerStore((state) => state.settings.randomnessIntensity);
+  const sleepTimerEndsAt = usePlayerStore((state) => state.sleepTimerEndsAt);
+  const sleepTimerDurationMin = usePlayerStore((state) => state.sleepTimerDurationMin);
+
+  const settings = useMemo(
+    () =>
+      ({
+        appTheme,
+        autoPauseIgnoreApps,
+        autoPauseIgnoreFullscreen,
+        autoPauseOnFocus,
+        crossfadeDurationSec,
+        crossfadeEnabled,
+        discoveryIntensity,
+        eqBands,
+        eqPreset,
+        gameMode,
+        gaplessEnabled,
+        lastFmApiKey,
+        launchOnStartup,
+        lyricsVisualsEnabled,
+        lyricsVisualTheme,
+        metadataFetchPaused,
+        miniNowPlayingOverlay,
+        overlaySpinningArtwork,
+        onlineRecommendationsEnabled,
+        outputDeviceName,
+        overlayAutoHide,
+        pauseMixRegenDuringPlayback,
+        playbackSpeed,
+        randomnessIntensity,
+      }) satisfies Pick<
+        AppSettings,
+        | 'appTheme'
+        | 'autoPauseIgnoreApps'
+        | 'autoPauseIgnoreFullscreen'
+        | 'autoPauseOnFocus'
+        | 'crossfadeDurationSec'
+        | 'crossfadeEnabled'
+        | 'discoveryIntensity'
+        | 'eqBands'
+        | 'eqPreset'
+        | 'gameMode'
+        | 'gaplessEnabled'
+        | 'lastFmApiKey'
+        | 'launchOnStartup'
+        | 'lyricsVisualsEnabled'
+        | 'lyricsVisualTheme'
+        | 'metadataFetchPaused'
+        | 'miniNowPlayingOverlay'
+        | 'overlaySpinningArtwork'
+        | 'onlineRecommendationsEnabled'
+        | 'outputDeviceName'
+        | 'overlayAutoHide'
+        | 'pauseMixRegenDuringPlayback'
+        | 'playbackSpeed'
+        | 'randomnessIntensity'
+      >,
+    [
+      appTheme,
+      autoPauseIgnoreApps,
+      autoPauseIgnoreFullscreen,
+      autoPauseOnFocus,
+      crossfadeDurationSec,
+      crossfadeEnabled,
+      discoveryIntensity,
+      eqBands,
+      eqPreset,
+      gameMode,
+      gaplessEnabled,
+      lastFmApiKey,
+      launchOnStartup,
+      lyricsVisualsEnabled,
+      lyricsVisualTheme,
+      metadataFetchPaused,
+      miniNowPlayingOverlay,
+      overlaySpinningArtwork,
+      onlineRecommendationsEnabled,
+      outputDeviceName,
+      overlayAutoHide,
+      pauseMixRegenDuringPlayback,
+      playbackSpeed,
+      randomnessIntensity,
+    ],
+  );
+
+  const setPlaybackSpeed = usePlayerStore((state) => state.setPlaybackSpeed);
+  const setOutputDeviceName = usePlayerStore((state) => state.setOutputDeviceName);
+  const setEqPreset = usePlayerStore((state) => state.setEqPreset);
+  const setEqBands = usePlayerStore((state) => state.setEqBands);
+  const setCrossfadeEnabled = usePlayerStore((state) => state.setCrossfadeEnabled);
+  const setCrossfadeDuration = usePlayerStore((state) => state.setCrossfadeDuration);
+  const setGaplessEnabled = usePlayerStore((state) => state.setGaplessEnabled);
+  const setAppTheme = usePlayerStore((state) => state.setAppTheme);
+  const setSleepTimer = usePlayerStore((state) => state.setSleepTimer);
+  const setLaunchOnStartup = usePlayerStore((state) => state.setLaunchOnStartup);
+  const setGameMode = usePlayerStore((state) => state.setGameMode);
+  const setMiniNowPlayingOverlay = usePlayerStore((state) => state.setMiniNowPlayingOverlay);
+  const setOverlaySpinningArtwork = usePlayerStore((state) => state.setOverlaySpinningArtwork);
+  const setOverlayAutoHide = usePlayerStore((state) => state.setOverlayAutoHide);
+  const setLyricsVisualsEnabled = usePlayerStore((state) => state.setLyricsVisualsEnabled);
+  const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
+  const setMetadataFetchPaused = usePlayerStore((state) => state.setMetadataFetchPaused);
+  const setDiscoveryIntensity = usePlayerStore((state) => state.setDiscoveryIntensity);
+  const setRandomnessIntensity = usePlayerStore((state) => state.setRandomnessIntensity);
+  const setPauseMixRegenDuringPlayback = usePlayerStore((state) => state.setPauseMixRegenDuringPlayback);
+  const setOnlineRecommendationsEnabled = usePlayerStore((state) => state.setOnlineRecommendationsEnabled);
+  const setLastFmApiKey = usePlayerStore((state) => state.setLastFmApiKey);
+  const setAutoPauseOnFocus = usePlayerStore((state) => state.setAutoPauseOnFocus);
+  const setAutoPauseIgnoreApps = usePlayerStore((state) => state.setAutoPauseIgnoreApps);
+  const setAutoPauseIgnoreFullscreen = usePlayerStore((state) => state.setAutoPauseIgnoreFullscreen);
+
+  const [localPath, setLocalPath] = useState('');
+  const [customSleepMinutes, setCustomSleepMinutes] = useState('');
+  const [timeTick, setTimeTick] = useState(Date.now());
+  const metadataFetch = useLibraryStore((state) => state.metadataFetch);
+  const startMetadataFetch = useLibraryStore((state) => state.startMetadataFetch);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
+  const songs = useLibraryTabView('songs').songs;
+  const [outputDevices, setOutputDevices] = useState<OutputDeviceInfo[]>([]);
+  const sleepTimerRemainingMs = sleepTimerEndsAt ? Math.max(0, sleepTimerEndsAt - timeTick) : 0;
+  const sleepTimerRemainingMin = sleepTimerEndsAt ? Math.max(0, Math.ceil(sleepTimerRemainingMs / 60000)) : 0;
+  const sleepTimerDisplay = sleepTimerEndsAt
+    ? sleepTimerRemainingMs < 60_000
+      ? '<1m'
+      : `${Math.floor(sleepTimerRemainingMs / 3_600_000)}h ${Math.floor((sleepTimerRemainingMs % 3_600_000) / 60_000)
+          .toString()
+          .padStart(2, '0')}m`
+    : '--';
+
+  const librarySummary = useMemo(() => {
+    const artists = new Set<string>();
+    const genres = new Set<string>();
+    for (const song of songs) {
+      if (song.artist?.trim()) {
+        artists.add(song.artist.trim().toLocaleLowerCase());
+      }
+      for (const genre of song.genre?.split(/[,;/|]+/) ?? []) {
+        const normalized = genre.trim().toLocaleLowerCase();
+        if (normalized && normalized !== 'unknown genre') {
+          genres.add(normalized);
+        }
+      }
+    }
+    return [
+      { label: 'Tracks', count: songs.length },
+      { label: 'Artists', count: artists.size },
+      { label: 'Genres', count: genres.size },
+    ];
+  }, [songs]);
+  const [ignoreAppsText, setIgnoreAppsText] = useState(settings.autoPauseIgnoreApps.join(', '));
+  const [lastFmApiKeyText, setLastFmApiKeyText] = useState(settings.lastFmApiKey ?? '');
+
+  useEffect(() => {
+    setIgnoreAppsText(settings.autoPauseIgnoreApps.join(', '));
+  }, [settings.autoPauseIgnoreApps]);
+  useEffect(() => {
+    setLastFmApiKeyText(settings.lastFmApiKey ?? '');
+  }, [settings.lastFmApiKey]);
+  const discoveryLevel = Math.max(0, Math.min(1, settings.discoveryIntensity ?? 0.35));
+  const discoveryPercent = Math.round(discoveryLevel * 100);
+  const discoveryLabel =
+    discoveryLevel < 0.2
+      ? 'Subtle'
+      : discoveryLevel < 0.5
+        ? 'Balanced'
+        : discoveryLevel < 0.8
+          ? 'Adventurous'
+          : 'Wild';
+
+  const randomnessLevel = Math.max(0, Math.min(1, settings.randomnessIntensity ?? 0.3));
+  const randomnessPercent = Math.round(randomnessLevel * 100);
+  const randomnessLabel =
+    randomnessLevel < 0.2
+      ? 'Focused'
+      : randomnessLevel < 0.5
+        ? 'Varied'
+        : randomnessLevel < 0.8
+          ? 'Surprising'
+          : 'Wild';
+
+  useEffect(() => {
+    let alive = true;
+    if (!isTauri()) {
+      return () => {
+        alive = false;
+      };
+    }
+
+    const load = async () => {
+      const devices = await listOutputDevices();
+      if (alive) {
+        setOutputDevices(devices);
+      }
+    };
+
+    void load();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sleepTimerEndsAt) {
+      return;
+    }
+
+    let handle: number | null = null;
+    const updateTick = () => {
+      const now = Date.now();
+      setTimeTick(now);
+
+      if (now >= sleepTimerEndsAt) {
+        return;
+      }
+
+      const remaining = sleepTimerEndsAt - now;
+      const delay =
+        remaining <= 60_000
+          ? 1000
+          : (((remaining - 1) % 60_000) + 1);
+
+      handle = window.setTimeout(updateTick, delay);
+    };
+
+    updateTick();
+
+    return () => {
+      if (handle !== null) {
+        window.clearTimeout(handle);
+      }
+    };
+  }, [sleepTimerEndsAt]);
+
+  return (
+    <div className="space-y-4 pb-8">
+      <PageHeader
+        eyebrow="Preferences"
+        title="Settings"
+        description="Minimal controls for library, playback, visuals, and app behavior."
+      />
+
+      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.28fr)_minmax(0,0.92fr)] 2xl:items-start">
+        <div className="grid gap-4">
+          <SectionCard>
+          <SectionHeader icon={libraryIcon} title="Music Library" description="Folders Amply scans for playback." />
+
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <input
+              value={localPath}
+              onChange={(event) => setLocalPath(event.target.value)}
+              placeholder="Add folder path manually (optional)"
+              className="min-w-0 flex-1 rounded-2xl border border-amply-border/60 bg-amply-bgSecondary/55 px-3.5 py-2.5 text-[12px] text-amply-textPrimary outline-none transition-colors focus:border-amply-accent"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const value = localPath.trim();
+                if (!value) {
+                  return;
+                }
+                await addLibraryPath(value);
+                setLocalPath('');
+              }}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amply-accent px-4 py-2.5 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover sm:w-auto sm:min-w-[120px]"
+              title="Add path"
+            >
+              <img src={addIcon} alt="" className="h-4 w-4" />
+              Add Path
+            </button>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await pickMusicFolders();
+                if (picked.length) {
+                  const merged = Array.from(new Set([...libraryPaths, ...picked]));
+                  await setLibraryPaths(merged);
+                }
+              }}
+              className="ui-control-surface inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amply-border/60 px-4 py-2.5 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              title="Browse folders"
+            >
+              <img src={libraryIcon} alt="" className="ui-icon ui-icon--muted h-4 w-4" />
+              Browse
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void scanLibrary();
+              }}
+              className="ui-control-surface inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amply-border/60 px-4 py-2.5 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+              title="Rescan library"
+            >
+              <img src={searchIcon} alt="" className="ui-icon ui-icon--muted h-4 w-4" />
+              {isScanning ? 'Scanning...' : 'Rescan'}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 max-h-44 space-y-1.5 overflow-y-auto pr-1">
+          {libraryPaths.map((path) => (
+            <div key={path} className="ui-control-surface flex flex-col gap-2 rounded-2xl border border-amply-border/60 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 break-all text-[12px] text-amply-textSecondary sm:truncate sm:pr-4">{path}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  void removeLibraryPath(path);
+                }}
+                className="self-start rounded-xl border border-amply-border/60 px-2.5 py-1.5 text-[11px] text-amply-textMuted transition-colors hover:bg-amply-hover hover:text-amply-textPrimary sm:self-auto"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+          </SectionCard>
+
+          <SectionCard>
+          <SectionHeader icon={statsIcon} title="Library Data" description="Cache refresh and metadata controls." />
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          <button
+            type="button"
+            disabled={metadataFetch.running}
+            onClick={async () => {
+              setBulkMessage(null);
+              if (settings.metadataFetchPaused) {
+                await setMetadataFetchPaused(false);
+                setBulkMessage('Metadata fetching resumed. Starting bulk fetch...');
+              }
+              startMetadataFetch({ allowWhenActive: true });
+            }}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amply-accent px-3 py-2.5 text-[12px] font-semibold text-black transition-colors hover:bg-amply-accentHover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <img src={searchIcon} alt="" className="h-4 w-4" />
+            {metadataFetch.running ? 'Fetching...' : 'Fetch Missing'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              void openStorageDir();
+            }}
+            className="ui-control-surface inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amply-border/60 px-3 py-2.5 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+          >
+            <img src={libraryIcon} alt="" className="ui-icon ui-icon--muted h-4 w-4" />
+            Storage
+          </button>
+
+          <button
+            type="button"
+            disabled={clearingCache}
+            onClick={async () => {
+              if (clearingCache) {
+                return;
+              }
+              setClearingCache(true);
+              setBulkMessage(null);
+              try {
+                await clearStorageCache();
+                resetMetadataCacheIndex();
+                setBulkMessage('Cache cleared. Restart the app to rescan library data.');
+              } finally {
+                setClearingCache(false);
+              }
+            }}
+            className="ui-control-surface inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amply-border/60 px-3 py-2.5 text-[12px] text-amply-textSecondary transition-colors hover:bg-amply-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <img src={trashIcon} alt="" className="ui-icon ui-icon--muted h-4 w-4" />
+            {clearingCache ? 'Clearing...' : 'Clear Cache'}
+          </button>
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          <ToggleRow
+            icon={searchIcon}
+            title="Pause Metadata Lookups"
+            description="Pause background metadata work."
+            checked={settings.metadataFetchPaused}
+            onChange={(next) => {
+              void setMetadataFetchPaused(next);
+            }}
+          />
+        </div>
+
+        {metadataFetch.running && metadataFetch.total > 0 ? (
+          <div className="ui-control-surface mt-3 rounded-2xl border border-amply-border/60 px-3.5 py-3 text-[12px] text-amply-textMuted">
+            Processed {metadataFetch.done}/{metadataFetch.total} metadata tasks. Artists {metadataFetch.artists}. Genres {metadataFetch.genres}.
+          </div>
+        ) : null}
+
+        {metadataFetch.message || bulkMessage ? (
+          <div className="ui-control-surface mt-3 rounded-2xl border border-amply-border/60 px-3.5 py-3 text-[12px] text-amply-textMuted">
+            {metadataFetch.message ?? bulkMessage}
+          </div>
+        ) : null}
+
+        <div className="mt-4">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-amply-textMuted">Library Summary</p>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {librarySummary.map((item) => (
+              <div key={item.label} className="ui-control-surface rounded-2xl border border-amply-border/60 px-3 py-3 text-center">
+                <p className="text-[18px] font-semibold text-amply-textPrimary">{item.count.toLocaleString()}</p>
+                <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-amply-textMuted">{item.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionHeader icon={playIcon} title="Advanced Playback" description="Routing, fades, and playback speed." />
+
+            <div className="mt-3 grid gap-2">
+              {isTauri() ? (
+                <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                  <p className="text-[12px] text-amply-textSecondary">Output Device</p>
+                  <select
+                    value={settings.outputDeviceName ?? ''}
+                    onChange={(event) => {
+                      const value = event.target.value || null;
+                      void setOutputDeviceName(value);
+                    }}
+                    className="mt-2 w-full rounded-2xl border border-amply-border/60 bg-amply-bgSecondary/55 px-3.5 py-2.5 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+                  >
+                    <option value="">System Default</option>
+                    {outputDevices.map((device) => (
+                      <option key={device.name} value={device.name}>
+                        {device.name}
+                        {device.isDefault ? ' (Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <ToggleRow
+                icon={playIcon}
+                title="Crossfade"
+                description="Blend tracks into each other."
+                checked={settings.crossfadeEnabled}
+                onChange={(next) => {
+                  void setCrossfadeEnabled(next);
+                }}
+              />
+
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+                  <span>Crossfade Duration</span>
+                  <span>{settings.crossfadeDurationSec}s</span>
+                </div>
+                <div className="ui-range-track relative mt-2 h-1 w-full rounded-full">
+                  <div
+                    className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                    style={{ width: `${((settings.crossfadeDurationSec - 1) / 11) * 100}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={1}
+                    max={12}
+                    step={1}
+                    value={settings.crossfadeDurationSec}
+                    onChange={(event) => {
+                      void setCrossfadeDuration(Number(event.target.value));
+                    }}
+                    className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                  />
+                </div>
+              </div>
+
+              <ToggleRow
+                icon={playIcon}
+                title="Gapless Playback"
+                description="Preload the next track."
+                checked={settings.gaplessEnabled}
+                onChange={(next) => {
+                  void setGaplessEnabled(next);
+                }}
+              />
+
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+                  <span>Playback Speed</span>
+                  <span>{settings.playbackSpeed.toFixed(2)}x</span>
+                </div>
+                <div className="ui-range-track relative mt-2 h-1 w-full rounded-full">
+                  <div
+                    className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                    style={{ width: `${((settings.playbackSpeed - 0.75) / 0.75) * 100}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0.75}
+                    max={1.5}
+                    step={0.05}
+                    value={settings.playbackSpeed}
+                    onChange={(event) => {
+                      void setPlaybackSpeed(Number(event.target.value));
+                    }}
+                    className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+          </SectionCard>
+
+            <SectionCard>
+              <SectionHeader icon={statsIcon} title="Equalizer" description="Presets and custom tone shaping." />
+
+              <div className="mt-3 grid gap-2">
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12px] text-amply-textSecondary">EQ Preset</p>
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-amply-textMuted">
+                    {EQ_PRESET_LABELS[settings.eqPreset]}
+                  </span>
+                </div>
+                <select
+                  value={settings.eqPreset}
+                  onChange={(event) => {
+                    void setEqPreset(event.target.value as typeof settings.eqPreset);
+                  }}
+                  className="mt-2 w-full rounded-2xl border border-amply-border/60 bg-amply-bgSecondary/55 px-3.5 py-2.5 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+                >
+                  <option value="flat">Flat</option>
+                  <option value="warm">Warm</option>
+                  <option value="bass">Bass Boost</option>
+                  <option value="treble">Treble Lift</option>
+                  <option value="vocal">Vocal Focus</option>
+                  <option value="club">Club</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <p className="mt-2 text-[11px] text-amply-textMuted">
+                  Presets are templates. Drag the graph or sliders below to fine-tune your own curve.
+                </p>
+              </div>
+
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[12px] text-amply-textSecondary">EQ Curve</p>
+                    <p className="mt-1 text-[11px] text-amply-textMuted">Click or drag a node to shape the curve directly.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void setEqPreset('flat');
+                    }}
+                    className="rounded-2xl border border-amply-border/60 px-3 py-1.5 text-[11px] text-amply-textSecondary transition-colors hover:bg-amply-hover"
+                  >
+                    Reset
+                  </button>
+                </div>
+
+                <div className="mt-4">
+                  <EQGraphEditor
+                    bands={settings.eqBands}
+                    onChange={(next) => {
+                      void setEqBands(next);
+                    }}
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-5">
+                  {EQ_BANDS.map((band, index) => (
+                    <div
+                      key={band.freq}
+                      className="ui-control-surface rounded-2xl border border-amply-border/50 px-3 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3 sm:block">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amply-textSecondary">{band.short}</p>
+                          <p className="mt-1 text-[10px] text-amply-textMuted">{band.freq}</p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(255,138,43,0.22)] bg-[rgba(255,138,43,0.08)] px-2.5 py-1 text-[10px] font-semibold text-amply-textPrimary sm:mt-4 sm:inline-flex">
+                          {settings.eqBands[index] > 0 ? '+' : ''}
+                          {settings.eqBands[index].toFixed(1)} dB
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              </div>
+            </SectionCard>
+
+          <AppVersionCard />
+        </div>
+
+        <div className="grid gap-4">
+          <SectionCard>
+            <SectionHeader icon={settingsIcon} title="Appearance" description="Light by default, dark when you want denser contrast." />
+
+            <div className="mt-3 grid gap-2">
+              <ToggleRow
+                title="Use Dark Mode"
+                description="Switch between the two visual themes."
+                checked={settings.appTheme === 'dark'}
+                onChange={(next) => {
+                  void setAppTheme(next ? 'dark' : 'light');
+                }}
+              />
+            </div>
+          </SectionCard>
+
+          <SectionCard>
+          <SectionHeader icon={homeIcon} title="App Behavior" description="Launch and focus behavior." />
+
+          <div className="mt-3 grid gap-2">
+            <ToggleRow
+              icon={homeIcon}
+              title="Launch on System Startup"
+              description="Open Amply when your system starts."
+              checked={settings.launchOnStartup}
+              onChange={(next) => {
+                void setLaunchOnStartup(next);
+              }}
+            />
+            <ToggleRow
+              icon={playIcon}
+              title="Game Mode"
+              description="Lean mode with fewer heavy panels."
+              checked={settings.gameMode}
+              onChange={(next) => {
+                void setGameMode(next);
+              }}
+            />
+            <ToggleRow
+              icon={playIcon}
+              title="Auto-pause for Other Audio (Windows)"
+              description="Pause for other audio, then resume."
+              checked={settings.autoPauseOnFocus}
+              onChange={(next) => {
+                void setAutoPauseOnFocus(next);
+              }}
+            />
+            <ToggleRow
+              title="Ignore Fullscreen Apps"
+              description="Keep playing while fullscreen apps are active."
+              checked={settings.autoPauseIgnoreFullscreen}
+              onChange={(next) => {
+                void setAutoPauseIgnoreFullscreen(next);
+              }}
+            />
+            <div className="ui-section-divider border-t pt-3">
+              <p className="text-[12px] font-semibold text-amply-textPrimary">Ignore These Apps</p>
+              <p className="mt-1 text-[11px] text-amply-textMuted">Comma-separated process names, e.g. "eldenring.exe, valorant.exe".</p>
+              <input
+                value={ignoreAppsText}
+                onChange={(event) => setIgnoreAppsText(event.target.value)}
+                onBlur={() => {
+                  const list = ignoreAppsText
+                    .split(',')
+                    .map((entry) => entry.trim())
+                    .filter(Boolean);
+                  void setAutoPauseIgnoreApps(list);
+                }}
+                placeholder="eldenring.exe, valorant.exe"
+                className="mt-2 w-full rounded-2xl bg-[var(--control-surface)] px-3.5 py-2.5 text-[12px] text-amply-textPrimary shadow-[inset_0_0_0_1px_var(--control-border)] outline-none focus:shadow-[inset_0_0_0_1px_rgb(var(--amply-accent))]"
+              />
+            </div>
+          </div>
+          </SectionCard>
+
+          <SectionCard>
+          <SectionHeader icon={queueIcon} title="Overlay" description="Mini player that stays on top." />
+
+          <div className="mt-3 grid gap-2">
+            <ToggleRow
+              icon={queueIcon}
+              title="Mini Now Playing Overlay"
+              description="Show the mini player above other apps."
+              checked={settings.miniNowPlayingOverlay}
+              onChange={(next) => {
+                void setMiniNowPlayingOverlay(next);
+              }}
+            />
+            <ToggleRow
+              title="Auto-hide Overlay"
+              description="Hide it while playback is paused."
+              checked={settings.overlayAutoHide}
+              onChange={(next) => {
+                void setOverlayAutoHide(next);
+              }}
+            />
+            <ToggleRow
+              title="Spinning Artwork"
+              description="Show album art as a record that turns while music plays."
+              checked={settings.overlaySpinningArtwork}
+              onChange={(next) => {
+                void setOverlaySpinningArtwork(next);
+              }}
+            />
+          </div>
+          </SectionCard>
+
+          <SectionCard>
+          <SectionHeader icon={lyricsIcon} title="Lyrics Visuals" description="Ambient visuals for the lyrics view." />
+
+        <div className="mt-3 grid gap-2">
+          <ToggleRow
+            icon={lyricsIcon}
+            title="Enable Visuals"
+            description="Show animated backgrounds behind lyrics."
+            checked={settings.lyricsVisualsEnabled}
+            onChange={(next) => {
+              void setLyricsVisualsEnabled(next);
+            }}
+          />
+
+          <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+            <p className="text-[12px] text-amply-textSecondary">Theme</p>
+            <select
+              value={settings.lyricsVisualTheme}
+              disabled={!settings.lyricsVisualsEnabled}
+              onChange={(event) => {
+                void setLyricsVisualTheme(event.target.value as typeof settings.lyricsVisualTheme);
+              }}
+              className="mt-2 w-full rounded-2xl border border-amply-border/60 bg-amply-bgSecondary/55 px-3.5 py-2.5 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <option value="ember">Ember · Spectrum</option>
+              <option value="aurora">Aurora · Wave</option>
+              <option value="mono">Mono · Orbit</option>
+            </select>
+          </div>
+        </div>
+          </SectionCard>
+
+          <SectionCard>
+        <SectionHeader icon={playIcon} title="Sleep Timer" description="Choose when playback should stop." />
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <div className="ui-control-surface rounded-[26px] border border-amply-border/60 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-amply-textMuted">Remaining</p>
+                  <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
+                    <span className="text-[28px] font-semibold leading-none text-amply-textPrimary sm:text-[34px]">
+                      {sleepTimerDisplay}
+                    </span>
+                    <span className="pb-1 text-[12px] text-amply-textSecondary">
+                      {sleepTimerEndsAt ? `${sleepTimerRemainingMin} min left` : 'Off'}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-[11px] text-amply-textMuted">
+                    {sleepTimerEndsAt
+                      ? `Stops at ${new Date(sleepTimerEndsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                      : 'No active timer'}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSleepTimer(null)}
+                  disabled={!sleepTimerEndsAt}
+                  className="inline-flex min-h-[38px] items-center justify-center rounded-2xl border border-amply-border/60 px-4 text-[12px] font-medium text-amply-textSecondary transition-colors hover:bg-amply-hover hover:text-amply-textPrimary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+            <div className="ui-control-surface rounded-[26px] border border-amply-border/60 p-4">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-amply-textMuted">Custom</p>
+              <p className="mt-1 text-[12px] text-amply-textSecondary">Enter minutes up to 12 hours.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <input
+                  type="number"
+                  min={1}
+                  max={720}
+                  step={1}
+                  value={customSleepMinutes}
+                  onChange={(event) => setCustomSleepMinutes(event.target.value)}
+                  placeholder="Custom minutes"
+                  className="min-w-0 rounded-2xl border border-amply-border/60 bg-amply-bgSecondary/55 px-4 py-2.5 text-[13px] text-amply-textPrimary outline-none transition-colors focus:border-[#ff9b46]/50"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextMinutes = Number.parseInt(customSleepMinutes, 10);
+                    if (!Number.isFinite(nextMinutes) || nextMinutes < 1) {
+                      return;
+                    }
+
+                    void setSleepTimer(Math.min(nextMinutes, 720));
+                    setCustomSleepMinutes('');
+                  }}
+                  className="inline-flex min-h-[42px] items-center justify-center rounded-2xl bg-[#ff8a2b] px-4 text-[12px] font-semibold text-black transition-colors hover:bg-[#ff9b46]"
+                >
+                  Set Timer
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-amply-textMuted">Quick Presets</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {[15, 30, 45, 60].map((minutes) => {
+                const isActive = sleepTimerEndsAt && sleepTimerDurationMin === minutes;
+
+                return (
+                  <button
+                    key={minutes}
+                    type="button"
+                    onClick={() => setSleepTimer(minutes)}
+                    className={`rounded-2xl border px-4 py-2.5 text-[13px] font-medium transition-colors ${
+                      isActive
+                        ? 'border-[#ff9b46]/40 bg-[#ff8a2b]/10 text-amply-textPrimary'
+                        : 'border-amply-border/60 bg-amply-bgSecondary/20 text-amply-textSecondary hover:bg-amply-hover hover:text-amply-textPrimary'
+                    }`}
+                  >
+                    {minutes} min
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionHeader icon={playlistsIcon} title="Smart Playlists" description="Control discovery and mix variation." />
+
+            <div className="mt-3 grid gap-2">
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+                  <span>Discovery Intensity</span>
+                  <span>{discoveryPercent}% / {discoveryLabel}</span>
+                </div>
+                <p className="mt-2 text-[11px] text-amply-textMuted">
+                  Higher values surface more low-play and forgotten tracks.
+                </p>
+                <div className="ui-range-track relative mt-3 h-1 w-full rounded-full">
+                  <div
+                    className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                    style={{ width: `${discoveryPercent}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={discoveryLevel}
+                    onChange={(event) => {
+                      void setDiscoveryIntensity(Number(event.target.value));
+                    }}
+                    className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                  />
+                </div>
+              </div>
+
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-amply-textSecondary">
+                  <span>Randomness</span>
+                  <span>{randomnessPercent}% / {randomnessLabel}</span>
+                </div>
+                <p className="mt-2 text-[11px] text-amply-textMuted">
+                  Higher values reduce repeats and bias toward less-played songs.
+                </p>
+                <div className="ui-range-track relative mt-3 h-1 w-full rounded-full">
+                  <div
+                    className="absolute left-0 top-0 h-1 rounded-full bg-amply-accent"
+                    style={{ width: `${randomnessPercent}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={randomnessLevel}
+                    onChange={(event) => {
+                      void setRandomnessIntensity(Number(event.target.value));
+                    }}
+                    className="absolute left-0 top-[-6px] h-4 w-full cursor-pointer appearance-none bg-transparent"
+                  />
+                </div>
+              </div>
+
+              <ToggleRow
+                icon={playlistsIcon}
+                title="Pause Mix Regen During Playback"
+                description="Skip heavy mix updates while music plays."
+                checked={settings.pauseMixRegenDuringPlayback}
+                onChange={(next) => {
+                  void setPauseMixRegenDuringPlayback(next);
+                }}
+              />
+              <ToggleRow
+                icon={statsIcon}
+                title="Online Recommendations"
+                description="Use cached Last.fm and MusicBrainz signals in idle background jobs."
+                checked={settings.onlineRecommendationsEnabled}
+                onChange={(next) => {
+                  void setOnlineRecommendationsEnabled(next);
+                }}
+              />
+
+              <div className="ui-control-surface rounded-[24px] border border-amply-border/60 px-4 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[12px] font-semibold text-amply-textPrimary">Last.fm API Key</p>
+                    <p className="mt-1 text-[11px] text-amply-textMuted">
+                      Optional. MusicBrainz remains available without a key.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-amply-border/60 px-2.5 py-1 text-[10px] font-semibold text-amply-textSecondary">
+                    {settings.lastFmApiKey ? 'Saved' : 'Not Set'}
+                  </span>
+                </div>
+                <input
+                  value={lastFmApiKeyText}
+                  onChange={(event) => setLastFmApiKeyText(event.target.value)}
+                  onBlur={() => {
+                    if (lastFmApiKeyText !== (settings.lastFmApiKey ?? '')) {
+                      void setLastFmApiKey(lastFmApiKeyText);
+                    }
+                  }}
+                  placeholder="Last.fm API key"
+                  type="password"
+                  autoComplete="off"
+                  className="mt-3 w-full rounded-2xl border border-amply-border/60 bg-amply-bgSecondary/55 px-3.5 py-2.5 text-[12px] text-amply-textPrimary outline-none focus:border-amply-accent"
+                />
+              </div>
+            </div>
+          </SectionCard>
+
+      </div>
+    </div>
+  </div>
+  );
+};
+
+export default SettingsPage;
+
+

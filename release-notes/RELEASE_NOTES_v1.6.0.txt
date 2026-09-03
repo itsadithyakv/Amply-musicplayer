@@ -1,0 +1,27 @@
+Amply v1.6.0
+Release date: 2026-05-25
+
+Highlights
+- Refined the app UI around the Home page aesthetic, with softer shared controls, consistent page headers, compact settings containers, and improved playlist card readability.
+- Improved playback-first performance by removing loudness normalization work and moving expensive metadata/background work away from playback interactions.
+- Restored embedded album artwork behavior and improved artist/profile artwork handling in Now Playing.
+- Expanded Home recommendations with richer smart playlist cards, Explore artwork collages, More From artist sections, playlist sections, and four Made for You mix cards where the library has enough material.
+
+Metadata and recommendations
+- Current-song metadata now has priority after the track has been stable, so genre and artist profile/image can cache and display without waiting for bulk metadata jobs.
+- Bulk metadata fetching now pauses while music is playing or Game Mode is enabled; current-song metadata can still update.
+- Lyrics are fetched from the lyrics view/user action path instead of the broad bulk metadata path.
+- Online recommendation enrichment remains background/idle-oriented and supports better playlist ranking without blocking playback.
+
+UI fixes
+- Settings uses compact section containers again, with less visual clutter than the old nested-border layout.
+- Library and Search share the same search input style.
+- Library tabs now match the sidebar pill aesthetic.
+- The Now Playing artist image is shown in the About the Artist section instead of beside Track Details.
+- Delete-song confirmation is centered through the modal portal.
+
+Validation
+- TypeScript typecheck passes.
+- Production web build passes.
+- Tauri Rust cargo check passes.
+- Dead-code cleanup was limited to exports confirmed by ts-prune and rg.

@@ -1,0 +1,20 @@
+Amply v1.5.1 Release Notes
+
+Highlights
+- Refreshed Amply branding and regenerated app/package icons from the latest logo assets.
+- Upgraded Settings with a more responsive layout, a clearer sleep timer, and a direct-manipulation EQ graph.
+- Fixed stale smart playlists so listening-driven mixes react more reliably to your current library state.
+- Cleaned up EQ and crossfade logic to remove dead code and reduce conflicting playback behavior.
+
+Changes
+- Synced desktop, packaged, and platform icon assets to the latest Amply logo set.
+- Added a draggable EQ curve editor and polished the EQ readout styling.
+- Reworked the sleep timer into a clearer, more responsive control with custom minute entry.
+- Improved Settings responsiveness for narrower layouts and wrapped action rows more gracefully.
+- Fixed smart playlist regeneration behavior after plays, favorites, and metadata-driven updates.
+- Improved Daily Mix scoring and corrected Album Spotlight ordering to follow album track order.
+- Removed redundant EQ and crossfade code paths across the web and native playback layers.
+
+Notes
+- Smart playlists now stay closer to live library behavior while keeping seeded variety where it matters.
+- Native Tauri packaging/building still depends on the Rust + Visual Studio Build Tools setup on Windows.
