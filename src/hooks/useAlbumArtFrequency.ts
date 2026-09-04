@@ -1,26 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import type { Song } from '@/types/music';
 import { buildAlbumArtFrequency } from '@/services/playlistArtworkService';
-import { recordPerfEvent } from '@/services/perfDiagnostics';
 
-export const useAlbumArtFrequency = (songs: Song[]) => {
-  const [frequency, setFrequency] = useState<Map<string, number>>(() => new Map());
-
-  useEffect(() => {
-    let alive = true;
-    void buildAlbumArtFrequency(songs)
-      .then((next) => {
-        if (alive) {
-          setFrequency(next);
-        }
-      })
-      .catch((error) => {
-        recordPerfEvent('album-art-frequency.error', { error: error instanceof Error ? error.message : String(error) });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [songs]);
-
-  return frequency;
-};
+/**
+ * Counts how many songs share each artwork URL. Synchronous and memoised on the songs array
+ * identity, so callers must pass a stable reference (a snapshot getter or a module-level empty
+ * array) rather than a fresh literal per render.
+ */
+export const useAlbumArtFrequency = (songs: Song[]): Map<string, number> =>
+  useMemo(() => buildAlbumArtFrequency(songs), [songs]);

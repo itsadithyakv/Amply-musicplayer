@@ -1,10 +1,12 @@
 import { djb2 as hash } from '@/utils/hash';
-import { invoke } from '@tauri-apps/api/core';
 import type { Song } from '@/types/music';
 import { getPrimaryArtistName } from '@/utils/artists';
-import { isTauri } from '@/services/storageService';
 
-const buildAlbumArtFrequencyLocal = (songs: Song[]): Map<string, number> => {
+/**
+ * Counts songs per artwork URL. Artwork URLs are short (`amplyart://<hash>.jpg`), so this is a
+ * cheap in-process pass; it intentionally never round-trips to Rust.
+ */
+export const buildAlbumArtFrequency = (songs: Song[]): Map<string, number> => {
   const freq = new Map<string, number>();
   for (const song of songs) {
     const art = song.albumArt;
@@ -14,35 +16,6 @@ const buildAlbumArtFrequencyLocal = (songs: Song[]): Map<string, number> => {
     freq.set(art, (freq.get(art) ?? 0) + 1);
   }
   return freq;
-};
-
-export const buildAlbumArtFrequency = async (songs: Song[]): Promise<Map<string, number>> => {
-  if (!isTauri()) {
-    return buildAlbumArtFrequencyLocal(songs);
-  }
-
-  try {
-    const result = await invoke<Array<{ art: string; count: number }>>('build_album_art_frequency_rust', {
-      songs: songs.map((song) => ({
-        id: song.id,
-        artist: song.artist,
-        album: song.album ?? null,
-        albumArt: song.albumArt ?? null,
-        track: song.track ?? null,
-        favorite: Boolean(song.favorite),
-      })),
-    });
-    const freq = new Map<string, number>();
-    for (const entry of result) {
-      if (!entry.art) {
-        continue;
-      }
-      freq.set(entry.art, entry.count);
-    }
-    return freq;
-  } catch {
-    return buildAlbumArtFrequencyLocal(songs);
-  }
 };
 
 const albumKeyFor = (song: Song): string => {

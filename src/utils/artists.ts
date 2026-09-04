@@ -30,7 +30,7 @@ const splitSimpleAnd = (value: string): string[] => {
   return [value];
 };
 
-export const splitArtistNames = (artist: string | null | undefined): string[] => {
+const splitArtistNamesUncached = (artist: string | null | undefined): string[] => {
   const raw = normalizeWhitespace(artist ?? '');
   if (!raw) {
     return [UNKNOWN_ARTIST];
@@ -70,6 +70,33 @@ export const splitArtistNames = (artist: string | null | undefined): string[] =>
   }
 
   return unique.length ? unique : [raw];
+};
+
+/**
+ * Bounded memo for `splitArtistNames`. The split runs ~8 regex passes and is called inside
+ * whole-library loops, but a 10k-song library only has a few thousand distinct artist strings.
+ * When the cache fills it is cleared wholesale rather than evicted per entry; the next pass
+ * simply re-warms it.
+ */
+const SPLIT_ARTIST_CACHE_LIMIT = 4000;
+const splitArtistCache = new Map<string, string[]>();
+
+/**
+ * Splits a raw artist credit ("A feat. B & C") into its individual names.
+ * The returned array is shared via a module cache: treat it as read-only and copy before mutating.
+ */
+export const splitArtistNames = (artist: string | null | undefined): string[] => {
+  const key = artist ?? '';
+  const cached = splitArtistCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const result = splitArtistNamesUncached(artist);
+  if (splitArtistCache.size >= SPLIT_ARTIST_CACHE_LIMIT) {
+    splitArtistCache.clear();
+  }
+  splitArtistCache.set(key, result);
+  return result;
 };
 
 export const getPrimaryArtistName = (artist: string | null | undefined): string => {

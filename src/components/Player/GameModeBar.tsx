@@ -7,6 +7,7 @@ import { PrimaryTransport } from '@/components/Player/TransportControls';
 import { ProgressSection } from '@/components/Player/ProgressSection';
 import { usePlayerStore } from '@/store/playerStore';
 import { usePlayerBarView } from '@/hooks/useLibraryViews';
+import { artworkThumb } from '@/utils/artwork';
 
 /** Lean player bar shown while game mode is on. */
 export const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: MutableRefObject<boolean> }) => {
@@ -21,7 +22,7 @@ export const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: MutableRefO
           className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 transition-[box-shadow] hover:neu-raised-sm"
         >
           <ArtworkImage
-            src={song?.albumArt}
+            src={artworkThumb(song?.albumArt, 64)}
             alt={song?.album ?? 'Unknown Album'}
             className="neu-well h-12 w-12 shrink-0 overflow-hidden rounded-sm"
             loading="eager"

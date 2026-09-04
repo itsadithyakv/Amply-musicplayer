@@ -22,6 +22,7 @@ import {
   getSongSnapshot,
   getSongsByIds,
   getSongsSnapshot,
+  getSongsSnapshotStructural,
   type LibraryVersions,
   useLibraryVersions,
 } from '@/store/libraryDataStore';
@@ -49,6 +50,19 @@ const useLibraryContentVersions = (): LibraryVersions => {
       playlistVersion,
     }),
     [activityVersion, artworkVersion, libraryVersion, playlistVersion],
+  );
+};
+
+/**
+ * Songs snapshot that ignores activity bumps (favourites, plays). Stable across track changes, so
+ * derived data keyed on it (artwork frequency, search index, genre options) is not rebuilt per play.
+ */
+export const useStructuralSongsSnapshot = (): Song[] => {
+  const libraryVersion = useLibraryStore((state) => state.libraryVersion);
+  const artworkVersion = useLibraryStore((state) => state.artworkVersion);
+  return useMemo(
+    () => readVersioned(getSongsSnapshotStructural, libraryVersion, artworkVersion),
+    [artworkVersion, libraryVersion],
   );
 };
 
@@ -87,7 +101,7 @@ export const usePlaylistDetailView = (playlistId?: string): PlaylistDetailView =
     () => readVersioned(getPlaylistsSnapshot, versions.libraryVersion, versions.playlistVersion),
     [versions.libraryVersion, versions.playlistVersion],
   );
-  const albumArtFrequency = useAlbumArtFrequency(songs);
+  const albumArtFrequency = useAlbumArtFrequency(useStructuralSongsSnapshot());
   return useMemo(
     () => getPlaylistDetailView({ songs, playlists, playlistId, albumArtFrequency, versions }),
     [albumArtFrequency, playlistId, playlists, songs, versions],
@@ -104,7 +118,7 @@ export const usePlaylistCardsView = (): PlaylistCardView[] => {
     () => readVersioned(getPlaylistsSnapshot, versions.libraryVersion, versions.playlistVersion),
     [versions.libraryVersion, versions.playlistVersion],
   );
-  const albumArtFrequency = useAlbumArtFrequency(songs);
+  const albumArtFrequency = useAlbumArtFrequency(useStructuralSongsSnapshot());
   return useMemo(
     () => getPlaylistCardViews({ songs, playlists, albumArtFrequency, versions }),
     [albumArtFrequency, playlists, songs, versions],
@@ -118,6 +132,9 @@ export const useSearchRouteView = (): SearchView => {
     () => readVersioned(getSongsSnapshot, versions.activityVersion, versions.artworkVersion, versions.libraryVersion),
     [versions.activityVersion, versions.artworkVersion, versions.libraryVersion],
   );
+  // Search only reads structural fields (title/artist/album/genre), so it is keyed on the
+  // structural snapshot and does not re-run when a favourite or play bumps activityVersion.
+  const structuralSongs = useStructuralSongsSnapshot();
   const deferredQuery = useDeferredValue(query);
   const [results, setResults] = useState<Song[]>([]);
 
@@ -134,7 +151,7 @@ export const useSearchRouteView = (): SearchView => {
 
     debounceHandle = window.setTimeout(() => {
       const startedAt = performance.now();
-      const next = filterAndRankSongs(songs, trimmed, 10);
+      const next = filterAndRankSongs(structuralSongs, trimmed, 10);
       recordBudgetLatency('search', performance.now() - startedAt, 150);
       if (alive) {
         startTransition(() => setResults(next));
@@ -147,11 +164,22 @@ export const useSearchRouteView = (): SearchView => {
         window.clearTimeout(debounceHandle);
       }
     };
-  }, [deferredQuery, songs]);
+  }, [deferredQuery, structuralSongs]);
+
+  // Re-resolve the (at most 10) hits against the live snapshot so favourites/play counts stay current.
+  const liveResults = useMemo(
+    () =>
+      readVersioned(
+        () => (results.length ? getSongsByIds(results.map((song) => song.id)) : results),
+        versions.activityVersion,
+        versions.libraryVersion,
+      ),
+    [results, versions.activityVersion, versions.libraryVersion],
+  );
 
   return useMemo(
-    () => getSearchView({ songs, query: deferredQuery, results, versions }),
-    [songs, deferredQuery, results, versions],
+    () => getSearchView({ songs, query: deferredQuery, results: liveResults, versions }),
+    [songs, deferredQuery, liveResults, versions],
   );
 };
 

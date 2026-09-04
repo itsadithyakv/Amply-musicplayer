@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ListeningProfile, Playlist, Song } from '@/types/music';
+import { recordPerfEvent } from '@/services/perfDiagnostics';
 import { isTauri } from '@/services/storageService';
 
 type RustPlaylist = {
@@ -55,7 +56,8 @@ export const generateSmartPlaylistsRust = async (
       lite: options.lite ?? false,
     });
     return payload;
-  } catch {
+  } catch (error) {
+    recordPerfEvent('playlist.rust.failed', { error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 };

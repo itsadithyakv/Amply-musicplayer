@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { memo, type CSSProperties } from 'react';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
+import { artworkThumb } from '@/utils/artwork';
 
 interface PlaylistArtworkCollageProps {
   /** Up to four artwork URLs. A set where every entry is the same image renders as a single tile. */
@@ -9,6 +10,11 @@ interface PlaylistArtworkCollageProps {
   radius?: 'sm' | 'md';
   /** Pad the tiles inside the well and round each one (hero style). */
   padded?: boolean;
+  /**
+   * Request on-demand thumbnails for `amplyart` artwork instead of the full image. Pass `128`
+   * when the whole well renders at 128px or less (card grids, the composer preview).
+   */
+  thumbSize?: 64 | 128;
   className?: string;
   style?: CSSProperties;
 }
@@ -17,8 +23,8 @@ interface PlaylistArtworkCollageProps {
  * Square artwork well used by playlist cards, the detail hero and the composer preview.
  * Renders a 2×2 collage, a single cover, or an "Amply" placeholder inside a `neu-well`.
  */
-export const PlaylistArtworkCollage = memo(({ artworkSet, radius = 'sm', padded = false, className, style }: PlaylistArtworkCollageProps) => {
-  const tiles = artworkSet.slice(0, 4);
+export const PlaylistArtworkCollage = memo(({ artworkSet, radius = 'sm', padded = false, thumbSize, className, style }: PlaylistArtworkCollageProps) => {
+  const tiles = artworkSet.slice(0, 4).map((art) => (thumbSize ? artworkThumb(art, thumbSize) ?? art : art));
   const single = tiles.length > 0 && tiles.every((art) => art === tiles[0]);
 
   return (

@@ -18,8 +18,10 @@ import {
 } from "@/components/ui";
 import type { Song } from "@/types/music";
 import { formatDuration } from "@/utils/time";
+import { artworkThumb } from "@/utils/artwork";
 import { usePlayerStore } from "@/store/playerStore";
 import { libraryActions, useLibraryStore } from "@/store/libraryStore";
+import { useStructuralSongsSnapshot } from "@/hooks/useLibraryViews";
 import { isUnknownGenre } from "@/services/songMetadataService";
 
 interface SongListProps {
@@ -233,7 +235,7 @@ const SongRow = memo(
 
           <div className="flex min-w-0 items-center gap-3">
             <ArtworkImage
-              src={song.albumArt}
+              src={artworkThumb(song.albumArt, 64)}
               alt={song.album}
               className="neu-well h-10 w-10 shrink-0 overflow-hidden rounded-sm"
               placeholderContent={null}
@@ -437,12 +439,15 @@ const SongList = ({
     () => sortedSongs.map((song) => song.id),
     [sortedSongs],
   );
+  // Genre suggestions only need the library's known genres, so they are keyed on the structural
+  // snapshot (libraryVersion) rather than the per-play `songs` prop identity.
+  const structuralSongs = useStructuralSongsSnapshot();
   const genreOptions = useMemo(() => {
     const map = new Map<string, string>();
     for (const genre of baseGenreOptions) {
       map.set(genre.toLowerCase(), genre);
     }
-    for (const song of songs) {
+    for (const song of structuralSongs) {
       const genre = song.genre?.trim();
       if (!genre || isUnknownGenre(genre)) {
         continue;
@@ -453,7 +458,7 @@ const SongList = ({
       }
     }
     return [...map.values()].sort((a, b) => a.localeCompare(b));
-  }, [songs]);
+  }, [structuralSongs]);
   const rowData = useMemo<SongRowData>(
     () => ({
       songs: sortedSongs,

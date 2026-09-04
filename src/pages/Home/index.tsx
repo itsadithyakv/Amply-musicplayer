@@ -1,7 +1,7 @@
 import { djb2 as hash } from '@/utils/hash';
 import { yieldToIdle } from '@/utils/idle';
 import clsx from 'clsx';
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { Icon, IconButton, Kicker, PageHeader, SectionTitle, Surface } from '@/components/ui';
@@ -9,17 +9,18 @@ import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistPro
 import { getAlbumTracklistKey, loadAlbumTracklistCache, normalizeTrackTitle } from '@/services/albumTracklistService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { useLibraryVersions } from '@/store/libraryDataStore';
 import type { Playlist, Song } from '@/types/music';
-import { getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
+import { getPrimaryArtistName } from '@/utils/artists';
 import { buildArtworkSet, pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { isMoreMixPlaylistId } from '@/services/playlistGenerator';
-import { useHomeView } from '@/hooks/useLibraryViews';
+import { useHomeView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 import { ExploreMixesCard } from '@/pages/Home/ExploreMixesCard';
 import { MadeForYouHero } from '@/pages/Home/MadeForYouHero';
 import { SectionRow } from '@/pages/Home/SectionRow';
 import { SmartPlaylistCard, type SmartPlaylistCardItem, type SmartPlaylistCardLayout } from '@/pages/Home/SmartPlaylistCard';
-import { TopArtistsRow, type TopArtistEntry } from '@/pages/Home/TopArtistsRow';
+import { TopArtistsRow } from '@/pages/Home/TopArtistsRow';
 import {
   buildMadeForYouMixes,
   buildMoreFromArtist,
@@ -59,7 +60,6 @@ const HomePage = () => {
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
-  const [topArtists, setTopArtists] = useState<TopArtistEntry[]>([]);
   const [albumTracklistCache, setAlbumTracklistCache] = useState<Record<string, AlbumTracklistSummary>>({});
   const [smartPlaylistRenderSeed, setSmartPlaylistRenderSeed] = useState(() => smartPlaylistSeed || Date.now());
   const [madeForYouRefreshSeed, setMadeForYouRefreshSeed] = useState(() => getMadeForYouRefreshSeed());
@@ -69,7 +69,9 @@ const HomePage = () => {
   const wasRegeneratingRef = useRef(regeneratingSmartPlaylists);
   const songsById = homeView.songsById;
   const allSongIds = homeView.allSongIds;
-  const albumArtFrequency = useAlbumArtFrequency(deferredSongs);
+  const topArtists = homeView.topArtists;
+  const { libraryVersion, playlistVersion } = useLibraryVersions();
+  const albumArtFrequency = useAlbumArtFrequency(useStructuralSongsSnapshot());
   const homeMixSeed = useMemo(
     () => hash(`${smartPlaylistRenderSeed || 0}:made-for-you:${madeForYouRefreshSeed}`),
     [madeForYouRefreshSeed, smartPlaylistRenderSeed],
@@ -211,92 +213,28 @@ const HomePage = () => {
 
   const madeForYouMixes = useMemo(() => buildMadeForYouMixes(deferredSongs, homeMixSeed), [deferredSongs, homeMixSeed]);
 
-  useEffect(() => {
-    let alive = true;
-    const songList = [...deferredSongs];
-    const playCountBySongId = new Map(songList.map((song) => [song.id, song.playCount]));
-    const artistMap = new Map<string, Song[]>();
-    const artistSongIdMap = new Map<string, Set<string>>();
-    let index = 0;
-
-    const processChunk = () => {
-      if (!alive) {
-        return;
-      }
-      const end = Math.min(index + 300, songList.length);
-      for (; index < end; index += 1) {
-        const song = songList[index];
-        for (const artistName of splitArtistNames(song.artist)) {
-          const songIds = artistSongIdMap.get(artistName) ?? new Set<string>();
-          if (songIds.has(song.id)) {
-            continue;
-          }
-          songIds.add(song.id);
-          artistSongIdMap.set(artistName, songIds);
-
-          const list = artistMap.get(artistName) ?? [];
-          list.push(song);
-          artistMap.set(artistName, list);
-        }
-      }
-
-      if (index < songList.length) {
-        scheduleIdleTask(processChunk, 250);
-        return;
-      }
-
-      const rankedArtists: TopArtistEntry[] = [];
-      for (const [artistName, artistSongs] of artistMap.entries()) {
-        const sortedSongs = [...artistSongs].sort(
-          (a, b) => b.playCount - a.playCount || (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.title.localeCompare(b.title),
-        );
-        const topSong = sortedSongs[0];
-        if (!topSong) {
-          continue;
-        }
-        rankedArtists.push({
-          artistName,
-          topSong,
-          songIds: sortedSongs.map((entry) => entry.id),
-        });
-      }
-
-      const next = rankedArtists
-        .sort((a, b) => {
-          const aPlays = a.songIds.reduce((total, id) => total + (playCountBySongId.get(id) ?? 0), 0);
-          const bPlays = b.songIds.reduce((total, id) => total + (playCountBySongId.get(id) ?? 0), 0);
-          return bPlays - aPlays;
-        })
-        .slice(0, 16);
-
-      startTransition(() => {
-        setTopArtists(next);
-      });
-    };
-
-    const cancel = scheduleIdleTask(processChunk, 250);
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [deferredSongs]);
+  // Top artists come from the shared home view (already computed there); only the artist image
+  // lookup lives here. Keyed on the joined names so a rebuild that yields the same artists does not
+  // re-run the IPC probes.
+  const topArtistNamesKey = useMemo(() => topArtists.map((entry) => entry.artistName).join('|'), [topArtists]);
 
   useEffect(() => {
     let alive = true;
+    const artistNames = topArtistNamesKey ? topArtistNamesKey.split('|') : [];
     const idleWait = () => yieldToIdle(300);
     const load = async () => {
       const next: Record<string, string | undefined> = {};
       let handled = 0;
-      for (const entry of topArtists) {
-        let result = await readCachedArtistProfile(entry.artistName);
+      for (const artistName of artistNames) {
+        let result = await readCachedArtistProfile(artistName);
         if (result.status === 'missing' && !metadataFetchPaused) {
-          result = await loadArtistProfile(entry.artistName);
+          result = await loadArtistProfile(artistName);
         }
         if (!alive) {
           return;
         }
         if (result.status === 'ready') {
-          next[entry.artistName] = result.profile.imageUrl ?? undefined;
+          next[artistName] = result.profile.imageUrl ?? undefined;
         }
         handled += 1;
         if (handled % 3 === 0) {
@@ -318,7 +256,7 @@ const HomePage = () => {
       alive = false;
       cancel();
     };
-  }, [topArtists, metadataFetchDone, metadataFetchPaused]);
+  }, [topArtistNamesKey, metadataFetchDone, metadataFetchPaused]);
 
   const getPlaylistArtwork = useCallback((playlist: Playlist): string | undefined => {
     if (playlist.artwork) {
@@ -346,12 +284,9 @@ const HomePage = () => {
   const smartPlaylistItems = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
     const smartPlaylists = playlists.filter((playlist) => playlist.type === 'smart');
-    const cacheKey = [
-      seed,
-      smartPlaylists
-        .map((playlist) => `${playlist.id}:${playlist.name}:${playlist.description ?? ''}:${playlist.artwork ?? ''}:${playlist.songIds.join(',')}`)
-        .join('|'),
-    ].join('::');
+    // Playlist contents only change alongside a playlistVersion/libraryVersion bump, so the
+    // version counters stand in for serialising every playlist's song ids into the key.
+    const cacheKey = `${seed}::${libraryVersion}:${playlistVersion}`;
     const cached = smartPlaylistUiCache.get(cacheKey);
     if (cached) {
       return cached;
@@ -378,7 +313,15 @@ const HomePage = () => {
       .filter((entry) => entry.songIds.length);
     setBoundedCache(smartPlaylistUiCache, cacheKey, next);
     return next;
-  }, [playlists, getAlbumSpotlightSubtitle, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed]);
+  }, [
+    playlists,
+    getAlbumSpotlightSubtitle,
+    getPlaylistArtwork,
+    getPlaylistArtworkSet,
+    smartPlaylistRenderSeed,
+    libraryVersion,
+    playlistVersion,
+  ]);
 
   const smartHighlightCards = useMemo(() => {
     const now = Date.now() / 1000;

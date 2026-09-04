@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { useMemo } from 'react';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
+import { artworkThumb } from '@/utils/artwork';
 
 interface ArtworkWellProps {
   /** Candidate artworks; duplicates are collapsed. Two or more unique images render as a 2x2 collage. */
@@ -21,7 +22,7 @@ export const ArtworkWell = ({ artworks, alt, className }: ArtworkWellProps) => {
             const art = unique[slot] ?? unique[slot % unique.length];
             return (
               <div key={slot} className="overflow-hidden rounded-sm">
-                <ArtworkImage src={art} alt="" className="h-full w-full object-cover" />
+                <ArtworkImage src={artworkThumb(art, 128)} alt="" className="h-full w-full object-cover" />
               </div>
             );
           })}

@@ -32,6 +32,30 @@ export const hasCachedArtistProfile = async (artistNameRaw: string): Promise<boo
   return invoke<boolean>('has_cached_artist_profile_rust', { artistName: artistNameRaw });
 };
 
+const HAS_CACHED_PROFILE_BATCH_SIZE = 500;
+
+/**
+ * Batched form of `hasCachedArtistProfile`: one IPC round trip per 500 names instead of one per
+ * artist. The result is positionally aligned with `names`.
+ */
+export const hasCachedArtistProfiles = async (names: string[]): Promise<boolean[]> => {
+  if (!names.length) {
+    return [];
+  }
+  if (!isTauri()) {
+    return names.map(() => false);
+  }
+  const result: boolean[] = [];
+  for (let start = 0; start < names.length; start += HAS_CACHED_PROFILE_BATCH_SIZE) {
+    const batch = names.slice(start, start + HAS_CACHED_PROFILE_BATCH_SIZE);
+    const flags = await invoke<boolean[]>('has_cached_artist_profiles_rust', { artistNames: batch });
+    for (let index = 0; index < batch.length; index += 1) {
+      result.push(Boolean(flags?.[index]));
+    }
+  }
+  return result;
+};
+
 export const readCachedArtistProfile = async (artistNameRaw: string): Promise<ArtistProfileLoadResult> => {
   if (!isTauri()) {
     return emptyResult(artistNameRaw);

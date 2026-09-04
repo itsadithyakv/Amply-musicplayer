@@ -268,7 +268,7 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
           <Card as="section" padding="md">
             <Kicker>Playlist details</Kicker>
             <div className="mt-4 flex items-start gap-4">
-              <PlaylistArtworkCollage artworkSet={previewArtwork} radius="sm" className="h-24 w-24" />
+              <PlaylistArtworkCollage artworkSet={previewArtwork} radius="sm" thumbSize={128} className="h-24 w-24" />
               <div className="min-w-0 flex-1 space-y-3">
                 <TextInput autoFocus label="Name" size="sm" value={playlistName} onValueChange={setPlaylistName} placeholder="Playlist name" />
                 <TextInput label="Note" size="sm" value={playlistDescription} onValueChange={setPlaylistDescription} placeholder="Optional description" />

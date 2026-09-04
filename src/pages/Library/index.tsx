@@ -19,7 +19,7 @@ import {
 import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptService';
 import { pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
-import { useLibraryTabView } from '@/hooks/useLibraryViews';
+import { useLibraryTabView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 import { LibraryCardGrid } from './LibraryCardGrid';
 import { AlbumDetailModal, type ActiveAlbum } from './AlbumDetailModal';
 import {
@@ -57,6 +57,9 @@ const isLibraryTab = oneOf<LibraryTab>(['songs', 'albums', 'artists', 'genres'])
 
 type AlbumSummary = AlbumTrackMatches & { tracklist: AlbumTracklist | null };
 
+/** Stable empty array: a fresh `[]` per render would re-key every memo that depends on it. */
+const EMPTY_SONGS: Song[] = [];
+
 const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const [isTabPending, startTabTransition] = useTransition();
   const isScanning = useLibraryStore((state) => state.isScanning);
@@ -89,7 +92,8 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   const shouldBuildArtists = activeTab === 'artists';
   const shouldBuildGenres = activeTab === 'genres';
   const shouldBuildArtworkFrequency = shouldBuildAlbums || shouldBuildArtists || shouldBuildGenres;
-  const albumArtFrequency = useAlbumArtFrequency(shouldBuildArtworkFrequency ? deferredSongs : []);
+  const structuralSongs = useStructuralSongsSnapshot();
+  const albumArtFrequency = useAlbumArtFrequency(shouldBuildArtworkFrequency ? structuralSongs : EMPTY_SONGS);
   const pickArtwork = useMemo(
     () => (groupSongs: Song[]) => pickPlaylistArtwork(groupSongs, albumArtFrequency),
     [albumArtFrequency],

@@ -24,7 +24,8 @@ import {
 import { generateSmartPlaylistsRust } from '@/services/rustPlaylistService';
 import { hydrateSongsWithCachedGenres, isUnknownGenre, loadSongGenre } from '@/services/songMetadataService';
 import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
-import { hasCachedArtistProfile, loadArtistProfile } from '@/services/artistProfileService';
+import { hasCachedArtistProfile, hasCachedArtistProfiles, loadArtistProfile } from '@/services/artistProfileService';
+import { usePlayerStore } from '@/store/playerStore';
 import {
   loadAlbumTracklistCache,
   type AlbumTracklistCache,
@@ -252,13 +253,46 @@ const onlineRecommendationEnabledFromWindow = (): boolean | undefined => {
   return typeof flag === 'boolean' ? flag : undefined;
 };
 
+/**
+ * Player settings without a storage round trip: the player store owns `settings.json` once it has
+ * initialised, so only the pre-init window still reads the file.
+ */
+const readPlayerSettings = async (): Promise<Partial<AppSettings>> => {
+  const player = usePlayerStore.getState();
+  if (player.initialized) {
+    return player.settings;
+  }
+  return readStorageJson<Partial<AppSettings>>('settings.json', {});
+};
+
 const isOnlineRecommendationEnabled = async (): Promise<boolean> => {
   const globalEnabled = onlineRecommendationEnabledFromWindow();
   if (typeof globalEnabled === 'boolean') {
     return globalEnabled;
   }
-  const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
+  const settings = await readPlayerSettings();
   return settings.onlineRecommendationsEnabled === true;
+};
+
+/**
+ * Discovery/randomness intensities from the runtime flags, falling back to the player settings
+ * only when a flag has not been published yet.
+ */
+const resolveMixIntensities = async (): Promise<{ discoveryIntensity?: number; randomnessIntensity?: number }> => {
+  const discoveryFromGlobal = typeof window !== 'undefined' ? getFlag('discoveryIntensity') : undefined;
+  const randomnessFromGlobal = typeof window !== 'undefined' ? getFlag('randomnessIntensity') : undefined;
+  let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
+  let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
+  if (discoveryIntensity === undefined || randomnessIntensity === undefined) {
+    const settings = await readPlayerSettings();
+    if (discoveryIntensity === undefined) {
+      discoveryIntensity = typeof settings.discoveryIntensity === 'number' ? settings.discoveryIntensity : undefined;
+    }
+    if (randomnessIntensity === undefined) {
+      randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
+    }
+  }
+  return { discoveryIntensity, randomnessIntensity };
 };
 
 const loadOnlineSignalsForSmartPlaylists = async (): Promise<Awaited<ReturnType<typeof loadOnlineRecommendationSignals>>> => {
@@ -325,8 +359,6 @@ const createDefaultListeningActivity = (): ListeningActivity => ({
   dailySeconds: {},
   updatedAt: undefined,
 });
-
-const hydrateSongsWithCachedAlbumArt = async (songs: Song[]): Promise<Song[]> => songs;
 
 const normalizeProfile = (profile: ListeningProfile | null): ListeningProfile => {
   const base = createDefaultListeningProfile();
@@ -622,26 +654,64 @@ const loadTrackArtworkForSong = async (song: Song): Promise<string | null> => {
   }
 };
 
+type ArtistGenreIndex = Map<string, Map<string, { weight: number; songIds: Set<string> }>>;
+
+let artistGenreIndexSongs: Song[] | null = null;
+let artistGenreIndex: ArtistGenreIndex = new Map();
+
+/**
+ * `artistKey -> genre -> weighted count` over every song with a known genre, memoised on the songs
+ * array identity so a per-track lookup is a Map read instead of a full-library scan.
+ */
+const getArtistGenreIndex = (songs: Song[]): ArtistGenreIndex => {
+  if (artistGenreIndexSongs === songs) {
+    return artistGenreIndex;
+  }
+  const index: ArtistGenreIndex = new Map();
+  for (const candidate of songs) {
+    if (isUnknownGenre(candidate.genre)) {
+      continue;
+    }
+    const artistKey = normalizeArtistLookupText(getMetadataArtistName(candidate.artist, candidate.title));
+    if (!artistKey || artistKey === 'unknown artist') {
+      continue;
+    }
+    const genre = candidate.genre.trim();
+    const genres = index.get(artistKey) ?? new Map<string, { weight: number; songIds: Set<string> }>();
+    const entry = genres.get(genre) ?? { weight: 0, songIds: new Set<string>() };
+    entry.weight += 1 + Math.min(6, candidate.playCount ?? 0);
+    entry.songIds.add(candidate.id);
+    genres.set(genre, entry);
+    index.set(artistKey, genres);
+  }
+  artistGenreIndexSongs = songs;
+  artistGenreIndex = index;
+  return index;
+};
+
 const findSameArtistGenre = (song: Song, songs: Song[]): string | null => {
   const targetArtist = normalizeArtistLookupText(getMetadataArtistName(song.artist, song.title));
   if (!targetArtist || targetArtist === 'unknown artist') {
     return null;
   }
 
-  const genreCounts = new Map<string, number>();
-  for (const candidate of songs) {
-    if (candidate.id === song.id || isUnknownGenre(candidate.genre)) {
-      continue;
-    }
-    const candidateArtist = normalizeArtistLookupText(getMetadataArtistName(candidate.artist, candidate.title));
-    if (candidateArtist !== targetArtist) {
-      continue;
-    }
-    const genre = candidate.genre.trim();
-    genreCounts.set(genre, (genreCounts.get(genre) ?? 0) + 1 + Math.min(6, candidate.playCount ?? 0));
+  const genres = getArtistGenreIndex(songs).get(targetArtist);
+  if (!genres) {
+    return null;
   }
-
-  return [...genreCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  let best: { genre: string; weight: number } | null = null;
+  for (const [genre, entry] of genres) {
+    // The song's own (known) genre must not vote for itself.
+    const ownWeight = entry.songIds.has(song.id) ? 1 + Math.min(6, song.playCount ?? 0) : 0;
+    const weight = entry.weight - ownWeight;
+    if (weight <= 0) {
+      continue;
+    }
+    if (!best || weight > best.weight) {
+      best = { genre, weight };
+    }
+  }
+  return best?.genre ?? null;
 };
 
 const applySmartOverrides = (
@@ -696,26 +766,13 @@ const refreshSmartPlaylists = async (
   const resolvedSeed = seedOverride ?? (force ? Date.now() : undefined);
   const dailySeed = seedFromKey(todayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
-  const discoveryFromGlobal =
-    typeof window !== 'undefined'
-      ? getFlag('discoveryIntensity')
-      : undefined;
-  const randomnessFromGlobal =
-    typeof window !== 'undefined'
-      ? getFlag('randomnessIntensity')
-      : undefined;
-  let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
-  let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
-  if (discoveryIntensity === undefined || randomnessIntensity === undefined) {
-    const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-    if (discoveryIntensity === undefined) {
-      discoveryIntensity = typeof settings.discoveryIntensity === 'number' ? settings.discoveryIntensity : undefined;
-    }
-    if (randomnessIntensity === undefined) {
-      randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
-    }
-  }
-  const dailyCached = force ? null : await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  // These reads are independent; issue them together instead of awaiting one IPC hop at a time.
+  const [{ discoveryIntensity, randomnessIntensity }, dailyCached, albumTracklistCache, onlineSignals] = await Promise.all([
+    resolveMixIntensities(),
+    force ? Promise.resolve<DailyMixCache | null>(null) : readStorageJson<DailyMixCache | null>(dailyMixCachePath, null),
+    getCachedAlbumTracklistCache(),
+    loadOnlineSignalsForSmartPlaylists(),
+  ]);
   const dailyMatchesSettings =
     dailyCached &&
     (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
@@ -726,9 +783,7 @@ const refreshSmartPlaylists = async (
       : null;
   const resolvedDailyOverride =
     dailyMixOverride && dailyMixOverride.length > 0 ? dailyMixOverride : null;
-  const albumTracklistCache = await getCachedAlbumTracklistCache();
   const listeningProfile = useLibraryStore.getState().listeningProfile;
-  const onlineSignals = await loadOnlineSignalsForSmartPlaylists();
   const rustGenerated = await generateSmartPlaylistsRust(songs, {
     seed: resolvedSeed,
     dailySeed,
@@ -816,26 +871,11 @@ const refreshSmartPlaylistsLite = async (
   const dailySeed = dailySeedOverride ?? seedFromKey(todayKey);
   const songsById = new Map(songs.map((song) => [song.id, song]));
   const listeningProfile = useLibraryStore.getState().listeningProfile;
-  const discoveryFromGlobal =
-    typeof window !== 'undefined'
-      ? getFlag('discoveryIntensity')
-      : undefined;
-  const randomnessFromGlobal =
-    typeof window !== 'undefined'
-      ? getFlag('randomnessIntensity')
-      : undefined;
-  let discoveryIntensity = typeof discoveryFromGlobal === 'number' ? discoveryFromGlobal : undefined;
-  let randomnessIntensity = typeof randomnessFromGlobal === 'number' ? randomnessFromGlobal : undefined;
-  if (discoveryIntensity === undefined || randomnessIntensity === undefined) {
-    const settings = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-    if (discoveryIntensity === undefined) {
-      discoveryIntensity = typeof settings.discoveryIntensity === 'number' ? settings.discoveryIntensity : undefined;
-    }
-    if (randomnessIntensity === undefined) {
-      randomnessIntensity = typeof settings.randomnessIntensity === 'number' ? settings.randomnessIntensity : undefined;
-    }
-  }
-  const dailyCached = await readStorageJson<DailyMixCache | null>(dailyMixCachePath, null);
+  const [{ discoveryIntensity, randomnessIntensity }, dailyCached, onlineSignals] = await Promise.all([
+    resolveMixIntensities(),
+    readStorageJson<DailyMixCache | null>(dailyMixCachePath, null),
+    loadOnlineSignalsForSmartPlaylists(),
+  ]);
   const dailyMatchesSettings =
     dailyCached &&
     (dailyCached.discoveryIntensity === undefined || dailyCached.discoveryIntensity === discoveryIntensity) &&
@@ -850,7 +890,6 @@ const refreshSmartPlaylistsLite = async (
   const carryMixes = useLibraryStore
     .getState()
     .smartPlaylists.filter((playlist) => isHeavyMixPlaylistId(playlist.id));
-  const onlineSignals = await loadOnlineSignalsForSmartPlaylists();
   const rustGenerated = await generateSmartPlaylistsRust(songs, {
     seed: resolvedSeed,
     dailySeed,
@@ -983,10 +1022,13 @@ const scheduleSmartPlaylistRefresh = (
     }
 
     const state = useLibraryStore.getState();
+    // Callers hand over the base `songs` array; overlay the activity cache (favourites, play
+    // counts, learned genres) here, once per debounced refresh, rather than on the interaction path.
+    const refreshSongs = applySongActivity(next.songs, songActivityCache ?? {});
     smartPlaylistBuildInFlight = true;
     let generated: Playlist[] = [];
     try {
-      generated = await regenerateSmartPlaylistsLiteForCurrentState(next.songs, state.smartPlaylistOverrides, state.smartPlaylistSeed);
+      generated = await regenerateSmartPlaylistsLiteForCurrentState(refreshSongs, state.smartPlaylistOverrides, state.smartPlaylistSeed);
     } finally {
       smartPlaylistBuildInFlight = false;
     }
@@ -998,7 +1040,7 @@ const scheduleSmartPlaylistRefresh = (
     });
 
     if (includeHeavy) {
-      scheduleIdleHeavyMixRefresh(next.songs, state.smartPlaylistOverrides, state.smartPlaylistSeed, Math.max(1200, delayMs));
+      scheduleIdleHeavyMixRefresh(refreshSongs, state.smartPlaylistOverrides, state.smartPlaylistSeed, Math.max(1200, delayMs));
     }
   };
 
@@ -1225,6 +1267,37 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const artistCachedByKey = new Map<string, boolean>();
       const attemptsCache = await loadMetadataAttempts();
       let checked = 0;
+
+      // Probe the artist cache once per unique artist with the batched command (one IPC round trip
+      // per 500 names) instead of awaiting `hasCachedArtistProfile` serially inside the loop.
+      const primaryArtistByKey = new Map<string, string>();
+      for (let index = 0; index < songs.length; index += 1) {
+        const song = songs[index];
+        const primaryArtist = getMetadataArtistName(song.artist, song.title);
+        const artistKey = normalizeArtistLookupText(primaryArtist);
+        if (artistKey && !primaryArtistByKey.has(artistKey)) {
+          primaryArtistByKey.set(artistKey, primaryArtist);
+        }
+        if (index % 500 === 499) {
+          await yieldToMain();
+        }
+      }
+      try {
+        const uniqueArtistKeys = [...primaryArtistByKey.keys()];
+        const cachedFlags = await hasCachedArtistProfiles(uniqueArtistKeys.map((key) => primaryArtistByKey.get(key) ?? key));
+        uniqueArtistKeys.forEach((artistKey, index) => {
+          const artistCached = cachedFlags[index] === true;
+          artistCachedByKey.set(artistKey, artistCached);
+          if (artistCached) {
+            void markArtistCached(artistKey);
+          }
+        });
+      } catch (error) {
+        // Fall back to the per-artist probe in the loop below.
+        recordPerfEvent('metadata.artist-cache-probe.batch-failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       for (const song of songs) {
         const primaryArtist = getMetadataArtistName(song.artist, song.title);
@@ -1907,7 +1980,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         if (!dedupedById.has(song.id)) {
           dedupedById.set(song.id, song);
         }
-        if (index % 200 === 0) {
+        if (index % 2000 === 0) {
           await yieldToMain();
         }
       }
@@ -1935,17 +2008,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           lastPlayStarted: previous?.lastPlayStarted ?? song.lastPlayStarted,
           lastCompleted: previous?.lastCompleted ?? song.lastCompleted,
         });
-        if (index % 200 === 0) {
+        if (index % 2000 === 0) {
           await yieldToMain();
         }
       }
       await yieldToMain();
-      const hydratedSongs = await measurePerfAsync('library.scan.hydrate-genres', () =>
+      const artHydrated = await measurePerfAsync('library.scan.hydrate-genres', () =>
         hydrateSongsWithCachedGenres(mergedSongs),
-      );
-      await yieldToMain();
-      const artHydrated = await measurePerfAsync('library.scan.hydrate-artwork', () =>
-        hydrateSongsWithCachedAlbumArt(hydratedSongs),
       );
       await yieldToMain();
 
@@ -2092,9 +2161,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       genre: normalized,
     }));
     set((state) => ({ activityVersion: state.activityVersion + 1 }));
-    const songsById = get().getSongsById();
-    const mergedSongs = get().songs.map((entry) => songsById.get(entry.id) ?? entry);
-    scheduleSmartPlaylistRefresh(mergedSongs, 8000, { includeHeavy: false });
+    scheduleSmartPlaylistRefresh(get().songs, 8000, { includeHeavy: false });
     void scheduleOnlineRecommendationEnrichmentForSongs([song], 'idle');
   },
 
@@ -2110,9 +2177,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       favorite: nextFavorite,
     }));
     set((state) => ({ activityVersion: state.activityVersion + 1 }));
-    const songsById = get().getSongsById();
-    const mergedSongs = get().songs.map((entry) => songsById.get(entry.id) ?? entry);
-    scheduleSmartPlaylistRefresh(mergedSongs, 8000, { includeHeavy: false });
+    scheduleSmartPlaylistRefresh(get().songs, 8000, { includeHeavy: false });
     void scheduleOnlineRecommendationEnrichmentForSongs([song], 'idle');
   },
 

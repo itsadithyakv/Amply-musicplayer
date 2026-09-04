@@ -39,7 +39,10 @@ const nextFailureState = (current?: AttemptState): AttemptState => {
   };
 };
 
-export const loadMetadataAttempts = async (): Promise<MetadataAttempts> => {
+let attemptsMemo: MetadataAttempts | null = null;
+let attemptsLoading: Promise<MetadataAttempts> | null = null;
+
+const readMetadataAttemptsFromDisk = async (): Promise<MetadataAttempts> => {
   const loaded = await readStorageJson<MetadataAttempts>(cachePath, { songs: {}, artists: {}, albums: {}, albumTracklists: {} });
   if (loaded.version !== ATTEMPT_CACHE_VERSION) {
     return { version: ATTEMPT_CACHE_VERSION, songs: {}, artists: {}, albums: {}, albumTracklists: {} };
@@ -51,6 +54,37 @@ export const loadMetadataAttempts = async (): Promise<MetadataAttempts> => {
     albums: loaded.albums ?? {},
     albumTracklists: loaded.albumTracklists ?? {},
   };
+};
+
+/**
+ * Returns the in-memory attempt cache, reading the file only once per session. Callers mutate the
+ * returned object in place (`noteMetadata*`) and hand it back to `saveMetadataAttempts`, so a
+ * single shared instance also keeps concurrent fetch passes consistent with each other.
+ */
+export const loadMetadataAttempts = async (): Promise<MetadataAttempts> => {
+  if (attemptsMemo) {
+    return attemptsMemo;
+  }
+  if (!attemptsLoading) {
+    attemptsLoading = readMetadataAttemptsFromDisk()
+      .then((loaded) => {
+        attemptsMemo = loaded;
+        return loaded;
+      })
+      .finally(() => {
+        attemptsLoading = null;
+      });
+  }
+  return attemptsLoading;
+};
+
+/** Drops the memoised attempt cache so the next load re-reads the file (used after clearing storage). */
+export const resetMetadataAttempts = (): void => {
+  attemptsMemo = null;
+  attemptsLoading = null;
+  pendingCache = null;
+  dirtyCount = 0;
+  lastPersistAt = 0;
 };
 
 /** Writes the throttled attempt cache immediately if anything is dirty (used on unload). */

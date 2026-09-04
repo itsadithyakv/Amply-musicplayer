@@ -1,10 +1,12 @@
-import { readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { readStorageJson, writeStorageJson } from '@/services/storageService';
 
 const cachePath = 'metadata_cache/cache_index.json';
-const CHECKPOINT_EVERY_CACHED_ITEMS = 100;
+const CHECKPOINT_EVERY_CACHED_ITEMS = 1000;
 const MAX_DIRTY_FLUSH_DELAY_MS = 15000;
+const DEBOUNCED_FLUSH_DELAY_MS = 1500;
 let dirtyCount = 0;
 let lastPersistAt = 0;
+let debouncedFlushHandle: number | null = null;
 
 type MetadataCacheIndex = {
   songs: Record<string, { lyrics?: true; genre?: true }>;
@@ -27,16 +29,47 @@ const ensureIndex = async (): Promise<MetadataCacheIndex> => {
   return memoryIndex;
 };
 
+const clearDebouncedFlush = (): void => {
+  if (debouncedFlushHandle !== null && typeof window !== 'undefined') {
+    window.clearTimeout(debouncedFlushHandle);
+  }
+  debouncedFlushHandle = null;
+};
+
+/** Serialises the whole index, so it is only invoked when marks have actually accumulated. */
+const writeIndexNow = (index: MetadataCacheIndex): void => {
+  if (dirtyCount === 0) {
+    return;
+  }
+  clearDebouncedFlush();
+  dirtyCount = 0;
+  lastPersistAt = Date.now();
+  void writeStorageJson(cachePath, index);
+};
+
 const persistIndex = (index: MetadataCacheIndex): void => {
+  if (dirtyCount === 0) {
+    return;
+  }
   const now = Date.now();
   if (dirtyCount >= CHECKPOINT_EVERY_CACHED_ITEMS || now - lastPersistAt >= MAX_DIRTY_FLUSH_DELAY_MS) {
-    dirtyCount = 0;
-    lastPersistAt = now;
-    void writeStorageJson(cachePath, index);
+    writeIndexNow(index);
     return;
   }
 
-  void writeStorageJsonDebounced(cachePath, index, 1500);
+  if (typeof window === 'undefined') {
+    writeIndexNow(index);
+    return;
+  }
+  // Trailing debounce: a burst of marks collapses into one write, and that write resets the
+  // dirty counter so the time-based checkpoint does not re-serialise an unchanged index.
+  if (debouncedFlushHandle !== null) {
+    window.clearTimeout(debouncedFlushHandle);
+  }
+  debouncedFlushHandle = window.setTimeout(() => {
+    debouncedFlushHandle = null;
+    writeIndexNow(index);
+  }, DEBOUNCED_FLUSH_DELAY_MS);
 };
 
 export const loadMetadataCacheIndex = async (): Promise<MetadataCacheIndex> => {
@@ -44,6 +77,7 @@ export const loadMetadataCacheIndex = async (): Promise<MetadataCacheIndex> => {
 };
 
 export const resetMetadataCacheIndex = (): void => {
+  clearDebouncedFlush();
   memoryIndex = null;
   dirtyCount = 0;
   lastPersistAt = 0;

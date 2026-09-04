@@ -285,7 +285,7 @@ export const getHomeView = ({
   }
   const topArtists = [...artistBuckets.entries()]
     .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
-    .slice(0, 12)
+    .slice(0, 16)
     .map(([artistName, value]) => ({
       artistName,
       topSong: value.topSong,

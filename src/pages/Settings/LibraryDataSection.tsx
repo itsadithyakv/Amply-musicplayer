@@ -5,6 +5,7 @@ import { useLibraryTabView } from '@/hooks/useLibraryViews';
 import { Button, Kicker, Surface, Toggle } from '@/components/ui';
 import { clearStorageCache, openStorageDir } from '@/services/storageService';
 import { resetMetadataCacheIndex } from '@/services/metadataCacheIndex';
+import { resetMetadataAttempts } from '@/services/metadataAttemptService';
 import { SettingsNote, SettingsSection } from '@/pages/Settings/SettingsSection';
 
 export const LibraryDataSection = () => {
@@ -82,6 +83,7 @@ export const LibraryDataSection = () => {
             try {
               await clearStorageCache();
               resetMetadataCacheIndex();
+              resetMetadataAttempts();
               setBulkMessage('Cache cleared. Restart the app to rescan library data.');
             } finally {
               setClearingCache(false);

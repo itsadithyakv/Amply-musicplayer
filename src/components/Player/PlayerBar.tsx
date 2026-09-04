@@ -11,6 +11,7 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { beginTrackedInteraction } from '@/services/interactionTrace';
 import { usePlayerBarView } from '@/hooks/useLibraryViews';
+import { artworkThumb } from '@/utils/artwork';
 
 const RightControls = memo(() => {
   const location = useLocation();
@@ -162,7 +163,7 @@ const SongInfoSection = memo(() => {
         className="flex min-w-0 items-center gap-3 rounded-md p-2 transition-[box-shadow] hover:neu-raised-sm"
       >
         <ArtworkImage
-          src={song?.albumArt}
+          src={artworkThumb(song?.albumArt, 64)}
           alt={song?.album ?? 'Unknown Album'}
           className="neu-well h-12 w-12 shrink-0 overflow-hidden rounded-sm"
           loading="eager"

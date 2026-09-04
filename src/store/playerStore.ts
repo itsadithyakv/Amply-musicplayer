@@ -196,7 +196,26 @@ interface PlayerState {
 
 const defaultSettings = DEFAULT_SETTINGS;
 
-type PersistedPlaybackState = {
+/** Small, frequently written file: which song and where in it. */
+type PersistedPlaybackPosition = {
+  songId: string | null;
+  positionSec: number;
+  updatedAt: number;
+};
+
+/** Queue-shaped state (up to 10k ids); written only when one of these fields actually changes. */
+type PersistedPlaybackQueue = {
+  queueSongIds: string[];
+  queueCursor: number;
+  manualQueueSongIds: string[];
+  shuffleEnabled: boolean;
+  repeatMode: RepeatMode;
+  lastQueuePlaylistId: string | null;
+  updatedAt: number;
+};
+
+/** Pre-split single-file layout, still read as a fallback when the new files are absent. */
+type LegacyPersistedPlaybackState = {
   songId: string | null;
   positionSec: number;
   queueSongIds: string[];
@@ -205,22 +224,115 @@ type PersistedPlaybackState = {
   updatedAt: number;
 };
 
-const playbackStatePath = 'playback/last_state.json';
+/** What `initialize` restores from, assembled from the new files or the legacy one. */
+type RestorablePlaybackState = {
+  songId: string | null;
+  positionSec: number;
+  queueSongIds: string[];
+  queueCursor: number;
+  playlistId: string | null;
+};
+
+const playbackPositionPath = 'playback/position.json';
+const playbackQueuePath = 'playback/queue.json';
+const legacyPlaybackStatePath = 'playback/last_state.json';
 const PLAYBACK_PERSIST_DEBOUNCE_MS = 1500;
 const PLAYBACK_PERSIST_THROTTLE_MS = 5000;
 let lastPlaybackPersistAt = 0;
 
-const persistPlaybackState = (state: PlayerState, overrides: Partial<PersistedPlaybackState> = {}): void => {
-  const payload: PersistedPlaybackState = {
+const persistPlaybackState = (
+  state: PlayerState,
+  overrides: Partial<Pick<PersistedPlaybackPosition, 'songId' | 'positionSec'>> = {},
+): void => {
+  const payload: PersistedPlaybackPosition = {
     songId: state.currentSongId,
     positionSec: state.positionSec,
-    queueSongIds: state.queueSongIds,
-    queueCursor: state.queueCursor,
-    playlistId: state.lastQueuePlaylistId ?? null,
     updatedAt: Math.floor(Date.now() / 1000),
     ...overrides,
   };
-  void writeStorageJsonDebounced(playbackStatePath, payload, PLAYBACK_PERSIST_DEBOUNCE_MS);
+  void writeStorageJsonDebounced(playbackPositionPath, payload, PLAYBACK_PERSIST_DEBOUNCE_MS);
+};
+
+type QueueSnapshot = Omit<PersistedPlaybackQueue, 'updatedAt'>;
+
+let lastPersistedQueue: QueueSnapshot | null = null;
+
+const sameIdList = (a: string[], b: string[]): boolean => {
+  if (a === b) {
+    return true;
+  }
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const sameQueueSnapshot = (a: QueueSnapshot | null, b: QueueSnapshot): boolean =>
+  a !== null &&
+  a.queueCursor === b.queueCursor &&
+  a.shuffleEnabled === b.shuffleEnabled &&
+  a.repeatMode === b.repeatMode &&
+  a.lastQueuePlaylistId === b.lastQueuePlaylistId &&
+  sameIdList(a.queueSongIds, b.queueSongIds) &&
+  sameIdList(a.manualQueueSongIds, b.manualQueueSongIds);
+
+const queueSnapshotOf = (state: PlayerState): QueueSnapshot => ({
+  queueSongIds: state.queueSongIds,
+  queueCursor: state.queueCursor,
+  manualQueueSongIds: state.manualQueueSongIds,
+  shuffleEnabled: state.shuffleEnabled,
+  repeatMode: state.repeatMode,
+  lastQueuePlaylistId: state.lastQueuePlaylistId ?? null,
+});
+
+/** Writes `playback/queue.json` only when the queue-shaped fields differ from the last written snapshot. */
+const persistQueueIfChanged = (state: PlayerState): void => {
+  const snapshot = queueSnapshotOf(state);
+  if (sameQueueSnapshot(lastPersistedQueue, snapshot)) {
+    return;
+  }
+  lastPersistedQueue = snapshot;
+  const payload: PersistedPlaybackQueue = { ...snapshot, updatedAt: Math.floor(Date.now() / 1000) };
+  void writeStorageJsonDebounced(playbackQueuePath, payload, PLAYBACK_PERSIST_DEBOUNCE_MS);
+};
+
+const queueFieldsChanged = (state: PlayerState, prev: PlayerState): boolean =>
+  state.queueSongIds !== prev.queueSongIds ||
+  state.queueCursor !== prev.queueCursor ||
+  state.manualQueueSongIds !== prev.manualQueueSongIds ||
+  state.shuffleEnabled !== prev.shuffleEnabled ||
+  state.repeatMode !== prev.repeatMode ||
+  state.lastQueuePlaylistId !== prev.lastQueuePlaylistId;
+
+/**
+ * Reads the split playback files; falls back to the legacy single file for whichever half is
+ * missing so an upgrade keeps the previous session's queue and position.
+ */
+const readPersistedPlayback = async (): Promise<{ restore: RestorablePlaybackState | null; queue: PersistedPlaybackQueue | null }> => {
+  const [position, queue] = await Promise.all([
+    readStorageJson<PersistedPlaybackPosition | null>(playbackPositionPath, null),
+    readStorageJson<PersistedPlaybackQueue | null>(playbackQueuePath, null),
+  ]);
+  const legacy =
+    position && queue ? null : await readStorageJson<LegacyPersistedPlaybackState | null>(legacyPlaybackStatePath, null);
+  if (!position && !queue && !legacy) {
+    return { restore: null, queue: null };
+  }
+  return {
+    restore: {
+      songId: position?.songId ?? legacy?.songId ?? null,
+      positionSec: position?.positionSec ?? legacy?.positionSec ?? 0,
+      queueSongIds: queue?.queueSongIds ?? legacy?.queueSongIds ?? [],
+      queueCursor: queue?.queueCursor ?? legacy?.queueCursor ?? 0,
+      playlistId: queue?.lastQueuePlaylistId ?? legacy?.playlistId ?? null,
+    },
+    queue,
+  };
 };
 
 const eqPresetBands: Record<AppSettings['eqPreset'], number[]> = {
@@ -588,8 +700,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     playerInitStarted = true;
 
-    const persisted = await readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {});
-    const persistedPlayback = await readStorageJson<PersistedPlaybackState | null>(playbackStatePath, null);
+    const [persisted, { restore: persistedPlayback, queue: persistedQueue }] = await Promise.all([
+      readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {}),
+      readPersistedPlayback(),
+    ]);
+    if (persistedQueue) {
+      // Seed the change detector so restoring the same queue does not immediately rewrite it.
+      lastPersistedQueue = {
+        queueSongIds: Array.isArray(persistedQueue.queueSongIds) ? persistedQueue.queueSongIds : [],
+        queueCursor: persistedQueue.queueCursor ?? 0,
+        manualQueueSongIds: Array.isArray(persistedQueue.manualQueueSongIds) ? persistedQueue.manualQueueSongIds : [],
+        shuffleEnabled: Boolean(persistedQueue.shuffleEnabled),
+        repeatMode: persistedQueue.repeatMode ?? 'off',
+        lastQueuePlaylistId: persistedQueue.lastQueuePlaylistId ?? null,
+      };
+    }
     let settings: AppSettings = normalizeSettings(persisted);
     settings = {
       ...settings,
@@ -848,9 +973,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const preloadIds = buildUpcomingSongIds(nextState, 1);
     setGlobalPlaybackHints(nextState.currentSongId, preloadIds);
     persistPlaybackState(nextState, {
-      queueSongIds: songIds,
-      queueCursor: startIndex,
-      playlistId: options?.playlistId ?? null,
       songId: startSongId ?? nextState.currentSongId,
     });
     if (nextState.currentSongId && preloadIds.length && nextState.settings.gaplessEnabled) {
@@ -1552,7 +1674,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       await get().playSongById(nextCurrentSongId, false);
     } else {
       setGlobalPlaybackHints(null, []);
-      persistPlaybackState(get(), { songId: null, positionSec: 0, queueSongIds: nextQueueSongIds, queueCursor: nextCursor });
+      persistPlaybackState(get(), { songId: null, positionSec: 0 });
     }
 
     get().showToast('Song deleted from device');
@@ -1641,6 +1763,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     });
   },
 }));
+
+// Queue-shaped state is persisted from a single subscription instead of at every call site, and
+// only once the store has initialised (so defaults never clobber the previous session's queue).
+usePlayerStore.subscribe((state, prev) => {
+  if (!state.initialized || !queueFieldsChanged(state, prev)) {
+    return;
+  }
+  persistQueueIfChanged(state);
+});
 
 type PlaySongByIdOptions = { transition?: boolean } | boolean;
 
