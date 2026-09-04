@@ -536,16 +536,18 @@ pub(crate) fn is_low_confidence_artist_name(artist: &str) -> bool {
     noisy_terms.iter().any(|term| compact.contains(term))
 }
 
+/// The artist to look metadata up under. A real artist tag always wins; the "Artist - Title"
+/// pattern in the title only fills in when the tag is missing or junk (uploader names, "Topic"
+/// channels). Titles like "Blackbird - 2018 Mix" must never turn the song into artist "Blackbird".
 pub(crate) fn metadata_artist_for_song(song: &SongInput) -> String {
     let primary_artist = get_primary_artist_name(&song.artist);
+    if !is_low_confidence_artist_name(&primary_artist) {
+        return primary_artist;
+    }
     if let Some((parsed_artist, parsed_title)) = split_artist_title_hint(&song.title) {
         let cleaned_artist = normalize_whitespace(&parsed_artist);
         let cleaned_title = normalize_whitespace(&parsed_title);
-        if !cleaned_artist.is_empty()
-            && !cleaned_title.is_empty()
-            && (is_low_confidence_artist_name(&primary_artist)
-                || !is_artist_close_match(&cleaned_artist, &primary_artist))
-        {
+        if !cleaned_artist.is_empty() && !cleaned_title.is_empty() {
             return cleaned_artist;
         }
     }
@@ -568,6 +570,30 @@ pub(crate) fn is_unknown_genre(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn song(artist: &str, title: &str) -> SongInput {
+        SongInput {
+            id: Some("1".to_string()),
+            title: title.to_string(),
+            artist: artist.to_string(),
+            album: None,
+            duration: None,
+            genre: None,
+        }
+    }
+
+    #[test]
+    fn tagged_artist_wins_over_title_hint() {
+        assert_eq!(metadata_artist_for_song(&song("The Beatles", "Blackbird - 2018 Mix")), "The Beatles");
+        assert_eq!(metadata_artist_for_song(&song("Radiohead", "Nude - Live")), "Radiohead");
+    }
+
+    #[test]
+    fn title_hint_fills_in_missing_or_junk_artist() {
+        assert_eq!(metadata_artist_for_song(&song("Unknown Artist", "Daft Punk - Around the World")), "Daft Punk");
+        assert_eq!(metadata_artist_for_song(&song("", "Daft Punk - Around the World")), "Daft Punk");
+        assert_eq!(metadata_artist_for_song(&song("Some Channel - Topic", "Daft Punk - Around the World")), "Daft Punk");
+    }
 
     #[test]
     fn artist_match_handles_apostrophe_variants() {

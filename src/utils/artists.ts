@@ -170,17 +170,12 @@ export const getMetadataArtistName = (
     return primaryArtist;
   }
 
-  const parsedKey = normalizeLookupText(parsed.artist);
-  const primaryKey = normalizeLookupText(primaryArtist);
-  if (!parsedKey || parsedKey === primaryKey) {
+  // A real artist tag always wins; the "Artist - Title" hint only fills in a missing or junk tag,
+  // so "Blackbird - 2018 Mix" by The Beatles never becomes artist "Blackbird".
+  if (!isLowConfidenceArtistName(primaryArtist)) {
     return primaryArtist;
   }
-
-  if (isLowConfidenceArtistName(primaryArtist) || !primaryKey.includes(parsedKey)) {
-    return parsed.artist;
-  }
-
-  return primaryArtist;
+  return normalizeLookupText(parsed.artist) ? parsed.artist : primaryArtist;
 };
 
 const cleanMetadataTrackTitle = (

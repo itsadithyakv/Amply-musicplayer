@@ -200,3 +200,28 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+mod net_probe {
+    /// Live network probe: `cargo test -- --ignored https_probe --nocapture`.
+    #[test]
+    #[ignore]
+    fn https_probe() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            for url in ["https://lrclib.net/api/search?track_name=blackbird&artist_name=the+beatles", "https://en.wikipedia.org/api/rest_v1/page/summary/Radiohead"] {
+                match super::HTTP.get(url).send().await {
+                    Ok(resp) => eprintln!("OK  {} -> {}", url, resp.status()),
+                    Err(err) => {
+                        eprintln!("ERR {} -> {}", url, err);
+                        let mut source = std::error::Error::source(&err);
+                        while let Some(inner) = source {
+                            eprintln!("    caused by: {inner}");
+                            source = inner.source();
+                        }
+                    }
+                }
+            }
+        });
+    }
+}

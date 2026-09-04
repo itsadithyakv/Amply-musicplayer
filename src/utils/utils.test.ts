@@ -4,6 +4,24 @@ import { mulberry32, pickRandom, rngFor, seededShuffle, shuffle } from '@/utils/
 import { normalizeLooseKey, normalizeSearchText, normalizeSlug, normalizeToken, tokenizeSearchText } from '@/utils/text';
 import { dailySeed, dayKey, getIsoWeek, isoWeekKey, seedFromKey, weeklySeed } from '@/utils/dateSeed';
 import { cancelIdle, requestIdle, yieldToIdle } from '@/utils/idle';
+import { getMetadataArtistName, getMetadataLookupParts } from '@/utils/artists';
+
+describe('metadata artist resolution', () => {
+  it('trusts a real artist tag over an "Artist - Title" hint in the title', () => {
+    expect(getMetadataArtistName('The Beatles', 'Blackbird - 2018 Mix')).toBe('The Beatles');
+    expect(getMetadataArtistName('Radiohead', 'Nude - Live')).toBe('Radiohead');
+  });
+
+  it('uses the title hint only when the tag is missing or junk', () => {
+    expect(getMetadataArtistName('Unknown Artist', 'Daft Punk - Around the World')).toBe('Daft Punk');
+    expect(getMetadataArtistName('', 'Daft Punk - Around the World')).toBe('Daft Punk');
+    expect(getMetadataArtistName('Some Channel - Topic', 'Daft Punk - Around the World')).toBe('Daft Punk');
+  });
+
+  it('keeps the tagged artist in lookup parts', () => {
+    expect(getMetadataLookupParts('The Beatles', 'Blackbird - 2018 Mix').artist).toBe('The Beatles');
+  });
+});
 
 describe('hash', () => {
   it('is stable and non-negative (djb2)', () => {

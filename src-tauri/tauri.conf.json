@@ -28,7 +28,9 @@
       "devCsp": "default-src 'self'; script-src 'self' http://localhost:1420; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost amplyart: http://amplyart.localhost https://upload.wikimedia.org https://*.mzstatic.com; media-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost https://ws.audioscrobbler.com https://musicbrainz.org ws://localhost:1420 http://localhost:1420; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-src 'none'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$AUDIO/**"]
+        "scope": [
+          "$AUDIO/**"
+        ]
       }
     }
   },
@@ -46,6 +48,19 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installMode": "currentUser",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "compression": "lzma"
+      }
+    }
   }
 }

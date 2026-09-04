@@ -478,6 +478,12 @@ async fn fetch_lyrics_candidates(song: &SongInput) -> Result<Vec<LyricsCandidate
         } else if song.artist.trim().eq_ignore_ascii_case("unknown artist") {
             let cleaned = clean_lyrics_title(&parsed_title, Some(&parsed_artist));
             push_query(parsed_artist, cleaned, None);
+        } else {
+            // "Blackbird - 2018 Mix" under a real artist tag: the left part is the song title and
+            // the right part a version qualifier, so query the bare title too.
+            let cleaned = clean_lyrics_title(&parsed_artist, Some(&artist));
+            push_query(artist.clone(), cleaned, album.map(|value| value.to_string()));
+            push_query(artist.clone(), parsed_artist.clone(), None);
         }
     }
 

@@ -28,6 +28,7 @@ Also new
 - Mini player toggle in the sidebar; smoother mini player edges; artist details retry with
   visible progress and broader Wikipedia matching; Home cards only change on manual regenerate;
   lyrics auto-scroll no longer disengages on its own.
+- Branded Windows installer: Amply header and sidebar artwork, app icon, per-user install.
 - Dependencies: Tauri 2.11, rodio 0.22, lofty 0.25, rusqlite 0.40, reqwest 0.13.
 
 Fixes and hardening

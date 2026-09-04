@@ -38,7 +38,11 @@ npm run lint:dead    # knip: unused files / exports / dependencies
 cd src-tauri && cargo check && cargo clippy --all-targets && cargo test
 ```
 
-Production build: `npm run tauri build`.
+Production build: `npm run tauri build` (Windows installer: `npx tauri build --bundles nsis`).
+
+The NSIS installer is branded from `src-tauri/installer/` (header and sidebar bitmaps, generated from the
+logo by `python scripts/installer-branding.py`, needs Pillow) and configured under `bundle.windows.nsis`
+in `src-tauri/tauri.conf.json`.
 
 ## Project structure
 
