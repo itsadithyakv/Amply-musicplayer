@@ -17,7 +17,6 @@ import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { isMoreMixPlaylistId } from '@/services/mixEngine';
 import { useHomeView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 import { ExploreMixesCard } from '@/pages/Home/ExploreMixesCard';
-import { FeaturedMixCarousel } from '@/pages/Home/FeaturedMixCarousel';
 import { MadeForYouHero } from '@/pages/Home/MadeForYouHero';
 import { SectionRow } from '@/pages/Home/SectionRow';
 import { SmartPlaylistCard, type SmartPlaylistCardItem, type SmartPlaylistCardLayout } from '@/pages/Home/SmartPlaylistCard';
@@ -332,19 +331,14 @@ const HomePage = () => {
       .filter((entry) => entry.songIds.length);
   }, [frozenPlaylists, getAlbumSpotlightSubtitle, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed]);
 
-  // Six static grid cards, ordered by the render seed only (usage no longer reorders them under the
-  // pointer). The featured slot rotates through everything that did not fit in the grid.
-  const { gridCards, featuredPool } = useMemo(() => {
+  // Featured card plus six grid cards, ordered by the render seed only: usage no longer reorders
+  // them under the pointer, so the section is stable until a manual regenerate.
+  const smartHighlightCards = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
-    const ordered = smartPlaylistItems
+    return smartPlaylistItems
       .filter((entry) => !entry.isMoreMix)
-      .sort((a, b) => hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`));
-    const grid = ordered.slice(1, 7);
-    const gridIds = new Set(grid.map((entry) => entry.id));
-    const pool = [ordered[0], ...smartPlaylistItems.filter((entry) => entry.isMoreMix), ...ordered.slice(7)]
-      .filter((entry) => Boolean(entry) && !gridIds.has(entry.id))
-      .slice(0, 6);
-    return { gridCards: grid, featuredPool: pool };
+      .sort((a, b) => hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`))
+      .slice(0, 7);
   }, [smartPlaylistItems, smartPlaylistRenderSeed]);
 
   const smartMixesAll = useMemo(() => {
@@ -454,20 +448,14 @@ const HomePage = () => {
             regeneratingSmartPlaylists && 'pointer-events-none opacity-60',
           )}
         >
-          {featuredPool.length ? (
-            <div className="min-w-0 sm:col-span-2 xl:col-span-2">
-              <FeaturedMixCarousel
-                items={featuredPool}
-                onPlay={(item) => playPlaylist(liveSongIdsFor(item), undefined, item.baseId)}
-                onOpen={(item) => openPlaylistDetail(item.baseId)}
-              />
-            </div>
-          ) : null}
-          {gridCards.map((item) => (
-            <div key={item.id} className="min-w-0">
-              {renderSmartCard(item, 'grid')}
-            </div>
-          ))}
+          {smartHighlightCards.map((item, index) => {
+            const isFeatured = index === 0;
+            return (
+              <div key={item.id} className={clsx('min-w-0', isFeatured && 'sm:col-span-2 xl:col-span-2')}>
+                {renderSmartCard(item, isFeatured ? 'featured' : 'grid')}
+              </div>
+            );
+          })}
 
           {showMoreMixesCard ? (
             <ExploreMixesCard
@@ -478,7 +466,7 @@ const HomePage = () => {
           ) : null}
         </div>
 
-        {!featuredPool.length && !gridCards.length ? (
+        {!smartHighlightCards.length ? (
           <EmptyNote>No smart playlists yet. Add more music or refresh your library to generate mixes.</EmptyNote>
         ) : null}
 

@@ -1,6 +1,7 @@
 import clsx from 'clsx';
-import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
-import { Button, IconButton, Surface } from '@/components/ui';
+import type { KeyboardEvent, MouseEvent } from 'react';
+import { IconButton, Surface } from '@/components/ui';
+import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { ArtworkWell } from '@/pages/Home/ArtworkWell';
 
 export type SmartPlaylistCardItem = {
@@ -24,19 +25,15 @@ interface SmartPlaylistCardProps {
   layout?: SmartPlaylistCardLayout;
   /** Card click: play on single click, open on double click (handled by the caller). */
   onSelect: () => void;
-  /** Play button: play immediately. */
+  /** Hover play button: play immediately. */
   onPlay: () => void;
-  /** Featured layout only: opens the playlist page. */
-  onOpen?: () => void;
-  /** Featured layout only: extra controls rendered under the actions (e.g. rotation dots). */
-  footer?: ReactNode;
 }
 
 /**
- * Smart-playlist card in the neumorphic language: a raised surface carrying the playlist's cover in
- * an inset well, with the text on the surface itself so it reads the same in both themes.
+ * Smart-playlist card whose background is one of the playlist's album covers under a dark scrim,
+ * with light text on top (the same in both themes).
  */
-export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay, onOpen, footer }: SmartPlaylistCardProps) => {
+export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: SmartPlaylistCardProps) => {
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget) {
       return;
@@ -88,41 +85,7 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay, onO
     );
   }
 
-  if (layout === 'featured') {
-    return (
-      <Surface
-        variant="raised"
-        radius="lg"
-        className="relative flex h-full min-h-[300px] min-w-0 flex-col gap-5 p-5 sm:flex-row sm:items-stretch sm:p-6"
-      >
-        <div className="relative w-full shrink-0 sm:w-[44%] sm:max-w-[320px]">
-          <ArtworkWell artworks={[cover]} alt={item.title} className="h-full w-full rounded-md" />
-        </div>
-
-        <div className="flex min-w-0 flex-1 flex-col justify-between gap-5">
-          <div className="min-w-0 space-y-2">
-            <p className="line-clamp-2 text-[26px] font-bold leading-tight tracking-[-0.025em] text-amply-textPrimary sm:text-[30px]">{item.title}</p>
-            <p className="line-clamp-3 text-[14px] leading-relaxed text-amply-textSecondary">{item.subtitle}</p>
-            {showCount ? <p className="text-[12px] font-medium text-amply-textMuted">{count}</p> : null}
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" size="lg" icon="play" onClick={handlePlay}>
-                Play mix
-              </Button>
-              {onOpen ? (
-                <Button variant="secondary" size="md" icon="chevron-right" onClick={onOpen}>
-                  Open
-                </Button>
-              ) : null}
-            </div>
-            {footer}
-          </div>
-        </div>
-      </Surface>
-    );
-  }
+  const featured = layout === 'featured';
 
   return (
     <Surface
@@ -134,24 +97,31 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay, onO
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       title="Click to play. Double-click to open playlist."
-      className="group flex h-full min-w-0 flex-col gap-3 p-3 text-left"
+      className={clsx(
+        'group relative flex h-full min-w-0 overflow-hidden text-left',
+        featured ? 'min-h-[300px] items-center' : 'min-h-[260px] items-end',
+      )}
     >
-      <div className="relative">
-        <ArtworkWell artworks={[cover]} alt={item.title} className={clsx('aspect-[16/10] w-full')} />
-        <IconButton
-          name="play"
-          label={`Play ${item.title}`}
-          variant="accent"
-          size="md"
-          onClick={handlePlay}
-          className="absolute bottom-3 right-3 opacity-0 transition-opacity duration-150 ease-smooth group-hover:opacity-100 group-focus-within:opacity-100"
-        />
+      <CoverBackdrop src={cover} fade={featured ? 'right' : 'bottom'} />
+
+      <div className={clsx('relative z-10 flex min-w-0 flex-col gap-1.5', featured ? 'ml-auto w-[58%] p-6' : 'w-full p-4 pt-16')}>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-amply-onCoverMuted">{featured ? 'Featured mix' : 'Smart playlist'}</p>
+        <p className={clsx('truncate font-bold tracking-[-0.02em] text-amply-onCover', featured ? 'text-[28px]' : 'text-[20px]')}>{item.title}</p>
+        <p className="line-clamp-2 text-[13px] text-amply-onCoverMuted">{item.subtitle}</p>
+        {showCount ? <p className="text-[12px] text-amply-onCoverMuted">{count}</p> : null}
       </div>
-      <div className="min-w-0 space-y-1 px-1 pb-1">
-        <p className="truncate text-[17px] font-bold tracking-[-0.02em] text-amply-textPrimary">{item.title}</p>
-        <p className="line-clamp-2 text-[12px] leading-snug text-amply-textSecondary">{item.subtitle}</p>
-        {showCount ? <p className="text-[11px] text-amply-textMuted">{count}</p> : null}
-      </div>
+
+      <IconButton
+        name="play"
+        label={`Play ${item.title}`}
+        variant="accent"
+        size={featured ? 'lg' : 'md'}
+        onClick={handlePlay}
+        className={clsx(
+          'absolute z-10 opacity-0 transition-opacity duration-150 ease-smooth group-hover:opacity-100 group-focus-within:opacity-100',
+          featured ? 'bottom-6 right-6' : 'right-4 top-4',
+        )}
+      />
     </Surface>
   );
 };

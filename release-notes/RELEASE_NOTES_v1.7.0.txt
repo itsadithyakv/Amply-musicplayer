@@ -3,8 +3,8 @@ Release date: 2026-09-04
 
 Highlights
 - New neumorphic design system (light and dark), animated throughout, with a redesigned sidebar,
-  neumorphic smart-playlist cards with a rotating featured mix, a proper EQ curve editor and an
-  audio visualizer (three styles) that rises out of the player bar.
+  cover-backed playlist cards, a proper EQ curve editor and a compact audio visualizer strip on
+  the player bar (three styles).
 - New smart-playlist engine: hard eligibility per mix (Most Played only contains played songs,
   Explore never repeats what you heard in the last 36 hours), artist/album caps that always hold,
   no song in more than two mixes, a "don't repeat yesterday" rule for the Daily Mix, a proper genre

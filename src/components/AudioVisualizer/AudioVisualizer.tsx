@@ -7,6 +7,8 @@ type VisualTheme = AppSettings['lyricsVisualTheme'];
 
 interface AudioVisualizerProps {
   active: boolean;
+  /** Minimal bar strip anchored to the bottom edge (player bar) instead of a full scene. */
+  compact?: boolean;
   isPlaying: boolean;
   theme: VisualTheme;
   tint?: string | null;
@@ -292,6 +294,38 @@ const drawMono = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Fl
   ctx.restore();
 };
 
+const STRIP_BARS = 56;
+
+/** Thin bars rising from the bottom edge; band levels are interpolated across the bar count. */
+const drawStrip = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, palette: Palette, energy: number): void => {
+  const gap = 3;
+  const barWidth = Math.max(2, (w - gap * (STRIP_BARS - 1)) / STRIP_BARS);
+  const lastBand = BAND_COUNT - 1;
+  for (let index = 0; index < STRIP_BARS; index += 1) {
+    // Mirror the spectrum around the centre so the strip reads as symmetric.
+    const centred = Math.abs(index - (STRIP_BARS - 1) / 2) / ((STRIP_BARS - 1) / 2);
+    const position = (1 - centred) * lastBand;
+    const low = Math.floor(position);
+    const high = Math.min(lastBand, low + 1);
+    const level = bands[low] + (bands[high] - bands[low]) * (position - low);
+    const height = Math.max(2, level * (h - 4));
+    const x = index * (barWidth + gap);
+    const y = h - height;
+    const colour = mixTriplet(palette.ramp[1], palette.ramp[3], Math.min(1, level * 1.2));
+    ctx.fillStyle = `rgba(${colour}, ${0.45 + level * 0.5})`;
+    ctx.beginPath();
+    ctx.roundRect(x, y, barWidth, height + 4, [barWidth / 2, barWidth / 2, 0, 0]);
+    ctx.fill();
+  }
+  if (energy > 0.02) {
+    const glow = ctx.createLinearGradient(0, h, 0, h - 18);
+    glow.addColorStop(0, `rgba(${palette.ramp[2]}, ${0.12 + energy * 0.2})`);
+    glow.addColorStop(1, `rgba(${palette.ramp[2]}, 0)`);
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, h - 18, w, 18);
+  }
+};
+
 const drawTint = (ctx: CanvasRenderingContext2D, w: number, h: number, tint: string | null | undefined, energy: number): void => {
   if (!tint) {
     return;
@@ -306,7 +340,7 @@ const drawTint = (ctx: CanvasRenderingContext2D, w: number, h: number, tint: str
   ctx.restore();
 };
 
-const AudioVisualizer = memo(({ active, isPlaying, theme, tint }: AudioVisualizerProps) => {
+const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint }: AudioVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [target] = useState(() => new Float32Array(BAND_COUNT));
   const [smoothed] = useState(() => new Float32Array(BAND_COUNT));
@@ -419,8 +453,13 @@ const AudioVisualizer = memo(({ active, isPlaying, theme, tint }: AudioVisualize
       }
       energy /= BAND_COUNT;
 
-      drawTint(ctx, w, h, tint, energy);
       const palette = palettesRef.current[theme];
+      if (compact) {
+        drawStrip(ctx, w, h, smoothed, palette, energy);
+        frame = window.requestAnimationFrame(draw);
+        return;
+      }
+      drawTint(ctx, w, h, tint, energy);
       const t = reduceMotion ? 0 : time;
       if (theme === 'ember') {
         drawEmber(ctx, w, h, smoothed, palette, energy, dt, emberRef.current, reduceMotion);
@@ -437,9 +476,15 @@ const AudioVisualizer = memo(({ active, isPlaying, theme, tint }: AudioVisualize
       window.cancelAnimationFrame(frame);
       motionQuery.removeEventListener('change', handleMotion);
     };
-  }, [active, isPlaying, theme, tint, target, smoothed]);
+  }, [active, compact, isPlaying, theme, tint, target, smoothed]);
 
-  return <canvas ref={canvasRef} className="audio-visualizer absolute inset-0 h-full w-full" aria-hidden="true" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className={compact ? 'absolute inset-0 h-full w-full' : 'audio-visualizer absolute inset-0 h-full w-full'}
+      aria-hidden="true"
+    />
+  );
 });
 
 AudioVisualizer.displayName = 'AudioVisualizer';
