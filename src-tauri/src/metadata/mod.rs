@@ -11,25 +11,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-pub use self::artist::{
-    __cmd__has_cached_artist_profile_rust, has_cached_artist_profiles_rust, __cmd__has_cached_artist_profiles_rust, __cmd__load_artist_profile_rust,
-    __cmd__read_cached_artist_profile_rust, has_cached_artist_profile_rust, load_artist_profile_rust,
-    read_cached_artist_profile_rust,
-};
-pub use self::artwork::{__cmd__load_track_artwork_rust, load_track_artwork_rust};
-pub use self::genre::{
-    __cmd__load_song_genre_cache_rust, __cmd__load_song_genre_rust, load_song_genre_cache_rust,
-    load_song_genre_rust,
-};
-pub use self::lyrics::{
-    __cmd__lyrics_find_candidates_rust, __cmd__lyrics_load_rust, __cmd__lyrics_read_cached_rust,
-    __cmd__lyrics_save_selection_rust, lyrics_find_candidates_rust, lyrics_load_rust,
-    lyrics_read_cached_rust, lyrics_save_selection_rust,
-};
-pub use self::tracklist::{
-    __cmd__load_album_tracklist_cache_rust, __cmd__load_album_tracklist_rust,
-    load_album_tracklist_cache_rust, load_album_tracklist_rust,
-};
 
 pub(crate) const ARTIST_CACHE_FOLDER: &str = "artist_cache";
 pub(crate) const LYRICS_CACHE_FOLDER: &str = "lyrics_cache";
