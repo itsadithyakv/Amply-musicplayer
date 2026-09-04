@@ -135,8 +135,8 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
         <svg
           ref={svgRef}
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          preserveAspectRatio="none"
-          className="h-44 w-full touch-none sm:h-52"
+          className="w-full touch-none"
+          style={{ aspectRatio: `${VIEW_W} / ${VIEW_H}` }}
           role="img"
           aria-label="Equalizer curve"
         >
@@ -165,7 +165,7 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
           ))}
 
           <path d={buildAreaPath(points)} fill="url(#eqCurveFill)" />
-          <path d={buildCurvePath(points)} fill="none" stroke={EQ_ACCENT} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ strokeWidth: 3 }} />
+          <path d={buildCurvePath(points)} fill="none" stroke={EQ_ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
 
           {points.map((point, index) => {
             const isActive = activeIndex === index || selectedIndex === index;

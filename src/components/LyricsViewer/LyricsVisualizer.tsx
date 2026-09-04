@@ -337,6 +337,7 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
     }
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
+    const ember = emberRef.current;
     sizeRef.current = { width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight) };
     const resizeObserver = new ResizeObserver(([entry]) => {
       if (entry) {
@@ -367,7 +368,7 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
       resizeObserver.disconnect();
       unlisten?.();
       target.fill(0);
-      emberRef.current.sparks.length = 0;
+      ember.sparks.length = 0;
     };
   }, [active, target]);
 
