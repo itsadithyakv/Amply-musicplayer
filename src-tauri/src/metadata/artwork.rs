@@ -77,6 +77,15 @@ pub async fn load_track_artwork_rust(
 ) -> AmplyResult<Option<String>> {
     let key = cache_key_for_track_artwork(&song);
     if let Some(cached) = cache_get::<String>(&app, CacheKind::TrackArtwork, &key).await? {
+        // Entries written before the artwork store existed hold base64 data URLs; move them
+        // into the store on first use so the cache row shrinks to a short URL.
+        if cached.starts_with("data:image/") {
+            let migrated = tauri::async_runtime::spawn_blocking(move || crate::artwork::migrate_data_url(&cached))
+                .await
+                .map_err(|err| err.to_string())?;
+            cache_put(&app, CacheKind::TrackArtwork, &key, &migrated).await?;
+            return Ok(Some(migrated));
+        }
         return Ok(Some(cached));
     }
 

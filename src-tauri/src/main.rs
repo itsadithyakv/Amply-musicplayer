@@ -7,6 +7,7 @@ use tauri::image::Image;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
+mod artwork;
 mod audio;
 mod error;
 mod library;
@@ -37,9 +38,12 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        // Album art is served from the on-disk artwork store instead of travelling as base64.
+        .register_uri_scheme_protocol(artwork::SCHEME, |_ctx, request| artwork::handle_request(&request))
         .manage(AudioState::new(audio_tx.clone()))
         .setup(|app| {
             let storage_root = storage::storage_root_path(app.handle())?;
+            artwork::init(&storage_root)?;
             app.manage(storage::StorageDb::open(storage_root)?);
             // Asset-protocol access to every known library folder must exist before the webview loads.
             app.manage(library::restore_library_roots(app.handle()));

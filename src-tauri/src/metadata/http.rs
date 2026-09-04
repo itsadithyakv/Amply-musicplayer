@@ -3,8 +3,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine as _;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 use reqwest::Url;
@@ -81,8 +79,7 @@ pub(crate) fn compress_image_to_data_url(image: DynamicImage) -> Option<String> 
     let mut buffer = Vec::new();
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, 74);
     encoder.encode_image(&resized).ok()?;
-    let b64 = BASE64_STANDARD.encode(buffer);
-    Some(format!("data:image/jpeg;base64,{b64}"))
+    crate::artwork::store_encoded_jpeg(&buffer)
 }
 
 pub(crate) async fn fetch_image_data_url(url: &str) -> Result<Option<String>, String> {

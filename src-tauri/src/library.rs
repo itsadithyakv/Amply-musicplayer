@@ -6,10 +6,6 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine as _;
-use image::imageops::FilterType;
-use image::GenericImageView;
 use lofty::{
     file::TaggedFile,
     picture::{Picture, PictureType},
@@ -264,24 +260,9 @@ fn pick_cover_picture(tag: &Tag) -> Option<&Picture> {
         .or_else(|| tag.pictures().first())
 }
 
+/// Store the picture in the artwork store and return its `amplyart` URL.
 fn compress_artwork_to_data_url(bytes: &[u8]) -> Option<String> {
-    let image = image::load_from_memory(bytes).ok()?;
-    let (width, height) = image.dimensions();
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let max_size = 320u32;
-    let resized = if width.max(height) > max_size {
-        image.resize(max_size, max_size, FilterType::Lanczos3)
-    } else {
-        image
-    };
-    let mut buffer = Vec::new();
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, 76);
-    encoder.encode_image(&resized).ok()?;
-    let b64 = BASE64_STANDARD.encode(buffer);
-    Some(format!("data:image/jpeg;base64,{b64}"))
+    crate::artwork::store_picture(bytes)
 }
 
 fn extract_embedded_artwork(tagged_file: &TaggedFile) -> Option<String> {

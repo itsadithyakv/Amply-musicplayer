@@ -1882,14 +1882,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const targetPaths = normalizeLibraryPaths(pathsOverride ?? get().libraryPaths);
     const runId = (scanRunId += 1);
     if (initialScanTimer !== null && typeof window !== 'undefined') {
-      const cancelIdle = (globalThis as typeof globalThis & {
-        cancelIdleCallback?: (handle: number) => void;
-      }).cancelIdleCallback;
-      if (typeof cancelIdle === 'function') {
-        cancelIdle(initialScanTimer);
-      } else {
-        window.clearTimeout(initialScanTimer);
-      }
+      window.clearTimeout(initialScanTimer);
       initialScanTimer = null;
     }
 
@@ -1931,7 +1924,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           lastPlayed: previous?.lastPlayed ?? song.lastPlayed,
           favorite: previous?.favorite ?? song.favorite,
           genre: previous?.genre?.trim() && !isUnknownGenre(previous.genre) ? previous.genre : song.genre,
-          albumArt: previous?.albumArt ?? song.albumArt,
+          // Prefer a freshly scanned artwork URL over a legacy base64 data URL from an older cache.
+          albumArt: previous?.albumArt && !previous.albumArt.startsWith('data:') ? previous.albumArt : (song.albumArt ?? previous?.albumArt),
           skipCount: previous?.skipCount ?? song.skipCount,
           lastSkipped: previous?.lastSkipped ?? song.lastSkipped,
           totalPlaySeconds: previous?.totalPlaySeconds ?? song.totalPlaySeconds,
