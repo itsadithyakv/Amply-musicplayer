@@ -9,11 +9,11 @@ authors = ["Adithya KV <adithyakrishnan.vinod@gmail.com>"]
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 base64 = "0.22"
 dirs = "6.0"
-lofty = "0.21"
-rfd = "0.15"
+lofty = "0.25"
+rfd = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "deflate", "rustls-tls"] }

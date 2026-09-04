@@ -241,7 +241,7 @@ fn extract_text_metadata(tagged_file: &TaggedFile, filename_fallback: &str) -> (
         .unwrap_or_else(|| "Unknown Genre".to_string());
 
     let track = tag.and_then(|entry| entry.track()).unwrap_or(0);
-    let year = tag.and_then(|entry| entry.year());
+    let year = tag.and_then(|entry| entry.date()).map(|date| u32::from(date.year));
 
     let replay_gain = tag.and_then(|entry| {
         for item in entry.items() {
