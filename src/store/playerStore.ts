@@ -1436,6 +1436,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       lyricsVisualsEnabled: enabled,
     };
 
+    audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);
   },

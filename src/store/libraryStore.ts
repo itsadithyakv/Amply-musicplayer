@@ -83,6 +83,8 @@ interface LibraryState {
   activityVersion: number;
   artworkVersion: number;
   playlistVersion: number;
+  /** Bumped whenever the online recommendation cache gains new signals. */
+  onlineSignalsVersion: number;
   regeneratingSmartPlaylists: boolean;
   searchQuery: string;
   metadataFetch: {
@@ -336,6 +338,7 @@ const ensureOnlineRecommendationHooks = (): void => {
   setRecommendationSongResolver((songId) => useLibraryStore.getState().getSongById(songId));
   setOnlineRecommendationRefreshHandler(() => {
     const state = useLibraryStore.getState();
+    useLibraryStore.setState({ onlineSignalsVersion: state.onlineSignalsVersion + 1 });
     if (!state.initialized || !state.songs.length) {
       return;
     }
@@ -1111,6 +1114,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   activityVersion: 0,
   artworkVersion: 0,
   playlistVersion: 0,
+  onlineSignalsVersion: 0,
   regeneratingSmartPlaylists: false,
   searchQuery: '',
       metadataFetch: {

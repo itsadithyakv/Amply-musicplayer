@@ -1,4 +1,5 @@
-import { getFlag, setFlags } from '@/services/runtimeFlags';
+import { invoke } from '@tauri-apps/api/core';
+import { setFlags } from '@/services/runtimeFlags';
 import { normalizeSlug as normalizeKey, normalizeToken } from '@/utils/text';
 import type { AppSettings, OnlineRecommendationProvider, Song } from '@/types/music';
 import {
@@ -8,7 +9,7 @@ import {
 } from '@/services/recommendationIndex';
 import { scheduleIdle } from '@/services/playbackScheduler';
 import { recordPerfEvent } from '@/services/perfDiagnostics';
-import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { isTauri, readStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { getMetadataLookupParts, getPrimaryArtistName, normalizeArtistLookupText } from '@/utils/artists';
 
 type CachedProviderResponse = {
@@ -86,8 +87,9 @@ const CACHE_PATH = 'recommendations/online_recommendation_signals.json';
 const DIAGNOSTICS_PATH = 'recommendations/recommendation_diagnostics.json';
 const PROVIDER_CACHE_MAX = 900;
 const SIGNAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const FAILURE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const ENRICHMENT_BATCH_SIZE = 10;
+/** A failed provider call is retried after an hour rather than a day: a flaky network must not park a song for 24 h. */
+const FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+const ENRICHMENT_BATCH_SIZE = 16;
 
 const defaultCache: OnlineRecommendationCache = {
   schemaVersion: 1,
@@ -184,13 +186,6 @@ const normalizeConfig = (settings: Partial<AppSettings>): OnlineRecommendationCo
   providerOrder: normalizeProviderOrder(settings.onlineRecommendationProviderOrder),
 });
 
-const isPlaybackBusy = (): boolean => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-    return getFlag('isPlaying') === true;
-};
-
 const bumpDiagnostic = (mutate: (next: RecommendationDiagnostics) => void): void => {
   diagnostics = {
     ...diagnostics,
@@ -274,7 +269,14 @@ const scoreFromUnknown = (value: unknown): number => {
   return 0;
 };
 
+/**
+ * Provider requests go through the native HTTP client inside Tauri: Last.fm sends no CORS headers
+ * and MusicBrainz wants a descriptive user agent, neither of which the webview fetch can satisfy.
+ */
 const requestJson = async (url: string, timeoutMs = 7000): Promise<unknown> => {
+  if (isTauri()) {
+    return invoke<unknown>('fetch_recommendation_json_rust', { url });
+  }
   const controller = new AbortController();
   const handle = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -505,7 +507,7 @@ const fetchLastFmSignals = async (
     similarArtists: extractLastFmSimilarArtists(similarArtists).map((entry) => ({ ...entry, source })),
     similarTracks: extractLastFmSimilarTracks(similarTracks).map((entry) => ({ ...entry, source })),
     sources:
-      normalized.tags.length || similarArtists || similarTracks
+      normalized.tags.length || extractLastFmSimilarArtists(similarArtists).length || extractLastFmSimilarTracks(similarTracks).length
         ? ['lastfm']
         : [],
   };
@@ -725,20 +727,13 @@ export const scheduleOnlineEnrichment = (
   if (!uniqueIds.length) {
     return () => {};
   }
-  if (isPlaybackBusy()) {
-    bumpDiagnostic((next) => {
-      next.skippedDuringPlayback += 1;
-      next.queueSize = uniqueIds.length;
-    });
-    recordPerfEvent('recommendation.online.skip', { reason: 'playback-active', queued: uniqueIds.length });
-    return () => {};
-  }
 
+  // Enrichment is triggered by plays, so it must be allowed to run while music is playing; the
+  // requests are native and the loop yields between songs, so playback is unaffected.
   return scheduleIdle(
     async () => {
-      if (activeBatch || isPlaybackBusy()) {
+      if (activeBatch) {
         bumpDiagnostic((next) => {
-          next.skippedDuringPlayback += 1;
           next.queueSize = uniqueIds.length;
         });
         return;
@@ -752,9 +747,6 @@ export const scheduleOnlineEnrichment = (
       const startedAt = Date.now();
       try {
         for (const songId of uniqueIds) {
-          if (isPlaybackBusy()) {
-            break;
-          }
           const before = (await loadCache()).signals[songId]?.fetchedAt ?? 0;
           const signal = await refreshOnlineSignals(songId);
           if (signal && signal.fetchedAt !== before) {

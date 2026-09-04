@@ -179,6 +179,7 @@ pub(crate) fn spawn_audio_thread(app: AppHandle, rx: Receiver<AudioCommand>) {
                     );
                 }
                 if audio.is_playing
+                    && audio.spectrum.is_enabled()
                     && last_spectrum_emit.elapsed() >= Duration::from_millis(50)
                 {
                     last_spectrum_emit = Instant::now();

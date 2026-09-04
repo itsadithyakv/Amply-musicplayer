@@ -6,6 +6,7 @@ import { Icon, type IconName } from '@/components/ui/Icon';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { Divider } from '@/components/ui/Divider';
 import { useLibraryStore } from '@/store/libraryStore';
+import { usePlayerStore } from '@/store/playerStore';
 
 interface NavItem {
   label: string;
@@ -52,6 +53,29 @@ const MetadataStatus = () => {
   );
 };
 
+/** One-click mini player switch so the overlay can be toggled without opening Settings. */
+const OverlayQuickToggle = () => {
+  const enabled = usePlayerStore((state) => state.settings.miniNowPlayingOverlay);
+  const setEnabled = usePlayerStore((state) => state.setMiniNowPlayingOverlay);
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      title={enabled ? 'Hide mini player' : 'Show mini player'}
+      onClick={() => void setEnabled(!enabled)}
+      className={clsx(
+        'neu-interactive sidebar-nav flex w-full items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] lg:justify-start',
+        enabled ? 'neu-pressed-sm text-amply-textPrimary' : 'neu-flat text-amply-textSecondary hover:text-amply-textPrimary',
+      )}
+    >
+      <Icon name="overlay" size={18} />
+      <span className="hidden min-w-0 flex-1 text-left lg:inline">Mini player</span>
+      <span aria-hidden="true" data-checked={enabled} className="neu-toggle hidden scale-90 lg:block" />
+    </button>
+  );
+};
+
 const Sidebar = () => (
   <aside className="flex h-full min-h-0 w-full flex-col px-3 py-5 shadow-[inset_-1px_0_0_rgb(var(--amply-edge)/var(--edge-a))] lg:px-4">
     <div className="anim-rise mb-8 flex items-center justify-center gap-3 lg:justify-start lg:px-2">
@@ -69,6 +93,7 @@ const Sidebar = () => (
       <div className="mt-auto pt-6">
         <Divider className="my-4" />
         <div className="space-y-2">
+          <OverlayQuickToggle />
           {secondaryNav.map((item) => (
             <NavEntry key={item.path} item={item} />
           ))}

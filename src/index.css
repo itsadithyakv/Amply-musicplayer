@@ -456,12 +456,14 @@ a,
     transition: transform 160ms var(--ease-smooth);
   }
 
-  .neu-toggle:checked {
+  .neu-toggle:checked,
+  .neu-toggle[data-checked='true'] {
     background: rgb(var(--amply-accent));
     box-shadow: inset 2px 2px 5px rgb(0 0 0 / 0.18);
   }
 
-  .neu-toggle:checked::after {
+  .neu-toggle:checked::after,
+  .neu-toggle[data-checked='true']::after {
     transform: translateX(18px);
   }
 

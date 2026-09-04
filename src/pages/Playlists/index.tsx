@@ -128,7 +128,6 @@ const PlaylistsPage = () => {
   return (
     <div className="min-w-0 space-y-5 overflow-x-hidden pb-8">
       <PageHeader
-        eyebrow="Your listening"
         title="Playlists"
         description="Smart mixes from Amply and playlists arranged by you."
         action={<Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>New playlist</Button>}

@@ -116,6 +116,7 @@ fn main() {
             metadata::lyrics::lyrics_read_cached_rust,
             metadata::lyrics::lyrics_save_selection_rust,
             metadata::lyrics::lyrics_load_rust,
+            metadata::http::fetch_recommendation_json_rust,
             library::build_album_art_frequency_rust
         ])
         .on_window_event(|window, event| {

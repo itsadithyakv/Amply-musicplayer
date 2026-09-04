@@ -9,8 +9,9 @@ import { recordBudgetLatency, recordPerfEvent } from '@/services/perfDiagnostics
 import type { AppSettings } from '@/types/music';
 
 const OVERLAY_LABEL = 'overlay';
-const OVERLAY_WIDTH = 112;
-const OVERLAY_HEIGHT = 64;
+/** Must match the collapsed window geometry in pages/Overlay (pill + 12 px margin on every side). */
+const OVERLAY_WIDTH = 128;
+const OVERLAY_HEIGHT = 80;
 const CREATE_TIMEOUT_MS = 3000;
 const HEALTHCHECK_MS = 15000;
 

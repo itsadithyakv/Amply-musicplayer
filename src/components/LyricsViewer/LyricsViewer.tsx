@@ -17,7 +17,7 @@ import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageSe
 import { useIdleRender } from '@/hooks/useIdleRender';
 import { useInteractionFeedback } from '@/services/interactionFeedback';
 import { beginPerfInteraction } from '@/services/perfDiagnostics';
-import { getFlag } from '@/services/runtimeFlags';
+import { useFlag } from '@/services/runtimeFlags';
 import { scheduleAfterPaint } from '@/services/interactionTrace';
 import { usePlaybackProgress } from '@/store/playbackProgressStore';
 import LyricsVisualizer from './LyricsVisualizer';
@@ -84,6 +84,7 @@ const parseTintChannels = (tint: string): [number, number, number] | null => {
 const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: LyricsViewerProps) => {
   const positionSec = usePlaybackProgress((progress) => progress.positionSec);
   const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
+  const lowPerf = useFlag('lowPerf');
   const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
@@ -664,7 +665,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
         className={clsx('relative isolate flex flex-col overflow-hidden bg-amply-bg', fullHeight ? 'min-h-0 flex-1' : 'h-[420px]')}
         style={tintStyle}
       >
-        {lyricsVisualsEnabled && !getFlag('lowPerf') ? (
+        {lyricsVisualsEnabled && !lowPerf ? (
           <LyricsVisualizer active={active} isPlaying={isPlaying} theme={lyricsVisualTheme} tint={artworkTint} />
         ) : null}
         <div

@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { createStore } from 'zustand/vanilla';
 
 /**
@@ -67,6 +68,14 @@ export const subscribeFlag = <K extends keyof RuntimeFlags>(
       callback(state[key], previous[key]);
     }
   });
+
+/** React hook: re-renders when the given flag changes. */
+export const useFlag = <K extends keyof RuntimeFlags>(key: K): RuntimeFlags[K] =>
+  useSyncExternalStore(
+    (onChange) => subscribeFlag(key, onChange),
+    () => runtimeFlags.getState()[key],
+    () => runtimeFlags.getState()[key],
+  );
 
 /** Test helper. */
 export const resetFlags = (): void => {

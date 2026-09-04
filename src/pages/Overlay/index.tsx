@@ -28,9 +28,18 @@ const initialState: OverlayState = {
   theme: null,
 };
 
-const COLLAPSED_WIDTH = 112;
-const EXPANDED_WIDTH = 332;
-const OVERLAY_HEIGHT = 64;
+/**
+ * The window is the pill plus a 12 px margin on every side. The margin keeps the raised shadow
+ * inside the window (a shadow clipped at the window edge reads as a hard, jagged outline on a
+ * transparent surface) and gives the antialiased rounded edge transparent pixels to blend into.
+ */
+const WINDOW_MARGIN = 12;
+const PILL_HEIGHT = 56;
+const COLLAPSED_PILL_WIDTH = 104;
+const EXPANDED_PILL_WIDTH = 324;
+const COLLAPSED_WIDTH = COLLAPSED_PILL_WIDTH + WINDOW_MARGIN * 2;
+const EXPANDED_WIDTH = EXPANDED_PILL_WIDTH + WINDOW_MARGIN * 2;
+const OVERLAY_HEIGHT = PILL_HEIGHT + WINDOW_MARGIN * 2;
 
 const isOverlayTheme = (value: unknown): value is OverlayTheme => value === 'light' || value === 'dark';
 
@@ -125,7 +134,7 @@ const OverlayPage = () => {
       setState((previous) => ({
         title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : previous.title,
         artist: typeof payload.artist === 'string' && payload.artist.trim() ? payload.artist : previous.artist,
-        albumArt: typeof payload.albumArt === 'string' && payload.albumArt.trim() ? payload.albumArt : null,
+        albumArt: typeof payload.albumArt === 'string' && payload.albumArt.trim() ? payload.albumArt : previous.albumArt,
         isPlaying: Boolean(payload.isPlaying),
         spinningArtwork: payload.spinningArtwork !== false,
         theme: isOverlayTheme(payload.theme) ? payload.theme : previous.theme,
@@ -161,13 +170,14 @@ const OverlayPage = () => {
   };
 
   return (
-    <div className="flex h-full w-full items-center justify-start bg-transparent p-1">
-      {/* At rest the pill is a translucent ghost with no shadow (intentional for an always-on-top widget);
-          on hover it becomes an opaque raised surface. */}
+    <div className="flex h-full w-full items-center justify-start bg-transparent" style={{ padding: WINDOW_MARGIN }}>
+      {/* At rest the pill is a quiet translucent surface; on hover it becomes an opaque raised one.
+          No overflow clipping here: a rounded clip around the (composited) spinning artwork would be
+          rasterised without antialiasing, which is what made the edge look jagged. */}
       <div
         data-testid="overlay-surface"
         data-state={expanded ? 'expanded' : 'collapsed'}
-        className="group flex h-[56px] items-center justify-between overflow-hidden rounded-full px-2 text-amply-textPrimary transition-[width,background-color,box-shadow] duration-[180ms] ease-out data-[state=collapsed]:w-[104px] data-[state=collapsed]:bg-amply-bg/35 data-[state=expanded]:w-[324px] data-[state=expanded]:neu-raised"
+        className="group flex h-[56px] items-center justify-between rounded-full px-2 text-amply-textPrimary shadow-[inset_0_0_0_1px_rgb(var(--amply-edge)/var(--edge-a))] transition-[width,background-color,box-shadow] duration-[180ms] ease-out data-[state=collapsed]:w-[104px] data-[state=collapsed]:bg-amply-bg/80 data-[state=expanded]:w-[324px] data-[state=expanded]:neu-raised-sm"
         onPointerEnter={() => setExpansion(true)}
         onPointerLeave={() => setExpansion(false)}
       >
@@ -186,11 +196,19 @@ const OverlayPage = () => {
 
         <div
           data-testid="overlay-artwork"
-          className={`neu-well relative h-11 w-11 shrink-0 overflow-hidden opacity-35 transition-opacity duration-150 group-data-[state=expanded]:opacity-100 ${state.spinningArtwork ? 'animate-[spin_8s_linear_infinite] rounded-full' : 'rounded-sm'}`}
+          className={`neu-well relative h-11 w-11 shrink-0 opacity-70 transition-opacity duration-150 group-data-[state=expanded]:opacity-100 ${state.spinningArtwork ? 'animate-[spin_8s_linear_infinite] rounded-full' : 'rounded-sm'}`}
           style={state.spinningArtwork ? { animationPlayState: state.isPlaying ? 'running' : 'paused' } : undefined}
         >
           {state.albumArt ? (
-            <ArtworkImage src={state.albumArt} alt="" className="h-full w-full object-cover" loading="eager" decoding="async" forceReady pulse={false} />
+            <ArtworkImage
+              src={state.albumArt}
+              alt=""
+              className={`h-full w-full object-cover ${state.spinningArtwork ? 'rounded-full' : 'rounded-sm'}`}
+              loading="eager"
+              decoding="async"
+              forceReady
+              pulse={false}
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[18px] font-semibold text-amply-textMuted">A</div>
           )}
@@ -212,7 +230,7 @@ const OverlayPage = () => {
           <div className={revealClass}>
             <IconButton name="prev" label="Previous track" size="xs" variant="ghost" onClick={() => void emitMainCommand('amply://overlay-prev')} />
           </div>
-          <div className="opacity-35 transition-opacity duration-150 group-data-[state=expanded]:opacity-100">
+          <div className="opacity-70 transition-opacity duration-150 group-data-[state=expanded]:opacity-100">
             <IconButton
               name={state.isPlaying ? 'pause' : 'play'}
               label={state.isPlaying ? 'Pause' : 'Play'}

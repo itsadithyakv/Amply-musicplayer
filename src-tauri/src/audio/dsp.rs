@@ -356,6 +356,10 @@ impl SpectrumLevels {
         self.publish([0.0; AUDIO_SPECTRUM_BANDS]);
     }
 
+    pub(crate) fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
         if !enabled {

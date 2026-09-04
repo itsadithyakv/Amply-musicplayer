@@ -48,17 +48,49 @@ pub(crate) async fn musicbrainz_throttle() {
     *last = Some(Instant::now());
 }
 
+/// Prefix on transport failures so callers can tell "offline" from "the page is missing".
+pub(crate) const OFFLINE_PREFIX: &str = "offline: ";
+
+pub(crate) fn is_offline_error(message: &str) -> bool {
+    message.starts_with(OFFLINE_PREFIX)
+}
+
+fn describe_transport_error(err: reqwest::Error) -> String {
+    if err.is_connect() || err.is_timeout() || err.is_request() {
+        format!("{OFFLINE_PREFIX}{err}")
+    } else {
+        err.to_string()
+    }
+}
+
 pub(crate) async fn fetch_json<T: for<'de> Deserialize<'de>>(url: Url) -> Result<T, String> {
     let response = HTTP
         .get(url)
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(describe_transport_error)?;
     if !response.status().is_success() {
         return Err(format!("Request failed: {}", response.status()));
     }
     response.json::<T>().await.map_err(|err| err.to_string())
+}
+
+/// Hosts the frontend recommendation service may fetch through the native client.
+/// Routing these through reqwest sidesteps webview CORS and lets MusicBrainz see a real user agent.
+const RECOMMENDATION_HOSTS: &[&str] = &["ws.audioscrobbler.com", "musicbrainz.org"];
+
+#[tauri::command]
+pub async fn fetch_recommendation_json_rust(url: String) -> crate::error::AmplyResult<serde_json::Value> {
+    let parsed = Url::parse(&url).map_err(|err| crate::error::AmplyError::InvalidInput(err.to_string()))?;
+    let host = parsed.host_str().unwrap_or_default();
+    if parsed.scheme() != "https" || !RECOMMENDATION_HOSTS.contains(&host) {
+        return Err(crate::error::AmplyError::Forbidden(format!("host not allowed: {host}")));
+    }
+    if host == "musicbrainz.org" {
+        musicbrainz_throttle().await;
+    }
+    fetch_json::<serde_json::Value>(parsed).await.map_err(crate::error::AmplyError::Other)
 }
 
 pub(crate) fn wikipedia_summary_url(title: &str) -> Result<Url, String> {

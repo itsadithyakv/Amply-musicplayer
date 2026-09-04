@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { Button, Divider, IconButton, Kicker, Spinner } from '@/components/ui';
+import { Button, Divider, Kicker, Spinner } from '@/components/ui';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { getSongsByIds } from '@/store/libraryDataStore';
@@ -90,7 +90,7 @@ const NowPlayingPanel = () => {
   const [artistStatus, setArtistStatus] = useState<ArtistProfileLoadResult['status']>('missing');
   const [artistChecked, setArtistChecked] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
-  const [artistRefreshToken, setArtistRefreshToken] = useState(0);
+  const [artistRefreshing, setArtistRefreshing] = useState(false);
   const [resolvedGenre, setResolvedGenre] = useState<string>('Unknown Genre');
   const idleReady = useIdleRender(300);
   const { onSongChange, shouldLoadExpensiveMetadata } = useMetadataPriority();
@@ -286,7 +286,34 @@ const NowPlayingPanel = () => {
       retryTimers.forEach((handle) => window.clearTimeout(handle));
       cancel();
     };
-  }, [primaryArtist, gameMode, metadataFetchPaused, isOffline, shouldLoadExpensiveMetadata, artistRefreshToken]);
+  }, [primaryArtist, gameMode, metadataFetchPaused, isOffline, shouldLoadExpensiveMetadata]);
+
+  // Manual retry: bypass every cooldown and idle gate, then read the answer back directly instead of
+  // waiting for the deferred effect (which may be throttled right after the click).
+  const retryArtistProfile = useCallback(async () => {
+    if (!song || !primaryArtist || artistRefreshing) {
+      return;
+    }
+    setArtistRefreshing(true);
+    setArtistLoading(true);
+    try {
+      await fetchMissingMetadataForSong(song.id, { forceRetry: true, ignoreCooldown: true, allowWhenPaused: true });
+      let result = await readCachedArtistProfile(primaryArtist);
+      if (result.status !== 'ready') {
+        result = await loadArtistProfile(primaryArtist, { waitForIdle: false });
+      }
+      setArtistStatus(result.status);
+      if (result.status === 'ready') {
+        setArtistProfile(result.profile);
+      }
+    } catch (error) {
+      reportArtistProfileError('retry-metadata', error);
+    } finally {
+      setArtistChecked(true);
+      setArtistLoading(false);
+      setArtistRefreshing(false);
+    }
+  }, [song, primaryArtist, artistRefreshing, fetchMissingMetadataForSong]);
 
   const openAlbumQueue = useCallback(
     async (current: NonNullable<typeof song>) => {
@@ -472,8 +499,7 @@ const NowPlayingPanel = () => {
     <aside className="flex h-full min-h-0 flex-col bg-amply-bg px-4 py-5 shadow-[inset_1px_0_0_rgb(var(--amply-edge)/var(--edge-a))]">
       <div className="flex items-end justify-between px-1">
         <div>
-          <Kicker>Now playing</Kicker>
-          <p className="mt-1 text-[15px] font-semibold tracking-[-0.02em] text-amply-textPrimary">Track &amp; artist</p>
+          <p className="text-[15px] font-semibold tracking-[-0.02em] text-amply-textPrimary">Now playing</p>
         </div>
         {song ? (
           <Button variant="ghost" size="sm" iconRight="chevron-right" onClick={() => navigate('/now-playing')}>
@@ -555,7 +581,7 @@ const NowPlayingPanel = () => {
             {artistLoading ? (
               <div className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
                 <Spinner size={16} label="Loading artist info" />
-                <span>Loading artist info...</span>
+                <span>{artistRefreshing ? 'Looking the artist up again...' : 'Loading artist info...'}</span>
               </div>
             ) : null}
 
@@ -607,24 +633,9 @@ const NowPlayingPanel = () => {
 
             {artistChecked && !artistLoading && artistStatus !== 'ready' ? (
               <div className="pt-2">
-                <IconButton
-                  name="refresh"
-                  label="Retry metadata"
-                  size="sm"
-                  disabled={!song}
-                  onClick={() => {
-                    if (!song) {
-                      return;
-                    }
-                    void fetchMissingMetadataForSong(song.id, {
-                      forceRetry: true,
-                      ignoreCooldown: true,
-                      allowWhenPaused: true,
-                    })
-                      .then(() => setArtistRefreshToken((current) => current + 1))
-                      .catch((error) => reportArtistProfileError('retry-metadata', error));
-                  }}
-                />
+                <Button variant="secondary" size="sm" icon="refresh" disabled={!song} onClick={() => void retryArtistProfile()}>
+                  Try again
+                </Button>
               </div>
             ) : null}
           </div>

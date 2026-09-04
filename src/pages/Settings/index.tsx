@@ -14,7 +14,6 @@ import { SmartPlaylistsSection } from '@/pages/Settings/SmartPlaylistsSection';
 const SettingsPage = () => (
   <div className="space-y-4 pb-8">
     <PageHeader
-      eyebrow="Preferences"
       title="Settings"
       description="Minimal controls for library, playback, visuals, and app behavior."
     />

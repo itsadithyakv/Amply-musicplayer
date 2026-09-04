@@ -17,6 +17,7 @@ import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { isMoreMixPlaylistId } from '@/services/mixEngine';
 import { useHomeView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 import { ExploreMixesCard } from '@/pages/Home/ExploreMixesCard';
+import { FeaturedMixCarousel } from '@/pages/Home/FeaturedMixCarousel';
 import { MadeForYouHero } from '@/pages/Home/MadeForYouHero';
 import { SectionRow } from '@/pages/Home/SectionRow';
 import { SmartPlaylistCard, type SmartPlaylistCardItem, type SmartPlaylistCardLayout } from '@/pages/Home/SmartPlaylistCard';
@@ -28,13 +29,13 @@ import {
   getNextMadeForYouRefreshMs,
   pickUniqueAlbumSongs,
   scheduleIdleTask,
-  setBoundedCache,
 } from '@/pages/Home/homeMixes';
 
 type AlbumTracklistSummary = { tracks?: Array<{ position: number; title: string }> };
 
-const smartPlaylistUiCache = new Map<string, SmartPlaylistCardItem[]>();
-const smartPlaylistHighlightCache = new Map<string, SmartPlaylistCardItem[]>();
+/** Cover chosen for a playlist under a given render seed, so it survives artwork arriving later. */
+const smartPlaylistCoverCache = new Map<string, string>();
+const COVER_CACHE_LIMIT = 240;
 
 const EmptyNote = ({ children }: { children: string }) => (
   <Surface variant="well" radius="md" className="p-4 text-[13px] text-amply-textMuted">
@@ -49,7 +50,6 @@ const HomePage = () => {
   const regenerateSmartPlaylists = useLibraryStore((state) => state.regenerateSmartPlaylists);
   const smartPlaylistSeed = useLibraryStore((state) => state.smartPlaylistSeed);
   const regeneratingSmartPlaylists = useLibraryStore((state) => state.regeneratingSmartPlaylists);
-  const playlistUsage = useLibraryStore((state) => state.playlistUsage);
   const metadataFetchDone = useLibraryStore((state) => state.metadataFetch.done);
   const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const navigate = useNavigate();
@@ -70,7 +70,20 @@ const HomePage = () => {
   const songsById = homeView.songsById;
   const allSongIds = homeView.allSongIds;
   const topArtists = homeView.topArtists;
-  const { libraryVersion, playlistVersion } = useLibraryVersions();
+  const { libraryVersion } = useLibraryVersions();
+
+  // Home renders a snapshot of the playlists and songs taken on mount and on manual regenerate.
+  // Background refreshes (a play, a favourite, artwork arriving) must not reshuffle the cards under
+  // the pointer; navigating back to Home remounts and picks up whatever is fresh by then.
+  const smartPlaylistCount = playlists.reduce((count, playlist) => (playlist.type === 'smart' ? count + 1 : count), 0);
+  const hasAnyArtwork = deferredSongs.some((song) => Boolean(song.albumArt));
+  const snapshotKey = `${smartPlaylistRenderSeed}:${libraryVersion}:${smartPlaylistCount > 0}:${hasAnyArtwork}:${madeForYouRefreshSeed}`;
+  const snapshotRef = useRef<{ key: string; playlists: Playlist[]; songs: Song[] } | null>(null);
+  if (!snapshotRef.current || snapshotRef.current.key !== snapshotKey) {
+    snapshotRef.current = { key: snapshotKey, playlists, songs: deferredSongs };
+  }
+  const frozenPlaylists = snapshotRef.current.playlists;
+  const frozenSongs = snapshotRef.current.songs;
   const albumArtFrequency = useAlbumArtFrequency(useStructuralSongsSnapshot());
   const homeMixSeed = useMemo(
     () => hash(`${smartPlaylistRenderSeed || 0}:made-for-you:${madeForYouRefreshSeed}`),
@@ -205,13 +218,13 @@ const HomePage = () => {
   const userPlaylists = homeView.userPlaylists.filter((playlist) => playlist.songIds.length);
 
   const exploreArtworkSongs = useMemo(
-    () => pickUniqueAlbumSongs(deferredSongs, homeMixSeed || 1, 6),
-    [deferredSongs, homeMixSeed],
+    () => pickUniqueAlbumSongs(frozenSongs, homeMixSeed || 1, 6),
+    [frozenSongs, homeMixSeed],
   );
 
-  const moreFromArtist = useMemo(() => buildMoreFromArtist(deferredSongs, homeMixSeed), [deferredSongs, homeMixSeed]);
+  const moreFromArtist = useMemo(() => buildMoreFromArtist(frozenSongs, homeMixSeed), [frozenSongs, homeMixSeed]);
 
-  const madeForYouMixes = useMemo(() => buildMadeForYouMixes(deferredSongs, homeMixSeed), [deferredSongs, homeMixSeed]);
+  const madeForYouMixes = useMemo(() => buildMadeForYouMixes(frozenSongs, homeMixSeed), [frozenSongs, homeMixSeed]);
 
   // Top artists come from the shared home view (already computed there); only the artist image
   // lookup lives here. Keyed on the joined names so a rebuild that yields the same artists does not
@@ -283,19 +296,25 @@ const HomePage = () => {
 
   const smartPlaylistItems = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
-    const smartPlaylists = playlists.filter((playlist) => playlist.type === 'smart');
-    // Playlist contents only change alongside a playlistVersion/libraryVersion bump, so the
-    // version counters stand in for serialising every playlist's song ids into the key.
-    const cacheKey = `${seed}::${libraryVersion}:${playlistVersion}`;
-    const cached = smartPlaylistUiCache.get(cacheKey);
-    if (cached) {
-      return cached;
+    const smartPlaylists = frozenPlaylists.filter((playlist) => playlist.type === 'smart');
+    if (smartPlaylistCoverCache.size > COVER_CACHE_LIMIT) {
+      smartPlaylistCoverCache.clear();
     }
-    const next = smartPlaylists
+    return smartPlaylists
       .map((playlist) => {
         const artwork = getPlaylistArtwork(playlist);
         const artworks = getPlaylistArtworkSet(playlist);
-        const backgroundArtwork = artworks.length ? artworks[hash(`${playlist.id}:${seed}`) % artworks.length] : artwork;
+        const coverKey = `${seed}:${playlist.id}`;
+        const remembered = smartPlaylistCoverCache.get(coverKey);
+        const backgroundArtwork =
+          remembered && (!artworks.length || artworks.includes(remembered))
+            ? remembered
+            : artworks.length
+              ? artworks[hash(coverKey) % artworks.length]
+              : artwork;
+        if (backgroundArtwork) {
+          smartPlaylistCoverCache.set(coverKey, backgroundArtwork);
+        }
         return {
           id: playlist.id,
           baseId: playlist.id,
@@ -311,55 +330,22 @@ const HomePage = () => {
         };
       })
       .filter((entry) => entry.songIds.length);
-    setBoundedCache(smartPlaylistUiCache, cacheKey, next);
-    return next;
-  }, [
-    playlists,
-    getAlbumSpotlightSubtitle,
-    getPlaylistArtwork,
-    getPlaylistArtworkSet,
-    smartPlaylistRenderSeed,
-    libraryVersion,
-    playlistVersion,
-  ]);
+  }, [frozenPlaylists, getAlbumSpotlightSubtitle, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed]);
 
-  const smartHighlightCards = useMemo(() => {
-    const now = Date.now() / 1000;
-    const scoreFor = (baseId: string) => {
-      const usage = playlistUsage[baseId];
-      if (!usage) {
-        return 0;
-      }
-      const daysSince = Math.max(0, (now - usage.lastUsed) / 86_400);
-      const recencyBoost = Math.max(0, 14 - daysSince) * 2;
-      return usage.count * 10 + recencyBoost;
-    };
-
-    const cacheKey = [
-      smartPlaylistRenderSeed || 0,
-      smartPlaylistItems.map((entry) => entry.id).join('|'),
-      Object.entries(playlistUsage)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([id, usage]) => `${id}:${usage.count}:${usage.lastUsed}`)
-        .join('|'),
-    ].join('::');
-    const cached = smartPlaylistHighlightCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    const next = smartPlaylistItems
+  // Six static grid cards, ordered by the render seed only (usage no longer reorders them under the
+  // pointer). The featured slot rotates through everything that did not fit in the grid.
+  const { gridCards, featuredPool } = useMemo(() => {
+    const seed = smartPlaylistRenderSeed || 0;
+    const ordered = smartPlaylistItems
       .filter((entry) => !entry.isMoreMix)
-      .sort((a, b) => {
-        const scoreDiff = scoreFor(b.baseId) - scoreFor(a.baseId);
-        if (scoreDiff !== 0) {
-          return scoreDiff;
-        }
-        return hash(`${a.id}:${smartPlaylistRenderSeed}`) - hash(`${b.id}:${smartPlaylistRenderSeed}`);
-      })
-      .slice(0, 7);
-    setBoundedCache(smartPlaylistHighlightCache, cacheKey, next);
-    return next;
-  }, [smartPlaylistItems, playlistUsage, smartPlaylistRenderSeed]);
+      .sort((a, b) => hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`));
+    const grid = ordered.slice(1, 7);
+    const gridIds = new Set(grid.map((entry) => entry.id));
+    const pool = [ordered[0], ...smartPlaylistItems.filter((entry) => entry.isMoreMix), ...ordered.slice(7)]
+      .filter((entry) => Boolean(entry) && !gridIds.has(entry.id))
+      .slice(0, 6);
+    return { gridCards: grid, featuredPool: pool };
+  }, [smartPlaylistItems, smartPlaylistRenderSeed]);
 
   const smartMixesAll = useMemo(() => {
     if (!showMoreMixes) {
@@ -391,6 +377,10 @@ const HomePage = () => {
     }
   };
 
+  /** Cards render a snapshot; playback always uses the playlist's current contents. */
+  const liveSongIdsFor = (item: SmartPlaylistCardItem): string[] =>
+    playlists.find((playlist) => playlist.id === item.baseId)?.songIds ?? item.songIds;
+
   const openPlaylistDetail = (playlistId?: string) => {
     if (!playlistId) {
       return;
@@ -417,11 +407,11 @@ const HomePage = () => {
       onSelect={() =>
         handleSmartCardClick(
           item.id,
-          () => playPlaylist(item.songIds, undefined, item.baseId),
+          () => playPlaylist(liveSongIdsFor(item), undefined, item.baseId),
           () => openPlaylistDetail(item.baseId),
         )
       }
-      onPlay={() => playPlaylist(item.songIds, undefined, item.baseId)}
+      onPlay={() => playPlaylist(liveSongIdsFor(item), undefined, item.baseId)}
     />
   );
 
@@ -464,14 +454,20 @@ const HomePage = () => {
             regeneratingSmartPlaylists && 'pointer-events-none opacity-60',
           )}
         >
-          {smartHighlightCards.map((item, index) => {
-            const isFeatured = index === 0;
-            return (
-              <div key={item.id} className={clsx('min-w-0', isFeatured && 'sm:col-span-2 xl:col-span-2')}>
-                {renderSmartCard(item, isFeatured ? 'featured' : 'grid')}
-              </div>
-            );
-          })}
+          {featuredPool.length ? (
+            <div className="min-w-0 sm:col-span-2 xl:col-span-2">
+              <FeaturedMixCarousel
+                items={featuredPool}
+                onPlay={(item) => playPlaylist(liveSongIdsFor(item), undefined, item.baseId)}
+                onOpen={(item) => openPlaylistDetail(item.baseId)}
+              />
+            </div>
+          ) : null}
+          {gridCards.map((item) => (
+            <div key={item.id} className="min-w-0">
+              {renderSmartCard(item, 'grid')}
+            </div>
+          ))}
 
           {showMoreMixesCard ? (
             <ExploreMixesCard
@@ -482,7 +478,7 @@ const HomePage = () => {
           ) : null}
         </div>
 
-        {!smartHighlightCards.length ? (
+        {!featuredPool.length && !gridCards.length ? (
           <EmptyNote>No smart playlists yet. Add more music or refresh your library to generate mixes.</EmptyNote>
         ) : null}
 

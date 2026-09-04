@@ -434,8 +434,10 @@ pub async fn load_artist_profile_rust(
         }),
         Err(error) => {
             log::warn!("Wikipedia artist profile for {name:?} failed: {error}");
+            // Only transport failures mean "offline"; anything else is a lookup miss the user can retry.
+            let status = if super::http::is_offline_error(&error) { "no-internet" } else { "missing" };
             Ok(ArtistProfileLoadResult {
-                status: "no-internet".to_string(),
+                status: status.to_string(),
                 profile: None,
                 from_cache: None,
                 cache_path,
