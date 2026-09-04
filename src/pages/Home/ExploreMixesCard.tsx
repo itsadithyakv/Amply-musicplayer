@@ -1,6 +1,6 @@
-import { Button, Card, Kicker, Meta } from '@/components/ui';
+import { Button, Kicker, Meta, Surface } from '@/components/ui';
+import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import type { Song } from '@/types/music';
-import { ArtworkWell } from '@/pages/Home/ArtworkWell';
 
 interface ExploreMixesCardProps {
   artworkSongs: Song[];
@@ -10,12 +10,12 @@ interface ExploreMixesCardProps {
 
 /** Toggle card that reveals the full genre/mood mix list. */
 export const ExploreMixesCard = ({ artworkSongs, expanded, onToggle }: ExploreMixesCardProps) => (
-  <Card padding="lg" radius="lg" className="flex h-full min-h-[180px] items-center gap-5">
-    <ArtworkWell artworks={artworkSongs.slice(0, 4).map((song) => song.albumArt)} alt="Explore mixes" className="w-28 shrink-0 sm:w-32" />
-    <div className="flex min-w-0 flex-1 flex-col gap-4">
+  <Surface variant="raised" radius="lg" className="relative flex h-full min-h-[200px] items-center overflow-hidden">
+    <CoverBackdrop src={artworkSongs.find((song) => song.albumArt)?.albumArt} fade="right" />
+    <div className="relative z-10 ml-auto flex w-[62%] min-w-0 flex-col gap-4 p-6">
       <div className="space-y-1">
         <Kicker>More mixes</Kicker>
-        <p className="text-[18px] font-semibold text-amply-textPrimary">Explore Mixes</p>
+        <p className="text-[20px] font-bold tracking-[-0.02em] text-amply-textPrimary">Explore Mixes</p>
         <Meta>{expanded ? 'Hide the full mix list' : 'Show genre and mood mixes'}</Meta>
       </div>
       <div>
@@ -30,5 +30,5 @@ export const ExploreMixesCard = ({ artworkSongs, expanded, onToggle }: ExploreMi
         </Button>
       </div>
     </div>
-  </Card>
+  </Surface>
 );

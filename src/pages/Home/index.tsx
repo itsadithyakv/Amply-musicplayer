@@ -467,11 +467,10 @@ const HomePage = () => {
     }
   };
 
-  const renderSmartCard = (item: SmartPlaylistCardItem, layout: SmartPlaylistCardLayout, toneIndex: number) => (
+  const renderSmartCard = (item: SmartPlaylistCardItem, layout: SmartPlaylistCardLayout) => (
     <SmartPlaylistCard
       item={item}
       layout={layout}
-      toneIndex={toneIndex}
       onSelect={() =>
         handleSmartCardClick(
           item.id,
@@ -526,7 +525,7 @@ const HomePage = () => {
             const isFeatured = index === 0;
             return (
               <div key={item.id} className={clsx('min-w-0', isFeatured && 'sm:col-span-2 xl:col-span-2')}>
-                {renderSmartCard(item, isFeatured ? 'featured' : 'grid', index)}
+                {renderSmartCard(item, isFeatured ? 'featured' : 'grid')}
               </div>
             );
           })}
@@ -549,9 +548,9 @@ const HomePage = () => {
             <Kicker>All Mixes</Kicker>
             {smartMixesAll.length ? (
               <div className="flex gap-4 overflow-x-auto px-2 py-2 pr-3">
-                {smartMixesAll.map((item, index) => (
+                {smartMixesAll.map((item) => (
                   <div key={item.id} className="min-w-[240px] max-w-[260px] flex-1">
-                    {renderSmartCard(item, 'compact', index + 1)}
+                    {renderSmartCard(item, 'compact')}
                   </div>
                 ))}
               </div>
@@ -597,8 +596,8 @@ const HomePage = () => {
         <section className="space-y-3">
           <SectionTitle>Made for you</SectionTitle>
           <div className="anim-stagger grid gap-5 xl:grid-cols-2">
-            {madeForYouMixes.map((mix, index) => (
-              <MadeForYouHero key={mix.id} mix={mix} toneIndex={index} onPlay={() => playPlaylist(mix.songIds)} />
+            {madeForYouMixes.map((mix) => (
+              <MadeForYouHero key={mix.id} mix={mix} onPlay={() => playPlaylist(mix.songIds)} />
             ))}
           </div>
         </section>

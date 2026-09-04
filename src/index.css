@@ -187,6 +187,15 @@ input[type='range']:focus-visible {
   outline-offset: 6px;
 }
 
+/* Sidebar entries live inside a scroll container that would clip an outline; the pressed surface
+   is the active indicator, keyboard focus gets an inset ring instead. */
+.sidebar-nav:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--neu-pressed-sm-shadow),
+    inset 0 0 0 2px rgb(var(--amply-accent) / 0.45);
+}
+
 .neu-pressed-sm:focus-within,
 .neu-pressed:focus-within {
   outline: 2px solid rgb(var(--amply-accent) / 0.85);
@@ -506,7 +515,7 @@ input[type='range']:focus-visible {
 
   .amply-hairline {
     height: 1px;
-    background: linear-gradient(90deg, rgb(var(--amply-accent) / 0.7) 0 34px, rgb(var(--amply-edge) / var(--edge-a)) 34px 100%);
+    background: rgb(var(--amply-edge) / var(--edge-a));
   }
 
   /* Lyrics scroll well with soft top/bottom fade. */

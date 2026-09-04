@@ -154,14 +154,39 @@ const NowPlayingPanel = () => {
     }
 
     const retryTimers: number[] = [];
+    let retryAttempts = 0;
 
     const scheduleRetry = () => {
+      if (retryAttempts >= 10) {
+        setArtistChecked(true);
+        return;
+      }
+      retryAttempts += 1;
       const handle = window.setTimeout(() => {
         if (!alive) {
           return;
         }
         const artistKey = primaryArtist.trim().toLowerCase();
-        if (!artistKey || !tryAcquireMetadata('artist', artistKey)) {
+        if (!artistKey) {
+          return;
+        }
+        if (!tryAcquireMetadata('artist', artistKey)) {
+          // The library store's own metadata pass owns the artist lock right now; it will fill the
+          // cache, so keep re-reading instead of leaving the panel blank.
+          readCachedArtistProfile(primaryArtist)
+            .then((cached) => {
+              if (!alive) {
+                return;
+              }
+              if (cached.status === 'ready') {
+                setArtistStatus('ready');
+                setArtistChecked(true);
+                setArtistProfile(cached.profile);
+                return;
+              }
+              scheduleRetry();
+            })
+            .catch((error) => reportArtistProfileError('retry-read', error));
           return;
         }
         setArtistLoading(true);
@@ -225,7 +250,11 @@ const NowPlayingPanel = () => {
           }
 
           const artistKey = primaryArtist.trim().toLowerCase();
-          if (!artistKey || !tryAcquireMetadata('artist', artistKey)) {
+          if (!artistKey) {
+            return;
+          }
+          if (!tryAcquireMetadata('artist', artistKey)) {
+            scheduleRetry();
             return;
           }
           loadArtistProfile(primaryArtist, { waitForIdle: false })

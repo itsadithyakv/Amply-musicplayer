@@ -1647,7 +1647,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       if (tryAcquireMetadata('artist', artistKey)) {
         tasks.push((async () => {
           try {
-            const artistResult = await loadArtistProfile(primaryArtist, { waitForIdle: !allowWhenPaused });
+            // The current song's artist is user-visible in the Now Playing panel: never park this
+            // request behind the idle gate while holding the artist lock.
+            const artistResult = await loadArtistProfile(primaryArtist, { waitForIdle: false });
             if (artistResult.status === 'ready') {
               noteMetadataSuccess(attemptsCache, 'artist', artistKey);
             } else if (artistResult.status === 'missing' && isOnline) {

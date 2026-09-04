@@ -24,20 +24,14 @@ const secondaryNav: NavItem[] = [{ label: 'Settings', path: '/settings', icon: '
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   clsx(
-    'neu-interactive group relative flex items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] lg:justify-start',
-    isActive
-      ? 'neu-pressed-sm text-amply-textPrimary'
-      : 'neu-flat text-amply-textSecondary hover:text-amply-textPrimary',
+    'neu-interactive sidebar-nav group relative flex items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] lg:justify-start',
+    isActive ? 'neu-pressed-sm text-amply-textPrimary' : 'neu-flat text-amply-textSecondary hover:text-amply-textPrimary',
   );
 
 const NavEntry = ({ item }: { item: NavItem }) => (
-  <NavLink to={item.path} className={navClass} title={item.label}>
-    {({ isActive }) => (
-      <>
-        <Icon name={item.icon} size={18} className={clsx(isActive ? 'text-amply-accent' : 'text-current')} />
-        <span className="hidden lg:inline">{item.label}</span>
-      </>
-    )}
+  <NavLink to={item.path} className={navClass} title={item.label} end={false}>
+    <Icon name={item.icon} size={18} />
+    <span className="hidden lg:inline">{item.label}</span>
   </NavLink>
 );
 
@@ -60,11 +54,9 @@ const MetadataStatus = () => {
 
 const Sidebar = () => (
   <aside className="flex h-full min-h-0 w-full flex-col px-3 py-5 shadow-[inset_-1px_0_0_rgb(var(--amply-edge)/var(--edge-a))] lg:px-4">
-    <div className="anim-rise mb-8 flex flex-col items-center justify-center gap-2 text-center">
-      <span className="neu-raised inline-flex h-14 w-14 items-center justify-center rounded-full">
-        <img src={logoIcon} alt="Amply" className="h-9 w-9 object-contain" />
-      </span>
-      <p className="hidden font-display text-[23px] font-black tracking-[-0.045em] text-amply-textPrimary lg:block">Amply</p>
+    <div className="anim-rise mb-8 flex items-center justify-center gap-3 lg:justify-start lg:px-2">
+      <img src={logoIcon} alt="Amply" className="h-10 w-10 shrink-0 object-contain" />
+      <p className="hidden font-display text-[24px] font-black leading-none tracking-[-0.045em] text-amply-textPrimary lg:block">Amply</p>
     </div>
     <MetadataStatus />
 

@@ -3,7 +3,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Button, ConfirmDialog, IconButton, Modal, PageHeader, Surface } from '@/components/ui';
-import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCollage';
+import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Playlist } from '@/types/music';
@@ -54,11 +54,12 @@ const PlaylistCard = memo(({
       role="button"
       tabIndex={0}
       aria-label={`Open ${playlist.name}`}
-      className="render-contained group relative flex h-full min-w-0 cursor-pointer items-stretch gap-4 p-4 outline-none focus-visible:ring-2 focus-visible:ring-amply-accent/60"
+      className="render-contained group relative flex h-full min-w-0 cursor-pointer items-stretch overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-amply-accent/60"
     >
-      <PlaylistArtworkCollage artworkSet={artworkSet} radius="sm" style={{ width: CARD_ARTWORK_SIZE, height: CARD_ARTWORK_SIZE }} />
+      <CoverBackdrop src={artworkSet[0]} fade="right" className="w-[52%]" />
+      <div style={{ width: CARD_ARTWORK_SIZE }} className="shrink-0" aria-hidden="true" />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col p-4">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate text-[18px] font-semibold tracking-[-0.02em] text-amply-textPrimary">{playlist.name}</p>
