@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
     sync::Mutex,
     time::UNIX_EPOCH,
 };
@@ -380,6 +381,152 @@ fn is_low_confidence_scan_artist(artist: &str) -> bool {
     .any(|term| normalized.contains(term))
 }
 
+/// Read one audio file's tags and artwork. `artwork_cache` dedupes pictures per album within a worker.
+fn scan_one(path: &Path, artwork_cache: &mut HashMap<String, Option<String>>) -> Option<ScannedSong> {
+    let metadata = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(_) => return None,
+    };
+
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown File")
+        .to_string();
+
+    let filename_no_ext = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown Title");
+
+    let (mut title, mut artist, mut album, genre, track, year, replay_gain, duration, album_art) =
+        match Probe::open(path).and_then(|probe| probe.read()) {
+            Ok(tagged_file) => {
+                let (title, artist, album, genre, track, year, replay_gain) =
+                    extract_text_metadata(&tagged_file, filename_no_ext);
+                let duration = tagged_file.properties().duration().as_secs_f64();
+                let artwork_key = scan_artwork_cache_key(path, &artist, &album);
+                let album_art = if let Some(cached) = artwork_cache.get(&artwork_key) {
+                    cached.clone()
+                } else {
+                    let extracted = extract_embedded_artwork(&tagged_file);
+                    artwork_cache.insert(artwork_key, extracted.clone());
+                    extracted
+                };
+                (title, artist, album, genre, track, year, replay_gain, duration, album_art)
+            }
+            Err(_) => (
+                filename_no_ext.to_string(),
+                "Unknown Artist".to_string(),
+                "Unknown Album".to_string(),
+                "Unknown Genre".to_string(),
+                0,
+                None,
+                None,
+                0.0,
+                None,
+            ),
+        };
+
+    if artist.trim().eq_ignore_ascii_case("unknown artist")
+        || is_low_confidence_scan_artist(&artist)
+        || title.trim() == filename_no_ext
+    {
+        if let Some((parsed_artist, parsed_title)) = split_artist_title(filename_no_ext) {
+            if artist.trim().eq_ignore_ascii_case("unknown artist") || is_low_confidence_scan_artist(&artist) {
+                artist = parsed_artist;
+            }
+            if title.trim() == filename_no_ext {
+                title = parsed_title;
+            }
+            if album.trim().eq_ignore_ascii_case("unknown album") {
+                album = "Single".to_string();
+            }
+        }
+    }
+
+    let full_path = path.to_string_lossy().to_string();
+    Some(ScannedSong {
+        id: sanitize_id(&full_path),
+        path: full_path,
+        filename,
+        title,
+        artist,
+        album,
+        genre,
+        duration,
+        track,
+        year,
+        album_art,
+        added_at: to_unix_secs(&metadata),
+        play_count: 0,
+        last_played: None,
+        favorite: false,
+        replay_gain,
+    })
+}
+
+/// Walk `scan_root`, then read tags and artwork on a small pool of worker threads.
+/// Tag parsing and JPEG re-encoding dominate scan time and parallelise cleanly per file.
+fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
+    if !scan_root.exists() {
+        return Vec::new();
+    }
+
+    let paths: Vec<PathBuf> = WalkDir::new(&scan_root)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file() && is_supported_audio(entry.path()))
+        .map(|entry| entry.into_path())
+        .collect();
+
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(2)
+        .clamp(1, 8)
+        .min(paths.len().max(1));
+    let next = AtomicUsize::new(0);
+
+    let mut songs: Vec<ScannedSong> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                let next = &next;
+                let paths = &paths;
+                scope.spawn(move || {
+                    let mut artwork_cache: HashMap<String, Option<String>> = HashMap::new();
+                    let mut out = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        if index >= paths.len() {
+                            break;
+                        }
+                        if let Some(song) = scan_one(&paths[index], &mut artwork_cache) {
+                            out.push(song);
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
+    });
+
+    songs.sort_by(|a, b| {
+        a.artist
+            .to_ascii_lowercase()
+            .cmp(&b.artist.to_ascii_lowercase())
+            .then_with(|| a.album.to_ascii_lowercase().cmp(&b.album.to_ascii_lowercase()))
+            .then_with(|| a.track.cmp(&b.track))
+            .then_with(|| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()))
+    });
+
+    songs
+}
+
 #[tauri::command]
 pub async fn scan_music(
     app: tauri::AppHandle,
@@ -399,121 +546,9 @@ pub async fn scan_music(
         }
     }
 
-    let songs = tauri::async_runtime::spawn_blocking(move || {
-        if !scan_root.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut songs: Vec<ScannedSong> = Vec::new();
-        let mut artwork_cache: HashMap<String, Option<String>> = HashMap::new();
-
-        for entry in WalkDir::new(scan_root)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            let path = entry.path();
-
-            if !entry.file_type().is_file() || !is_supported_audio(path) {
-                continue;
-            }
-
-            let metadata = match fs::metadata(path) {
-                Ok(meta) => meta,
-                Err(_) => continue,
-            };
-
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Unknown File")
-                .to_string();
-
-            let filename_no_ext = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Unknown Title");
-
-            let (mut title, mut artist, mut album, genre, track, year, replay_gain, duration, album_art) =
-                match Probe::open(path).and_then(|probe| probe.read()) {
-                    Ok(tagged_file) => {
-                        let (title, artist, album, genre, track, year, replay_gain) =
-                            extract_text_metadata(&tagged_file, filename_no_ext);
-                        let duration = tagged_file.properties().duration().as_secs_f64();
-                        let artwork_key = scan_artwork_cache_key(path, &artist, &album);
-                        let album_art = if let Some(cached) = artwork_cache.get(&artwork_key) {
-                            cached.clone()
-                        } else {
-                            let extracted = extract_embedded_artwork(&tagged_file);
-                            artwork_cache.insert(artwork_key, extracted.clone());
-                            extracted
-                        };
-                        (title, artist, album, genre, track, year, replay_gain, duration, album_art)
-                    }
-                    Err(_) => (
-                        filename_no_ext.to_string(),
-                        "Unknown Artist".to_string(),
-                        "Unknown Album".to_string(),
-                        "Unknown Genre".to_string(),
-                        0,
-                        None,
-                        None,
-                        0.0,
-                        None,
-                    ),
-                };
-
-            if artist.trim().eq_ignore_ascii_case("unknown artist")
-                || is_low_confidence_scan_artist(&artist)
-                || title.trim() == filename_no_ext
-            {
-                if let Some((parsed_artist, parsed_title)) = split_artist_title(filename_no_ext) {
-                    if artist.trim().eq_ignore_ascii_case("unknown artist") || is_low_confidence_scan_artist(&artist) {
-                        artist = parsed_artist;
-                    }
-                    if title.trim() == filename_no_ext {
-                        title = parsed_title;
-                    }
-                    if album.trim().eq_ignore_ascii_case("unknown album") {
-                        album = "Single".to_string();
-                    }
-                }
-            }
-
-            let full_path = path.to_string_lossy().to_string();
-            songs.push(ScannedSong {
-                id: sanitize_id(&full_path),
-                path: full_path,
-                filename,
-                title,
-                artist,
-                album,
-                genre,
-                duration,
-                track,
-                year,
-                album_art,
-                added_at: to_unix_secs(&metadata),
-                play_count: 0,
-                last_played: None,
-                favorite: false,
-                replay_gain,
-            });
-        }
-
-        songs.sort_by(|a, b| {
-            a.artist
-                .to_ascii_lowercase()
-                .cmp(&b.artist.to_ascii_lowercase())
-                .then_with(|| a.album.to_ascii_lowercase().cmp(&b.album.to_ascii_lowercase()))
-                .then_with(|| a.track.cmp(&b.track))
-                .then_with(|| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()))
-        });
-
-        Ok::<_, String>(songs)
-    })
-    .await
-    .map_err(|err| err.to_string())??;
+    let songs = tauri::async_runtime::spawn_blocking(move || scan_folder_blocking(scan_root))
+        .await
+        .map_err(|err| err.to_string())?;
     Ok(songs)
 }
 
