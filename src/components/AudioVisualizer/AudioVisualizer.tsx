@@ -5,7 +5,7 @@ import { isTauri } from '@/services/storageService';
 
 type VisualTheme = AppSettings['lyricsVisualTheme'];
 
-interface LyricsVisualizerProps {
+interface AudioVisualizerProps {
   active: boolean;
   isPlaying: boolean;
   theme: VisualTheme;
@@ -306,7 +306,7 @@ const drawTint = (ctx: CanvasRenderingContext2D, w: number, h: number, tint: str
   ctx.restore();
 };
 
-const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisualizerProps) => {
+const AudioVisualizer = memo(({ active, isPlaying, theme, tint }: AudioVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [target] = useState(() => new Float32Array(BAND_COUNT));
   const [smoothed] = useState(() => new Float32Array(BAND_COUNT));
@@ -439,9 +439,9 @@ const LyricsVisualizer = memo(({ active, isPlaying, theme, tint }: LyricsVisuali
     };
   }, [active, isPlaying, theme, tint, target, smoothed]);
 
-  return <canvas ref={canvasRef} className="lyrics-visualizer absolute inset-0 h-full w-full" aria-hidden="true" />;
+  return <canvas ref={canvasRef} className="audio-visualizer absolute inset-0 h-full w-full" aria-hidden="true" />;
 });
 
-LyricsVisualizer.displayName = 'LyricsVisualizer';
+AudioVisualizer.displayName = 'AudioVisualizer';
 
-export default LyricsVisualizer;
+export default AudioVisualizer;

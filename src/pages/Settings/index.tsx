@@ -7,7 +7,7 @@ import { AppVersionSection } from '@/pages/Settings/AppVersionSection';
 import { AppearanceSection } from '@/pages/Settings/AppearanceSection';
 import { AppBehaviorSection } from '@/pages/Settings/AppBehaviorSection';
 import { OverlaySection } from '@/pages/Settings/OverlaySection';
-import { LyricsVisualsSection } from '@/pages/Settings/LyricsVisualsSection';
+import { VisualizerSection } from '@/pages/Settings/VisualizerSection';
 import { SleepTimerSection } from '@/pages/Settings/SleepTimerSection';
 import { SmartPlaylistsSection } from '@/pages/Settings/SmartPlaylistsSection';
 
@@ -31,7 +31,7 @@ const SettingsPage = () => (
         <AppearanceSection />
         <AppBehaviorSection />
         <OverlaySection />
-        <LyricsVisualsSection />
+        <VisualizerSection />
         <SleepTimerSection />
         <SmartPlaylistsSection />
       </div>

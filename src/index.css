@@ -522,11 +522,10 @@ a,
     display: none;
   }
 
-  .lyrics-visualizer {
+  .audio-visualizer {
     pointer-events: none;
-    opacity: 0.9;
-    mask-image: radial-gradient(ellipse 78% 72% at center, #000 28%, rgb(0 0 0 / 0.86) 58%, transparent 100%);
-    -webkit-mask-image: radial-gradient(ellipse 78% 72% at center, #000 28%, rgb(0 0 0 / 0.86) 58%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, rgb(0 0 0 / 0.75) 45%, #000 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgb(0 0 0 / 0.75) 45%, #000 100%);
   }
 
   .render-contained {

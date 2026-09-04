@@ -2,7 +2,7 @@ import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Song } from '@/types/music';
-import { Badge, Card, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
+import { Badge, Button, Card, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
 import {
   readCachedLyrics,
   loadLyrics,
@@ -17,10 +17,8 @@ import { readStorageJson, writeStorageJsonDebounced } from '@/services/storageSe
 import { useIdleRender } from '@/hooks/useIdleRender';
 import { useInteractionFeedback } from '@/services/interactionFeedback';
 import { beginPerfInteraction } from '@/services/perfDiagnostics';
-import { useFlag } from '@/services/runtimeFlags';
 import { scheduleAfterPaint } from '@/services/interactionTrace';
 import { usePlaybackProgress } from '@/store/playbackProgressStore';
-import LyricsVisualizer from './LyricsVisualizer';
 
 interface LyricsViewerProps {
   song: Song | null;
@@ -83,10 +81,6 @@ const parseTintChannels = (tint: string): [number, number, number] | null => {
 
 const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: LyricsViewerProps) => {
   const positionSec = usePlaybackProgress((progress) => progress.positionSec);
-  const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
-  const lowPerf = useFlag('lowPerf');
-  const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
-  const isPlaying = usePlayerStore((state) => state.isPlaying);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const fetchLyricsCandidatesForSong = useLibraryStore((state) => state.fetchLyricsCandidatesForSong);
   const idleReady = useIdleRender(300);
@@ -112,6 +106,10 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([]);
   const autoScrollLockRef = useRef<number | null>(null);
   const programmaticScrollRef = useRef<number | null>(null);
+  /** Where the last programmatic scroll is heading; scroll events until it lands are not user intent. */
+  const programmaticTargetRef = useRef<{ top: number; startedAt: number } | null>(null);
+  /** Timestamp of the last wheel/touch/keyboard gesture inside the lyrics surface. */
+  const lastUserGestureRef = useRef(0);
   const lyricsAbortRef = useRef<AbortController | null>(null);
   const backdropAbortRef = useRef<AbortController | null>(null);
   const shellReadyRef = useRef(false);
@@ -537,13 +535,21 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
       return;
     }
 
-    const targetTop = Math.max(0, node.offsetTop - container.clientHeight * 0.35);
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const targetTop = Math.min(maxTop, Math.max(0, node.offsetTop - container.clientHeight * 0.35));
+    if (Math.abs(container.scrollTop - targetTop) < 2) {
+      return;
+    }
     if (programmaticScrollRef.current !== null) {
       window.clearTimeout(programmaticScrollRef.current);
     }
+    programmaticTargetRef.current = { top: targetTop, startedAt: performance.now() };
+    // Smooth scrolling can take well over a second on a long jump; the target ref covers that, this
+    // timer is only a backstop in case no scroll event ever lands exactly on the target.
     programmaticScrollRef.current = window.setTimeout(() => {
       programmaticScrollRef.current = null;
-    }, 350);
+      programmaticTargetRef.current = null;
+    }, 1800);
     container.scrollTo({ top: targetTop, behavior: 'smooth' });
   }, [currentIndex, lyrics?.isSynced, autoScroll, active, surfaceReady]);
 
@@ -665,19 +671,40 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
         className={clsx('relative isolate flex flex-col overflow-hidden bg-amply-bg', fullHeight ? 'min-h-0 flex-1' : 'h-[420px]')}
         style={tintStyle}
       >
-        {lyricsVisualsEnabled && !lowPerf ? (
-          <LyricsVisualizer active={active} isPlaying={isPlaying} theme={lyricsVisualTheme} tint={artworkTint} />
-        ) : null}
         <div
           ref={lyricsContainerRef}
+          onWheel={() => {
+            lastUserGestureRef.current = performance.now();
+          }}
+          onTouchMove={() => {
+            lastUserGestureRef.current = performance.now();
+          }}
+          onKeyDown={(event) => {
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+              lastUserGestureRef.current = performance.now();
+            }
+          }}
           onScroll={() => {
             if (!lyricsContainerRef.current) {
               return;
             }
 
             const container = lyricsContainerRef.current;
-            if (programmaticScrollRef.current !== null) {
-              return;
+            const pending = programmaticTargetRef.current;
+            if (pending) {
+              const landed = Math.abs(container.scrollTop - pending.top) < 3;
+              const timedOut = performance.now() - pending.startedAt > 1800;
+              if (landed || timedOut) {
+                programmaticTargetRef.current = null;
+                if (programmaticScrollRef.current !== null) {
+                  window.clearTimeout(programmaticScrollRef.current);
+                  programmaticScrollRef.current = null;
+                }
+              }
+              // Scroll events caused by our own scrollTo never count as the user leaving.
+              if (performance.now() - lastUserGestureRef.current > 400) {
+                return;
+              }
             }
             const node = lineRefs.current[currentIndex];
             if (!node) {
@@ -689,7 +716,8 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
             const reengageThreshold = container.clientHeight * 0.25;
             const lock = autoScrollLockRef.current;
 
-            if (distance > disengageThreshold && autoScroll) {
+            const userScrolledRecently = performance.now() - lastUserGestureRef.current < 800;
+            if (distance > disengageThreshold && autoScroll && userScrolledRecently) {
               setAutoScroll(false);
             } else if (!autoScroll && distance < reengageThreshold) {
               if (lock) {
@@ -748,6 +776,25 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
             })}
           </div>
         </div>
+        {lyrics.isSynced && !autoScroll && currentIndex >= 0 ? (
+          <div className="anim-fade-in pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="arrow-down"
+              className="pointer-events-auto"
+              onClick={() => {
+                if (autoScrollLockRef.current) {
+                  window.clearTimeout(autoScrollLockRef.current);
+                  autoScrollLockRef.current = null;
+                }
+                setAutoScroll(true);
+              }}
+            >
+              Back to current line
+            </Button>
+          </div>
+        ) : null}
       </Surface>
 
       {lyrics.isSynced ? (

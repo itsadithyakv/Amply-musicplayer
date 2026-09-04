@@ -3,27 +3,27 @@ import { Select, Toggle } from '@/components/ui';
 import type { AppSettings } from '@/types/music';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
 
-export const LyricsVisualsSection = () => {
+export const VisualizerSection = () => {
   const lyricsVisualsEnabled = usePlayerStore((state) => state.settings.lyricsVisualsEnabled);
   const lyricsVisualTheme = usePlayerStore((state) => state.settings.lyricsVisualTheme);
   const setLyricsVisualsEnabled = usePlayerStore((state) => state.setLyricsVisualsEnabled);
   const setLyricsVisualTheme = usePlayerStore((state) => state.setLyricsVisualTheme);
 
   return (
-    <SettingsSection icon="lyrics" title="Lyrics Visuals" description="Ambient visuals for the lyrics view.">
+    <SettingsSection icon="eq" title="Audio Visualizer" description="Live spectrum rising out of the player bar while music plays.">
       <div className="grid gap-1">
         <Toggle
-          label="Enable Visuals"
-          description="Show animated backgrounds behind lyrics."
+          label="Show visualizer"
+          description="Draws the current track's spectrum above the player bar."
           checked={lyricsVisualsEnabled}
           onChange={(next) => {
             void setLyricsVisualsEnabled(next);
           }}
         />
 
-        <SettingField label="Theme">
+        <SettingField label="Style">
           <Select
-            label="Theme"
+            label="Style"
             value={lyricsVisualTheme}
             disabled={!lyricsVisualsEnabled}
             className={!lyricsVisualsEnabled ? 'cursor-not-allowed opacity-50' : undefined}

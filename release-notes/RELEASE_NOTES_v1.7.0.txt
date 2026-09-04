@@ -3,7 +3,8 @@ Release date: 2026-09-04
 
 Highlights
 - New neumorphic design system (light and dark), animated throughout, with a redesigned sidebar,
-  cover-backed playlist cards, a proper EQ curve editor and three new lyric visualizers.
+  neumorphic smart-playlist cards with a rotating featured mix, a proper EQ curve editor and an
+  audio visualizer (three styles) that rises out of the player bar.
 - New smart-playlist engine: hard eligibility per mix (Most Played only contains played songs,
   Explore never repeats what you heard in the last 36 hours), artist/album caps that always hold,
   no song in more than two mixes, a "don't repeat yesterday" rule for the Daily Mix, a proper genre
@@ -20,6 +21,14 @@ Performance
   seeking; idle audio thread; single SQLite connection with per-key metadata caches; batched
   artist-cache probe; render-loop fix on the Library page; playback state split so the queue is
   no longer rewritten every 5 seconds.
+
+Also new
+- Recommendations on the Search page ("Recommended for you" / "More like these"), driven by
+  listening history plus Last.fm/MusicBrainz signals fetched through the native HTTP client.
+- Mini player toggle in the sidebar; smoother mini player edges; artist details retry with
+  visible progress and broader Wikipedia matching; Home cards only change on manual regenerate;
+  lyrics auto-scroll no longer disengages on its own.
+- Dependencies: Tauri 2.11, rodio 0.22, lofty 0.25, rusqlite 0.40, reqwest 0.13.
 
 Fixes and hardening
 - Seek bar freezing at 75 % on replayed tracks, position drift at non-1x speed, loop restarting
