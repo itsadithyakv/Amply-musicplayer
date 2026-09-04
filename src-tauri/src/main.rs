@@ -29,6 +29,11 @@ fn main() {
                     }),
                     Target::new(TargetKind::Stdout),
                 ])
+                // Decoder chatter about bit-reservoir underflow and bitrate-estimated durations is
+                // routine for MP3s and drowns out the app's own warnings.
+                .level_for("symphonia_bundle_mp3", LevelFilter::Error)
+                .level_for("symphonia_core", LevelFilter::Error)
+                .level_for("lofty", LevelFilter::Error)
                 .level(if cfg!(debug_assertions) {
                     LevelFilter::Info
                 } else {
