@@ -728,4 +728,54 @@ mod tests {
         // Loop without a sink is idle.
         assert!(!audio.needs_tick());
     }
+
+    /// Real-file smoke test for the decoder/DSP chain: set AMPLY_TEST_SONGS to a folder and run
+    /// with `cargo test -- --ignored decodes_real_library_files --nocapture`.
+    #[test]
+    #[ignore]
+    fn decodes_real_library_files() {
+        let Ok(folder) = std::env::var("AMPLY_TEST_SONGS") else {
+            eprintln!("AMPLY_TEST_SONGS not set; skipping");
+            return;
+        };
+        let mut files: Vec<_> = fs::read_dir(&folder)
+            .expect("readable folder")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| crate::library::is_supported_audio(path))
+            .collect();
+        files.sort();
+        let stride = (files.len() / 24).max(1);
+        let sample: Vec<_> = files.iter().step_by(stride).take(24).collect();
+        assert!(!sample.is_empty(), "no audio files in {folder}");
+
+        let audio = NativeAudio::default();
+        let mut decoded = 0usize;
+        for path in sample {
+            let path_str = path.to_string_lossy().to_string();
+            let mut source = audio
+                .build_source(&path_str, 0.0)
+                .unwrap_or_else(|err| panic!("{path_str}: {err}"));
+            let rate = source.sample_rate().get();
+            let channels = usize::from(source.channels().get());
+            assert!(rate >= 8_000, "{path_str}: sample rate {rate}");
+            let total = source.total_duration();
+
+            // Two seconds from the start must decode and not be silent.
+            let head: Vec<f32> = source.by_ref().take(rate as usize * channels * 2).collect();
+            assert_eq!(head.len(), rate as usize * channels * 2, "{path_str}: short read at start");
+            let peak = head.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
+            assert!(peak > 0.001, "{path_str}: silent start");
+
+            // Seek to 40 % (in output time; the speed wrapper forwards it) and keep decoding.
+            if let Some(total) = total {
+                let target = total.mul_f64(0.4);
+                source.try_seek(target).unwrap_or_else(|err| panic!("{path_str}: seek failed: {err}"));
+                let after: Vec<f32> = source.by_ref().take(rate as usize * channels).collect();
+                assert!(!after.is_empty(), "{path_str}: nothing after seek");
+            }
+            decoded += 1;
+            eprintln!("ok  {} ({rate} Hz, {channels} ch, {:?})", path.file_name().unwrap().to_string_lossy(), total);
+        }
+        eprintln!("decoded {decoded} files");
+    }
 }

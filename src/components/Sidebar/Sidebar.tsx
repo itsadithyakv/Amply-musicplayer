@@ -26,7 +26,7 @@ const secondaryNav: NavItem[] = [{ label: 'Settings', path: '/settings', icon: '
 const navClass = ({ isActive }: { isActive: boolean }) =>
   clsx(
     'neu-interactive sidebar-nav group relative flex items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] lg:justify-start',
-    isActive ? 'neu-pressed-sm text-amply-textPrimary' : 'neu-flat text-amply-textSecondary hover:text-amply-textPrimary',
+    isActive ? 'neu-pressed-sm text-amply-textPrimary' : 'text-amply-textSecondary hover:neu-flat hover:text-amply-textPrimary',
   );
 
 const NavEntry = ({ item }: { item: NavItem }) => (
@@ -66,7 +66,7 @@ const OverlayQuickToggle = () => {
       onClick={() => void setEnabled(!enabled)}
       className={clsx(
         'neu-interactive sidebar-nav flex w-full items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] lg:justify-start',
-        enabled ? 'neu-pressed-sm text-amply-textPrimary' : 'neu-flat text-amply-textSecondary hover:text-amply-textPrimary',
+        enabled ? 'neu-pressed-sm text-amply-textPrimary' : 'text-amply-textSecondary hover:neu-flat hover:text-amply-textPrimary',
       )}
     >
       <Icon name="overlay" size={18} />

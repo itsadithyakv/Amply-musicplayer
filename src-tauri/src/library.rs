@@ -164,7 +164,7 @@ pub(crate) struct ScannedSong {
     replay_gain: Option<f32>,
 }
 
-fn is_supported_audio(path: &Path) -> bool {
+pub(crate) fn is_supported_audio(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) => {
             matches!(
@@ -728,5 +728,67 @@ mod tests {
 
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&outside).unwrap();
+    }
+
+    /// Real-file smoke test for the tag reader: set AMPLY_TEST_SONGS to a folder and run with
+    /// `cargo test -- --ignored reads_tags_from_real_library_files --nocapture`.
+    #[test]
+    #[ignore]
+    fn reads_tags_from_real_library_files() {
+        let Ok(folder) = std::env::var("AMPLY_TEST_SONGS") else {
+            eprintln!("AMPLY_TEST_SONGS not set; skipping");
+            return;
+        };
+        let mut files: Vec<_> = fs::read_dir(&folder)
+            .expect("readable folder")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| is_supported_audio(path))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "no audio files in {folder}");
+
+        let mut read = 0usize;
+        let mut with_year = 0usize;
+        let mut with_cover = 0usize;
+        let mut titled = 0usize;
+        for path in &files {
+            let tagged = Probe::open(path)
+                .and_then(|probe| probe.read())
+                .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+            let stem = path.file_stem().and_then(|name| name.to_str()).unwrap_or("?");
+            let (title, artist, _album, _genre, _track, year, _gain) = extract_text_metadata(&tagged, stem);
+            let duration = tagged.properties().duration().as_secs_f64();
+            assert!(duration > 0.0, "{}: zero duration", path.display());
+            if title != stem {
+                titled += 1;
+            }
+            if year.is_some() {
+                with_year += 1;
+            }
+            let cover = tagged
+                .primary_tag()
+                .into_iter()
+                .chain(tagged.tags())
+                .find_map(pick_cover_picture)
+                .is_some();
+            if cover {
+                with_cover += 1;
+            }
+            let _ = artist;
+            read += 1;
+        }
+        let mut key_counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for path in files.iter().take(200) {
+            if let Ok(tagged) = Probe::open(path).and_then(|probe| probe.read()) {
+                if let Some(tag) = tagged.primary_tag() {
+                    for item in tag.items() {
+                        *key_counts.entry(format!("{:?}", item.key())).or_default() += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("tag keys in first 200 files: {key_counts:?}");
+        eprintln!("read {read} files: {titled} tagged titles, {with_year} with year, {with_cover} with cover art");
+        assert_eq!(read, files.len());
     }
 }
