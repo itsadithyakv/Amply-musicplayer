@@ -4,12 +4,13 @@ import { Chip } from '@/components/ui/Badge';
 import { SearchInput } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useLibraryStore } from '@/store/libraryStore';
-import { useSearchRouteView } from '@/hooks/useLibraryViews';
+import { useSearchRouteView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 
 const SearchPage = () => {
   const query = useLibraryStore((state) => state.searchQuery);
   const setSearchQuery = useLibraryStore((state) => state.setSearchQuery);
   const searchView = useSearchRouteView();
+  const librarySongs = useStructuralSongsSnapshot();
   const filteredSongs = searchView.songs;
   const suggestions = query.trim() ? searchView.suggestions : [];
 
@@ -33,10 +34,12 @@ const SearchPage = () => {
 
       {filteredSongs.length ? (
         <SongList songs={filteredSongs} persistKey="search" hideSort />
-      ) : (
+      ) : searchView.query.trim().length >= 2 ? (
         <Card padding="lg" className="text-[13px] text-amply-textSecondary">
-          {searchView.query.trim().length >= 2 ? 'No results found. Try a different search term.' : 'Start typing to search your library.'}
+          No results found. Try a different search term.
         </Card>
+      ) : (
+        <SongList songs={librarySongs} persistKey="search-browse" initialSort="recently_added" />
       )}
     </div>
   );

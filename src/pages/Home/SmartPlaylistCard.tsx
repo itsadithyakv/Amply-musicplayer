@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import type { KeyboardEvent, MouseEvent } from 'react';
-import { IconButton, Kicker, Meta, Surface } from '@/components/ui';
+import { IconButton, Surface } from '@/components/ui';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { ArtworkWell } from '@/pages/Home/ArtworkWell';
 
@@ -30,8 +30,8 @@ interface SmartPlaylistCardProps {
 }
 
 /**
- * Smart-playlist card whose background is one of the playlist's album covers. The card surface
- * fades in over the side that carries the text, so copy stays legible in both themes.
+ * Smart-playlist card whose background is one of the playlist's album covers under a dark scrim,
+ * with light text on top (the same in both themes).
  */
 export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: SmartPlaylistCardProps) => {
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -64,7 +64,7 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
         onClick={onSelect}
         onKeyDown={handleKeyDown}
         title="Click to play. Double-click to open playlist."
-        className="group flex h-full min-w-0 items-center gap-3 p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amply-accent/40"
+        className="group flex h-full min-w-0 items-center gap-3 p-3 text-left"
       >
         <div className="relative w-16 shrink-0">
           <ArtworkWell artworks={[cover]} alt={item.title} />
@@ -98,17 +98,17 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
       onKeyDown={handleKeyDown}
       title="Click to play. Double-click to open playlist."
       className={clsx(
-        'group relative flex h-full min-w-0 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amply-accent/40',
+        'group relative flex h-full min-w-0 overflow-hidden text-left',
         featured ? 'min-h-[300px] items-center' : 'min-h-[260px] items-end',
       )}
     >
       <CoverBackdrop src={cover} fade={featured ? 'right' : 'bottom'} />
 
       <div className={clsx('relative z-10 flex min-w-0 flex-col gap-1.5', featured ? 'ml-auto w-[58%] p-6' : 'w-full p-4 pt-16')}>
-        <Kicker>{featured ? 'Featured mix' : 'Smart playlist'}</Kicker>
-        <p className={clsx('truncate font-bold tracking-[-0.02em] text-amply-textPrimary', featured ? 'text-[28px]' : 'text-[20px]')}>{item.title}</p>
-        <p className="line-clamp-2 text-[13px] text-amply-textSecondary">{item.subtitle}</p>
-        {showCount ? <Meta>{count}</Meta> : null}
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-amply-onCoverMuted">{featured ? 'Featured mix' : 'Smart playlist'}</p>
+        <p className={clsx('truncate font-bold tracking-[-0.02em] text-amply-onCover', featured ? 'text-[28px]' : 'text-[20px]')}>{item.title}</p>
+        <p className="line-clamp-2 text-[13px] text-amply-onCoverMuted">{item.subtitle}</p>
+        {showCount ? <p className="text-[12px] text-amply-onCoverMuted">{count}</p> : null}
       </div>
 
       <IconButton

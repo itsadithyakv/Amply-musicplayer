@@ -31,7 +31,7 @@ export const TopArtistsRow = ({ artists, images, onPick }: TopArtistsRowProps) =
               type="button"
               onClick={() => onPick(entry)}
               title={`Play ${entry.artistName}`}
-              className="group flex w-[132px] shrink-0 flex-col items-center gap-2 rounded-md p-2 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-amply-accent/40"
+              className="group flex w-[132px] shrink-0 flex-col items-center gap-2 rounded-md p-2 text-center"
             >
               <span className="neu-raised-sm neu-interactive block h-24 w-24 rounded-full p-1 transition-transform duration-150 ease-smooth group-hover:-translate-y-px">
                 <span className="neu-well block h-full w-full overflow-hidden rounded-full">

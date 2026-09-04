@@ -21,6 +21,7 @@ import { pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { useLibraryTabView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 import { LibraryCardGrid } from './LibraryCardGrid';
+import { ArtistCard } from './ArtistCard';
 import { AlbumDetailModal, type ActiveAlbum } from './AlbumDetailModal';
 import {
   albumSortOptions,
@@ -446,10 +447,10 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             items={filteredArtists}
             getKey={(entry) => entry.label.toLowerCase()}
             renderItem={(artistGroup) => (
-              <AlbumCard
-                title={artistGroup.label}
-                subtitle={`${artistGroup.songs.length} songs`}
-                artwork={artistGroup.artwork}
+              <ArtistCard
+                name={artistGroup.label}
+                songCount={artistGroup.songs.length}
+                fallbackArtwork={artistGroup.artwork}
                 onClick={() => playGroup(artistGroup)}
               />
             )}

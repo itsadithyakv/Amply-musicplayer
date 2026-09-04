@@ -6,32 +6,30 @@ export type CoverFade = 'bottom' | 'right' | 'left' | 'none';
 interface CoverBackdropProps {
   src?: string;
   alt?: string;
-  /** Which edge the card surface fades in from, so text placed there stays readable. */
+  /** Which edge the dark scrim builds up towards, so text placed there stays readable. */
   fade?: CoverFade;
-  /** 0–1 strength of the surface scrim over the whole image (default 0.12). */
+  /** 0–1 strength of the dark tint over the whole image (default 0.28). */
   tint?: number;
   className?: string;
 }
 
+const SCRIM = '18 16 14';
+
 const fadeStyle: Record<CoverFade, string> = {
-  bottom: 'linear-gradient(to top, rgb(var(--amply-bg)) 0%, rgb(var(--amply-bg) / 0.92) 30%, rgb(var(--amply-bg) / 0.35) 60%, transparent 100%)',
-  right: 'linear-gradient(to right, transparent 0%, rgb(var(--amply-bg) / 0.4) 38%, rgb(var(--amply-bg) / 0.94) 58%, rgb(var(--amply-bg)) 72%)',
-  left: 'linear-gradient(to left, transparent 0%, rgb(var(--amply-bg) / 0.4) 38%, rgb(var(--amply-bg) / 0.94) 58%, rgb(var(--amply-bg)) 72%)',
+  bottom: `linear-gradient(to top, rgb(${SCRIM} / 0.92) 0%, rgb(${SCRIM} / 0.72) 32%, rgb(${SCRIM} / 0.25) 62%, transparent 100%)`,
+  right: `linear-gradient(to right, transparent 0%, rgb(${SCRIM} / 0.3) 36%, rgb(${SCRIM} / 0.78) 56%, rgb(${SCRIM} / 0.9) 72%)`,
+  left: `linear-gradient(to left, transparent 0%, rgb(${SCRIM} / 0.3) 36%, rgb(${SCRIM} / 0.78) 56%, rgb(${SCRIM} / 0.9) 72%)`,
   none: 'none',
 };
 
 /**
- * Full-bleed album cover behind a card, with the card's own surface colour fading in over the
- * side that carries text. Works in both themes because the scrim uses the surface token.
+ * Full-bleed album cover behind a card with a dark scrim building up over the side that carries
+ * text. Text on top of it should use the `amply-onCover` colours (light in both themes).
  */
-export const CoverBackdrop = ({ src, alt = '', fade = 'bottom', tint = 0.12, className }: CoverBackdropProps) => (
-  <div aria-hidden="true" className={clsx('pointer-events-none absolute inset-0 overflow-hidden', className)}>
-    {src ? (
-      <ArtworkImage src={src} alt={alt} className="h-full w-full scale-[1.02] object-cover" pulse={false} />
-    ) : (
-      <div className="h-full w-full bg-amply-bgDeep" />
-    )}
-    <div className="absolute inset-0" style={{ background: `rgb(var(--amply-bg) / ${tint})` }} />
+export const CoverBackdrop = ({ src, alt = '', fade = 'bottom', tint = 0.28, className }: CoverBackdropProps) => (
+  <div aria-hidden="true" className={clsx('pointer-events-none absolute inset-0 overflow-hidden bg-amply-bgDeep', className)}>
+    {src ? <ArtworkImage src={src} alt={alt} className="h-full w-full scale-[1.03] object-cover" pulse={false} /> : null}
+    <div className="absolute inset-0" style={{ background: `rgb(${SCRIM} / ${tint})` }} />
     {fade !== 'none' ? <div className="absolute inset-0" style={{ background: fadeStyle[fade] }} /> : null}
   </div>
 );

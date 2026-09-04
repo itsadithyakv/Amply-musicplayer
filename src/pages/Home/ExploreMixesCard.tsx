@@ -1,4 +1,4 @@
-import { Button, Kicker, Meta, Surface } from '@/components/ui';
+import { Button, Surface } from '@/components/ui';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import type { Song } from '@/types/music';
 
@@ -14,9 +14,9 @@ export const ExploreMixesCard = ({ artworkSongs, expanded, onToggle }: ExploreMi
     <CoverBackdrop src={artworkSongs.find((song) => song.albumArt)?.albumArt} fade="right" />
     <div className="relative z-10 ml-auto flex w-[62%] min-w-0 flex-col gap-4 p-6">
       <div className="space-y-1">
-        <Kicker>More mixes</Kicker>
-        <p className="text-[20px] font-bold tracking-[-0.02em] text-amply-textPrimary">Explore Mixes</p>
-        <Meta>{expanded ? 'Hide the full mix list' : 'Show genre and mood mixes'}</Meta>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-amply-onCoverMuted">More mixes</p>
+        <p className="text-[20px] font-bold tracking-[-0.02em] text-amply-onCover">Explore Mixes</p>
+        <p className="text-[12px] text-amply-onCoverMuted">{expanded ? 'Hide the full mix list' : 'Show genre and mood mixes'}</p>
       </div>
       <div>
         <Button

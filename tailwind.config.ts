@@ -23,6 +23,8 @@ export default {
           success: rgb('success'),
           info: rgb('info'),
           backdrop: rgb('backdrop'),
+          onCover: rgb('on-cover'),
+          onCoverMuted: 'rgb(var(--amply-on-cover-muted) / 0.78)',
         },
       },
       // Replaces Tailwind's default radius scale with the four-step neumorphic scale.

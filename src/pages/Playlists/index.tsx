@@ -54,16 +54,16 @@ const PlaylistCard = memo(({
       role="button"
       tabIndex={0}
       aria-label={`Open ${playlist.name}`}
-      className="render-contained group relative flex h-full min-w-0 cursor-pointer items-stretch overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-amply-accent/60"
+      className="render-contained group relative flex h-full min-w-0 cursor-pointer items-stretch overflow-hidden outline-none"
     >
-      <CoverBackdrop src={artworkSet[0]} fade="right" className="w-[52%]" />
+      <CoverBackdrop src={artworkSet[0]} fade="right" />
       <div style={{ width: CARD_ARTWORK_SIZE }} className="shrink-0" aria-hidden="true" />
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col p-4">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate text-[18px] font-semibold tracking-[-0.02em] text-amply-textPrimary">{playlist.name}</p>
-            <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-amply-textSecondary">{playlist.description || 'A playlist made by you.'}</p>
+            <p className="truncate text-[18px] font-semibold tracking-[-0.02em] text-amply-onCover">{playlist.name}</p>
+            <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-amply-onCoverMuted">{playlist.description || 'A playlist made by you.'}</p>
           </div>
           {!isSmart ? (
             <div className="flex shrink-0 items-center gap-1">
