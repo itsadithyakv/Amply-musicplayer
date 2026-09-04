@@ -8,7 +8,7 @@ use std::{
 
 use rodio::cpal;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use serde::Serialize;
 
 use super::dsp::{
@@ -43,10 +43,10 @@ impl AudioState {
 }
 
 pub(crate) struct NativeAudio {
-    stream: Option<OutputStream>,
-    handle: Option<OutputStreamHandle>,
-    pub(crate) sink: Option<Sink>,
-    fading_sink: Option<Sink>,
+    /// Open output device plus its mixer; players connect to the mixer.
+    stream: Option<MixerDeviceSink>,
+    pub(crate) sink: Option<Player>,
+    fading_sink: Option<Player>,
     /// Preloaded file bytes, shared with every decoder built from them (no copy per sink).
     pub(crate) preloaded: HashMap<String, Arc<[u8]>>,
     current_path: Option<String>,
@@ -74,7 +74,6 @@ impl Default for NativeAudio {
     fn default() -> Self {
         Self {
             stream: None,
-            handle: None,
             sink: None,
             fading_sink: None,
             preloaded: HashMap::new(),
@@ -154,6 +153,11 @@ pub(crate) fn position_from(paused_position: f64, elapsed: Duration, rate: f32) 
     paused_position + elapsed.as_secs_f64() * f64::from(rate)
 }
 
+/// Human-readable device name (cpal deprecated `name()` in favour of the structured description).
+pub(crate) fn device_name(device: &cpal::Device) -> Option<String> {
+    device.description().ok().map(|description| description.name().to_string())
+}
+
 impl NativeAudio {
     pub(crate) fn new() -> Self {
         let mut audio = Self::default();
@@ -164,13 +168,13 @@ impl NativeAudio {
 
     /// Lazily (re)creates the default output stream when none is available.
     fn ensure_output(&mut self) -> Result<(), String> {
-        if self.handle.is_some() {
+        if self.stream.is_some() {
             return Ok(());
         }
-        match OutputStream::try_default() {
-            Ok((stream, handle)) => {
+        match DeviceSinkBuilder::open_default_sink() {
+            Ok(mut stream) => {
+                stream.log_on_drop(false);
                 self.stream = Some(stream);
-                self.handle = Some(handle);
                 Ok(())
             }
             Err(error) => {
@@ -180,8 +184,8 @@ impl NativeAudio {
         }
     }
 
-    fn ensure_handle(&self) -> Result<&OutputStreamHandle, String> {
-        self.handle.as_ref().ok_or_else(|| "Audio output unavailable".to_string())
+    fn ensure_stream(&self) -> Result<&MixerDeviceSink, String> {
+        self.stream.as_ref().ok_or_else(|| "Audio output unavailable".to_string())
     }
 
     fn rate(&self) -> f32 {
@@ -196,12 +200,15 @@ impl NativeAudio {
             || (self.loop_current && self.sink.is_some())
     }
 
-    fn open_reader(&self, path: &str) -> Result<Box<dyn ReadSeek>, String> {
+    /// Reader plus its byte length (the decoder uses the length for accurate seeking).
+    fn open_reader(&self, path: &str) -> Result<(Box<dyn ReadSeek>, Option<u64>), String> {
         if let Some(data) = self.preloaded.get(path) {
-            Ok(Box::new(Cursor::new(Arc::clone(data))))
+            let len = data.len() as u64;
+            Ok((Box::new(Cursor::new(Arc::clone(data))), Some(len)))
         } else {
             let file = fs::File::open(path).map_err(|err| err.to_string())?;
-            Ok(Box::new(std::io::BufReader::new(file)))
+            let len = file.metadata().ok().map(|meta| meta.len());
+            Ok((Box::new(std::io::BufReader::new(file)), len))
         }
     }
 
@@ -210,9 +217,12 @@ impl NativeAudio {
     /// `start_at_sec > 0` uses `skip_duration` (decode-and-discard); callers prefer
     /// building from 0 and seeking the sink, using this only as a fallback.
     fn build_source(&self, path: &str, start_at_sec: f64) -> Result<BoxedSource, String> {
-        let reader = self.open_reader(path)?;
-        let decoder = Decoder::new(reader).map_err(|err: rodio::decoder::DecoderError| err.to_string())?;
-        let decoded = decoder.convert_samples::<f32>();
+        let (reader, byte_len) = self.open_reader(path)?;
+        let mut builder = Decoder::builder().with_data(reader).with_seekable(true);
+        if let Some(len) = byte_len {
+            builder = builder.with_byte_len(len);
+        }
+        let decoded = builder.build().map_err(|err| err.to_string())?;
 
         let source: BoxedSource = if start_at_sec > 0.0 {
             Box::new(decoded.skip_duration(Duration::from_secs_f64(start_at_sec)))
@@ -243,7 +253,7 @@ impl NativeAudio {
     ///
     /// `Sink::try_seek` takes output time and rodio's `Speed` (and our `SharedSpeed`)
     /// multiplies it by the factor on the way down, so divide by the rate here.
-    fn seek_sink(&self, sink: &Sink, position_sec: f64) -> Result<(), String> {
+    fn seek_sink(&self, sink: &Player, position_sec: f64) -> Result<(), String> {
         let output_secs = position_sec.max(0.0) / f64::from(self.rate());
         sink.try_seek(Duration::from_secs_f64(output_secs))
             .map_err(|err| err.to_string())
@@ -257,12 +267,12 @@ impl NativeAudio {
         start_at_sec: f64,
         volume: f32,
         paused: bool,
-    ) -> Result<Sink, String> {
-        let handle = self.ensure_handle()?;
+    ) -> Result<Player, String> {
+        let stream = self.ensure_stream()?;
         let start_at_sec = start_at_sec.max(0.0);
 
-        let new_sink = || -> Result<Sink, String> {
-            let sink = Sink::try_new(handle).map_err(|err| err.to_string())?;
+        let new_sink = || -> Result<Player, String> {
+            let sink = Player::connect_new(stream.mixer());
             sink.set_volume(volume);
             if paused {
                 sink.pause();
@@ -317,7 +327,7 @@ impl NativeAudio {
 
     fn reset_loop_tracking(&mut self) {
         self.loop_copy_queued = false;
-        self.last_sink_len = self.sink.as_ref().map(Sink::len).unwrap_or(0);
+        self.last_sink_len = self.sink.as_ref().map(Player::len).unwrap_or(0);
     }
 
     fn rebuild_sink(&mut self, position: f64, was_playing: bool) -> Result<(), String> {
@@ -391,7 +401,7 @@ impl NativeAudio {
         if !self.loop_current {
             return;
         }
-        let Some(len) = self.sink.as_ref().map(Sink::len) else {
+        let Some(len) = self.sink.as_ref().map(Player::len) else {
             return;
         };
 
@@ -417,7 +427,7 @@ impl NativeAudio {
             }
         }
 
-        self.last_sink_len = self.sink.as_ref().map(Sink::len).unwrap_or(0);
+        self.last_sink_len = self.sink.as_ref().map(Player::len).unwrap_or(0);
     }
 
     fn stop_all(&mut self) {
@@ -623,7 +633,7 @@ impl NativeAudio {
             host.output_devices()
                 .ok()
                 .and_then(|mut devices| {
-                    devices.find(|device| device.name().map(|value| value == *target).unwrap_or(false))
+                    devices.find(|device| device_name(device).as_deref() == Some(target.as_str()))
                 })
                 .or_else(|| host.default_output_device())
         } else {
@@ -632,10 +642,14 @@ impl NativeAudio {
 
         let opened = device
             .ok_or_else(|| "No output device available".to_string())
-            .and_then(|device| OutputStream::try_from_device(&device).map_err(|err| err.to_string()));
+            .and_then(|device| {
+                DeviceSinkBuilder::from_device(device)
+                    .and_then(|builder| builder.open_stream())
+                    .map_err(|err| err.to_string())
+            });
 
-        let (stream, handle) = match opened {
-            Ok(pair) => pair,
+        let mut stream = match opened {
+            Ok(stream) => stream,
             Err(err) => {
                 log::error!("Failed to open output device {name:?}: {err}");
                 // Still give a silent engine a chance to come back on the default device.
@@ -647,8 +661,8 @@ impl NativeAudio {
         let position = self.current_position();
         let was_playing = self.is_playing;
 
+        stream.log_on_drop(false);
         self.stream = Some(stream);
-        self.handle = Some(handle);
 
         if self.sink.is_some() {
             self.rebuild_sink(position, was_playing)?;

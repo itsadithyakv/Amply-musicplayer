@@ -1,9 +1,9 @@
 use std::{sync::mpsc, time::Duration};
 
 use rodio::cpal;
-use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::cpal::traits::HostTrait;
 
-use super::engine::{AudioCommand, AudioState, OutputDeviceInfo};
+use super::engine::{device_name, AudioCommand, AudioState, OutputDeviceInfo};
 use crate::error::{AmplyError, AmplyResult};
 
 /// Commands that may decode or open a device (load, seek, device switch).
@@ -176,14 +176,14 @@ fn list_output_devices_blocking() -> AmplyResult<Vec<OutputDeviceInfo>> {
     let host = cpal::default_host();
     let default_name = host
         .default_output_device()
-        .and_then(|device| device.name().ok());
+        .and_then(|device| device_name(&device));
 
     let devices = host
         .output_devices()
         .map_err(|err| AmplyError::Audio(err.to_string()))?;
     let mut items: Vec<OutputDeviceInfo> = devices
         .filter_map(|device| {
-            let name = device.name().ok()?;
+            let name = device_name(&device)?;
             let is_default = default_name.as_ref().map(|value| value == &name).unwrap_or(false);
             Some(OutputDeviceInfo { name, is_default })
         })

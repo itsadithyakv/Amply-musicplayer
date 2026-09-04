@@ -1,4 +1,5 @@
 use std::f32::consts::PI;
+use std::num::NonZero;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
@@ -6,7 +7,7 @@ use std::sync::{
 use std::time::Duration;
 
 use rodio::source::SeekError;
-use rodio::Source;
+use rodio::{ChannelCount, SampleRate, Source};
 
 pub(crate) const EQ_BAND_FREQUENCIES: [f32; 5] = [60.0, 250.0, 1000.0, 4000.0, 12000.0];
 pub(crate) const EQ_BAND_COUNT: usize = EQ_BAND_FREQUENCIES.len();
@@ -133,8 +134,8 @@ where
     S: Source<Item = f32>,
 {
     pub(crate) fn new(inner: S, params: Arc<SharedParams>, band: usize) -> Self {
-        let channels = inner.channels().max(1) as usize;
-        let sample_rate = inner.sample_rate().max(1);
+        let channels = usize::from(inner.channels().get());
+        let sample_rate = inner.sample_rate().get();
         // Read the generation before the gain so a concurrent update is either
         // fully visible now or re-applied on the next `next()`.
         let seen_generation = params.generation();
@@ -222,15 +223,15 @@ impl<S> Source for BiquadSource<S>
 where
     S: Source<Item = f32>,
 {
-    fn current_frame_len(&self) -> Option<usize> {
-        self.inner.current_frame_len()
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> ChannelCount {
         self.inner.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> SampleRate {
         self.inner.sample_rate()
     }
 
@@ -295,18 +296,19 @@ where
     S: Source<Item = f32>,
 {
     #[inline]
-    fn current_frame_len(&self) -> Option<usize> {
-        self.input.current_frame_len()
+    fn current_span_len(&self) -> Option<usize> {
+        self.input.current_span_len()
     }
 
     #[inline]
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> ChannelCount {
         self.input.channels()
     }
 
     #[inline]
-    fn sample_rate(&self) -> u32 {
-        (self.input.sample_rate() as f32 * self.factor()) as u32
+    fn sample_rate(&self) -> SampleRate {
+        let scaled = (self.input.sample_rate().get() as f32 * self.factor()).round() as u32;
+        NonZero::new(scaled).unwrap_or(self.input.sample_rate())
     }
 
     #[inline]
@@ -390,8 +392,8 @@ where
     S: Source<Item = f32>,
 {
     pub(crate) fn new(inner: S, levels: Arc<SpectrumLevels>) -> Self {
-        let channels = inner.channels().max(1) as usize;
-        let sample_rate = inner.sample_rate().max(1) as f32;
+        let channels = usize::from(inner.channels().get());
+        let sample_rate = inner.sample_rate().get() as f32;
         let alpha = AUDIO_SPECTRUM_CUTOFFS.map(|cutoff| {
             1.0 - (-2.0 * PI * cutoff.min(sample_rate * 0.45) / sample_rate).exp()
         });
@@ -484,15 +486,15 @@ impl<S> Source for SpectrumSource<S>
 where
     S: Source<Item = f32>,
 {
-    fn current_frame_len(&self) -> Option<usize> {
-        self.inner.current_frame_len()
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> ChannelCount {
         self.inner.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> SampleRate {
         self.inner.sample_rate()
     }
 
@@ -539,6 +541,9 @@ mod tests {
     use rodio::buffer::SamplesBuffer;
 
     const SAMPLE_RATE: u32 = 48_000;
+    const SR: SampleRate = NonZero::new(SAMPLE_RATE).unwrap();
+    const MONO: ChannelCount = NonZero::new(1).unwrap();
+    const STEREO: ChannelCount = NonZero::new(2).unwrap();
 
     fn sine(freq: f32, frames: usize) -> Vec<f32> {
         (0..frames)
@@ -558,7 +563,7 @@ mod tests {
         params: &Arc<SharedParams>,
     ) -> Box<dyn Source<Item = f32> + Send> {
         let mut current: Box<dyn Source<Item = f32> + Send> =
-            Box::new(SamplesBuffer::new(1, SAMPLE_RATE, data));
+            Box::new(SamplesBuffer::new(MONO, SR, data));
         for band in 0..EQ_BAND_COUNT {
             current = Box::new(BiquadSource::new(current, Arc::clone(params), band));
         }
@@ -582,7 +587,7 @@ mod tests {
         assert!(max_abs_diff(&input, &output) < 1e-6);
 
         let stage = BiquadSource::new(
-            SamplesBuffer::new(1, SAMPLE_RATE, vec![0.0f32; 4]),
+            SamplesBuffer::new(MONO, SR, vec![0.0f32; 4]),
             Arc::clone(&params),
             2,
         );
@@ -624,14 +629,14 @@ mod tests {
     #[test]
     fn shared_speed_reports_scaled_sample_rate_and_follows_rate_changes() {
         let params = params([0.0; EQ_BAND_COUNT], 1.0);
-        let inner = SamplesBuffer::new(2, SAMPLE_RATE, vec![0.0f32; 96_000]); // 1 s stereo
+        let inner = SamplesBuffer::new(STEREO, SR, vec![0.0f32; 96_000]); // 1 s stereo
         let mut speed = SharedSpeed::new(inner, Arc::clone(&params));
 
-        assert_eq!(speed.sample_rate(), SAMPLE_RATE);
+        assert_eq!(speed.sample_rate(), SR);
         assert_eq!(speed.total_duration(), Some(Duration::from_secs(1)));
 
         params.set_rate(1.5);
-        assert_eq!(speed.sample_rate(), 72_000);
+        assert_eq!(speed.sample_rate().get(), 72_000);
         let total = speed.total_duration().unwrap();
         assert!((total.as_secs_f64() - 1.0 / 1.5).abs() < 1e-6);
 
@@ -650,14 +655,14 @@ mod tests {
         let params = params(gains, 1.0);
 
         let mut fresh = BiquadSource::new(
-            SamplesBuffer::new(1, SAMPLE_RATE, ramp.clone()),
+            SamplesBuffer::new(MONO, SR, ramp.clone()),
             Arc::clone(&params),
             2,
         );
         let expected: Vec<f32> = fresh.by_ref().take(16).collect();
 
         let mut seeked = BiquadSource::new(
-            SamplesBuffer::new(1, SAMPLE_RATE, ramp),
+            SamplesBuffer::new(MONO, SR, ramp),
             Arc::clone(&params),
             2,
         );
@@ -677,7 +682,7 @@ mod tests {
     fn spectrum_try_seek_forwards_and_resets() {
         let levels = Arc::new(SpectrumLevels::default());
         levels.set_enabled(true);
-        let inner = SamplesBuffer::new(1, SAMPLE_RATE, sine(440.0, 4_800));
+        let inner = SamplesBuffer::new(MONO, SR, sine(440.0, 4_800));
         let mut spectrum = SpectrumSource::new(inner, levels);
         let _warm_up: Vec<f32> = spectrum.by_ref().take(2_400).collect();
         assert!(spectrum.envelope.iter().any(|v| *v > 0.0));
