@@ -129,13 +129,46 @@ pub(crate) fn migrate_data_url(value: &str) -> String {
     stored.unwrap_or_else(|| value.to_string())
 }
 
-/// Serve `/<hex>.jpg` from the artwork folder. Anything else is a 404.
+/// Thumbnail edge sizes the protocol will generate on demand (`<key>.<size>.jpg`).
+const THUMB_SIZES: [u32; 2] = [64, 128];
+
+fn is_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 32 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Resolve `<key>.jpg` or `<key>.<size>.jpg` to bytes, generating the thumbnail variant from the
+/// full-size file the first time it is requested.
+fn read_variant(path: &str) -> Option<Vec<u8>> {
+    let dir = dir()?;
+    let stem = path.strip_suffix(".jpg")?;
+    if is_key(stem) {
+        return fs::read(dir.join(format!("{stem}.jpg"))).ok();
+    }
+    let (key, size) = stem.rsplit_once('.')?;
+    let size: u32 = size.parse().ok()?;
+    if !is_key(key) || !THUMB_SIZES.contains(&size) {
+        return None;
+    }
+    let variant = dir.join(format!("{key}.{size}.jpg"));
+    if let Ok(bytes) = fs::read(&variant) {
+        return Some(bytes);
+    }
+    let full = fs::read(dir.join(format!("{key}.jpg"))).ok()?;
+    let image = image::load_from_memory(&full).ok()?;
+    let thumb = image.thumbnail(size, size);
+    let mut buffer = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, 72);
+    encoder.encode_image(&thumb).ok()?;
+    if let Err(error) = write_atomic(&variant, &buffer) {
+        log::warn!("Failed to store artwork thumbnail {key}.{size}: {error}");
+    }
+    Some(buffer)
+}
+
+/// Serve `/<hex>.jpg` (full size) or `/<hex>.<64|128>.jpg` (thumbnail) from the artwork folder.
 pub(crate) fn handle_request(request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let path = request.uri().path().trim_start_matches('/');
-    let key = path.strip_suffix(".jpg").unwrap_or("");
-    let valid = !key.is_empty() && key.len() <= 32 && key.bytes().all(|b| b.is_ascii_hexdigit());
-    let file = dir().filter(|_| valid).map(|dir| dir.join(format!("{key}.jpg")));
-    match file.and_then(|file| fs::read(file).ok()) {
+    match read_variant(path) {
         Some(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "image/jpeg")
@@ -193,6 +226,13 @@ mod tests {
 
         let bad = Request::builder().uri(format!("{SCHEME}://localhost/../etc.jpg")).body(Vec::new()).unwrap();
         assert_eq!(handle_request(&bad).status(), StatusCode::NOT_FOUND);
+
+        let thumb = Request::builder().uri(format!("{SCHEME}://localhost/{key}.64.jpg")).body(Vec::new()).unwrap();
+        let thumb_response = handle_request(&thumb);
+        assert_eq!(thumb_response.status(), StatusCode::OK);
+        assert!(root.join("artwork").join(format!("{key}.64.jpg")).exists());
+        let odd = Request::builder().uri(format!("{SCHEME}://localhost/{key}.99.jpg")).body(Vec::new()).unwrap();
+        assert_eq!(handle_request(&odd).status(), StatusCode::NOT_FOUND);
 
         let data_url = format!("data:image/png;base64,{}", BASE64_STANDARD.encode(&png));
         assert_eq!(migrate_data_url(&data_url), url);

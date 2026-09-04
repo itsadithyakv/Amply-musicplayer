@@ -106,6 +106,7 @@ fn main() {
             library::load_embedded_artwork,
             playlist::generate_smart_playlists_rust,
             metadata::has_cached_artist_profile_rust,
+            metadata::has_cached_artist_profiles_rust,
             metadata::read_cached_artist_profile_rust,
             metadata::load_artist_profile_rust,
             metadata::load_track_artwork_rust,

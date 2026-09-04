@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 pub use self::artist::{
-    __cmd__has_cached_artist_profile_rust, __cmd__load_artist_profile_rust,
+    __cmd__has_cached_artist_profile_rust, has_cached_artist_profiles_rust, __cmd__has_cached_artist_profiles_rust, __cmd__load_artist_profile_rust,
     __cmd__read_cached_artist_profile_rust, has_cached_artist_profile_rust, load_artist_profile_rust,
     read_cached_artist_profile_rust,
 };

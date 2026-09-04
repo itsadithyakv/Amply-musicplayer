@@ -313,6 +313,20 @@ pub async fn has_cached_artist_profile_rust(app: tauri::AppHandle, artist_name: 
     Ok(false)
 }
 
+/// Batch form of `has_cached_artist_profile_rust`: one IPC round trip for a whole library's
+/// worth of artists instead of one per artist.
+#[tauri::command]
+pub async fn has_cached_artist_profiles_rust(
+    app: tauri::AppHandle,
+    artist_names: Vec<String>,
+) -> AmplyResult<Vec<bool>> {
+    let mut cached = Vec::with_capacity(artist_names.len());
+    for name in artist_names {
+        cached.push(has_cached_artist_profile_rust(app.clone(), name).await?);
+    }
+    Ok(cached)
+}
+
 #[tauri::command]
 pub async fn read_cached_artist_profile_rust(
     app: tauri::AppHandle,
