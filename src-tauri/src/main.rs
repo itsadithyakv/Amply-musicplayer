@@ -13,7 +13,6 @@ mod error;
 mod library;
 mod metadata;
 mod platform;
-mod playlist;
 mod storage;
 
 use audio::engine::{AudioCommand, AudioState};
@@ -104,7 +103,6 @@ fn main() {
             audio::commands::audio_set_output_device,
             audio::commands::audio_list_output_devices,
             library::load_embedded_artwork,
-            playlist::generate_smart_playlists_rust,
             metadata::has_cached_artist_profile_rust,
             metadata::has_cached_artist_profiles_rust,
             metadata::read_cached_artist_profile_rust,

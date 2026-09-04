@@ -14,7 +14,7 @@ import type { Playlist, Song } from '@/types/music';
 import { getPrimaryArtistName } from '@/utils/artists';
 import { buildArtworkSet, pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
-import { isMoreMixPlaylistId } from '@/services/playlistGenerator';
+import { isMoreMixPlaylistId } from '@/services/mixEngine';
 import { useHomeView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
 import { ExploreMixesCard } from '@/pages/Home/ExploreMixesCard';
 import { MadeForYouHero } from '@/pages/Home/MadeForYouHero';

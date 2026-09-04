@@ -41,7 +41,6 @@ export const SmartPlaylistsSection = () => {
       <div className="grid gap-1">
         <SettingField
           label="Discovery Intensity"
-          icon="sparkle"
           description="Higher values surface more low-play and forgotten tracks."
           trailing={formatLevel(discoveryLevel, discoveryLabelFor)}
         >
@@ -60,7 +59,6 @@ export const SmartPlaylistsSection = () => {
 
         <SettingField
           label="Randomness"
-          icon="shuffle"
           description="Higher values reduce repeats and bias toward less-played songs."
           trailing={formatLevel(randomnessLevel, randomnessLabelFor)}
         >
@@ -78,7 +76,6 @@ export const SmartPlaylistsSection = () => {
         </SettingField>
 
         <Toggle
-          icon="smart-mix"
           label="Pause Mix Regen During Playback"
           description="Skip heavy mix updates while music plays."
           checked={pauseMixRegenDuringPlayback}
@@ -87,7 +84,6 @@ export const SmartPlaylistsSection = () => {
           }}
         />
         <Toggle
-          icon="stats"
           label="Online Recommendations"
           description="Use cached Last.fm and MusicBrainz signals in idle background jobs."
           checked={onlineRecommendationsEnabled}

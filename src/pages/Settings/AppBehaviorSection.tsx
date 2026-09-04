@@ -26,7 +26,6 @@ export const AppBehaviorSection = () => {
     <SettingsSection icon="settings" title="App Behavior" description="Launch and focus behavior.">
       <div className="grid gap-1">
         <Toggle
-          icon="home"
           label="Launch on System Startup"
           description="Open Amply when your system starts."
           checked={launchOnStartup}
@@ -35,7 +34,6 @@ export const AppBehaviorSection = () => {
           }}
         />
         <Toggle
-          icon="game"
           label="Game Mode"
           description="Lean mode with fewer heavy panels."
           checked={gameMode}
@@ -44,7 +42,6 @@ export const AppBehaviorSection = () => {
           }}
         />
         <Toggle
-          icon="pause"
           label="Auto-pause for Other Audio (Windows)"
           description="Pause for other audio, then resume."
           checked={autoPauseOnFocus}

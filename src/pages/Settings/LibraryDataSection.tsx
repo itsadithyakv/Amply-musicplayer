@@ -96,7 +96,6 @@ export const LibraryDataSection = () => {
 
       <div className="mt-3 grid gap-1">
         <Toggle
-          icon="pause"
           label="Pause Metadata Lookups"
           description="Pause background metadata work."
           checked={metadataFetchPaused}

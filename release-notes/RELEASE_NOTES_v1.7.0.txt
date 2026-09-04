@@ -1,0 +1,32 @@
+Amply v1.7.0
+Release date: 2026-09-04
+
+Highlights
+- New neumorphic design system (light and dark), animated throughout, with a redesigned sidebar,
+  cover-backed playlist cards, a proper EQ curve editor and three new lyric visualizers.
+- New smart-playlist engine: hard eligibility per mix (Most Played only contains played songs,
+  Explore never repeats what you heard in the last 36 hours), artist/album caps that always hold,
+  no song in more than two mixes, a "don't repeat yesterday" rule for the Daily Mix, a proper genre
+  taxonomy, and cold-start mixes that differ from each other. Runs in a web worker.
+- Listening signals fixed: a play counts only after 30 s / half the track, natural finishes are no
+  longer double-counted, skips are tracked for every session, and a rolling listening log feeds
+  the engine.
+
+Performance
+- Album art is stored once per cover on disk and served through the amplyart protocol instead of
+  travelling as base64 inside every song record: library cache, scan responses and memory shrink
+  by orders of magnitude; 64/128 px thumbnails for lists.
+- Parallel library scan; live EQ and speed changes without rebuilding the audio sink; instant
+  seeking; idle audio thread; single SQLite connection with per-key metadata caches; batched
+  artist-cache probe; render-loop fix on the Library page; playback state split so the queue is
+  no longer rewritten every 5 seconds.
+
+Fixes and hardening
+- Seek bar freezing at 75 % on replayed tracks, position drift at non-1x speed, loop restarting
+  at the seek offset, volume fighting the crossfade, m4a/aac not decoding.
+- Content-Security-Policy, asset scope limited to the Music folder and scanned roots, file
+  deletion confined to library folders, typed errors and structured logging, clean thread shutdown.
+- Removed the unused Online page, the browser Howler engine and several dead commands.
+
+Validation
+- npm run check (typecheck + eslint + vitest), cargo check/clippy/test, release build and NSIS installer.

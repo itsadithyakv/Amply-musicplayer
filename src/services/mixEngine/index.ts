@@ -18,6 +18,7 @@ export type {
 } from './types';
 
 export { canonicalGenre, GENRE_TAXONOMY, inferGenreForSong } from './genres';
+export { isLiteMixPlaylistId, mergeLiteMixes } from './helpers';
 
 /** Every mix: core, genre and mood mixes. */
 export const generateMixes = (input: MixEngineInput): MixEngineOutput => runEngine(input, false);

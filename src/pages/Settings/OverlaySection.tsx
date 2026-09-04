@@ -15,7 +15,6 @@ export const OverlaySection = () => {
     <SettingsSection icon="overlay" title="Overlay" description="Mini player that stays on top.">
       <div className="grid gap-1">
         <Toggle
-          icon="overlay"
           label="Mini Now Playing Overlay"
           description="Show the mini player above other apps."
           checked={miniNowPlayingOverlay}

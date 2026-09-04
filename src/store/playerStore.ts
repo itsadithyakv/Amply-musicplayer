@@ -154,7 +154,8 @@ interface PlayerState {
   togglePlayPause: () => void;
   pausePlayback: () => void;
   resumePlayback: () => void;
-  playNext: (manual?: boolean) => Promise<void>;
+  /** `skipRecord`: the caller already recorded the finished session (natural end). */
+  playNext: (manual?: boolean, options?: { skipRecord?: boolean }) => Promise<void>;
   playPrevious: () => Promise<void>;
   seekTo: (positionSec: number) => void;
   setVolume: (volume: number) => void;
@@ -835,7 +836,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             });
           }, { reason: 'record-playback-ended', groupKey: 'playback-activity' });
         }
-        await get().playNext();
+        // The completion above is the session's one record; the advance must not record again.
+        await get().playNext(false, { skipRecord: true });
       },
     });
 
@@ -1159,20 +1161,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       });
   },
 
-  playNext: async (manual = false) => {
+  playNext: async (manual = false, options = {}) => {
     const latencyStart = performance.now();
     if (manual) {
       lastManualSkipAt = Date.now();
       enterRapidPlaybackLane('rapid-playback');
     }
     const state = get();
-    if (state.currentSongId) {
+    if (state.currentSongId && !options.skipRecord) {
       schedulePlaybackCritical(() => {
         void useLibraryStore.getState().recordPlaybackEvent(state.currentSongId!, {
           listenedSec: state.positionSec,
           durationSec: state.durationSec,
           manualSkip: manual,
-          completed: !manual,
         });
       }, { reason: 'record-playback-event', groupKey: 'playback-activity' });
     }

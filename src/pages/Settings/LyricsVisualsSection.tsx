@@ -13,7 +13,6 @@ export const LyricsVisualsSection = () => {
     <SettingsSection icon="lyrics" title="Lyrics Visuals" description="Ambient visuals for the lyrics view.">
       <div className="grid gap-1">
         <Toggle
-          icon="lyrics"
           label="Enable Visuals"
           description="Show animated backgrounds behind lyrics."
           checked={lyricsVisualsEnabled}
@@ -22,7 +21,7 @@ export const LyricsVisualsSection = () => {
           }}
         />
 
-        <SettingField label="Theme" icon="sparkle">
+        <SettingField label="Theme">
           <Select
             label="Theme"
             value={lyricsVisualTheme}

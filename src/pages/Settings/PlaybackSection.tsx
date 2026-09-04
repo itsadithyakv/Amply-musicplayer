@@ -45,7 +45,7 @@ export const PlaybackSection = () => {
     <SettingsSection icon="volume" title="Advanced Playback" description="Routing, fades, and playback speed.">
       <div className="grid gap-1">
         {isTauri() ? (
-          <SettingField label="Output Device" icon="volume">
+          <SettingField label="Output Device">
             <Select
               label="Device"
               value={outputDeviceName ?? ''}
@@ -66,7 +66,6 @@ export const PlaybackSection = () => {
         ) : null}
 
         <Toggle
-          icon="shuffle"
           label="Crossfade"
           description="Blend tracks into each other."
           checked={crossfadeEnabled}
@@ -90,7 +89,6 @@ export const PlaybackSection = () => {
         </SettingField>
 
         <Toggle
-          icon="next"
           label="Gapless Playback"
           description="Preload the next track."
           checked={gaplessEnabled}
@@ -99,7 +97,7 @@ export const PlaybackSection = () => {
           }}
         />
 
-        <SettingField label="Playback Speed" icon="speed" trailing={`${playbackSpeed.toFixed(2)}x`}>
+        <SettingField label="Playback Speed" trailing={`${playbackSpeed.toFixed(2)}x`}>
           <Slider
             value={playbackSpeed}
             min={0.75}

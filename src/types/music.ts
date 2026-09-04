@@ -19,6 +19,8 @@ export interface Song {
   favorite: boolean;
   skipCount?: number;
   lastSkipped?: number;
+  /** 0..1 position in the track at which the last skip happened. */
+  skipPositionRatio?: number;
   totalPlaySeconds?: number;
   lastPlayDurationSec?: number;
   lastPlayStarted?: number;

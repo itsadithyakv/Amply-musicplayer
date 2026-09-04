@@ -15,7 +15,6 @@ export const AppearanceSection = () => {
     >
       <div className="grid gap-1">
         <Toggle
-          icon={isDark ? 'moon' : 'sun'}
           label="Use Dark Mode"
           description="Switch between the two visual themes."
           checked={isDark}
