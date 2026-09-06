@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { memo, useEffect, useRef, useState } from 'react';
-import { ConfirmDialog, Icon, IconButton, Slider } from '@/components/ui';
+import { ConfirmDialog, Icon, IconButton, Slider, volumeIconName } from '@/components/ui';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { PlayerShell } from '@/components/Player/PlayerShell';
 import { GameModeBar } from '@/components/Player/GameModeBar';
@@ -59,7 +59,7 @@ const RightControls = memo(() => {
           }}
         />
         <div className="ml-2 flex items-center gap-2">
-          <Icon name="volume" size={16} className="text-amply-textMuted" />
+          <Icon name={volumeIconName(volume)} size={16} className="text-amply-textMuted" />
           <Slider
             className="w-24"
             size="sm"

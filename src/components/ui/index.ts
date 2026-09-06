@@ -2,7 +2,7 @@ export { Surface, surfaceClass, radiusClass, type SurfaceProps, type SurfaceVari
 export { Card, type CardProps } from '@/components/ui/Card';
 export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from '@/components/ui/Button';
 export { IconButton, type IconButtonProps, type IconButtonSize, type IconButtonVariant } from '@/components/ui/IconButton';
-export { Icon, ICON_NAMES, type IconName, type IconProps } from '@/components/ui/Icon';
+export { Icon, ICON_NAMES, volumeIconName, type IconName, type IconProps } from '@/components/ui/Icon';
 export { Toggle, type ToggleProps } from '@/components/ui/Toggle';
 export { Slider, type SliderProps } from '@/components/ui/Slider';
 export { ProgressBar, type ProgressBarProps } from '@/components/ui/ProgressBar';

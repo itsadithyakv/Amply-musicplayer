@@ -1,6 +1,6 @@
 import { memo, type MutableRefObject } from 'react';
 import { Link } from 'react-router-dom';
-import { Icon, Slider } from '@/components/ui';
+import { Icon, Slider, volumeIconName } from '@/components/ui';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { PlayerShell } from '@/components/Player/PlayerShell';
 import { PrimaryTransport } from '@/components/Player/TransportControls';
@@ -40,7 +40,7 @@ export const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: MutableRefO
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          <Icon name="volume" size={16} className="text-amply-textMuted" />
+          <Icon name={volumeIconName(volume)} size={16} className="text-amply-textMuted" />
           <Slider
             className="w-24"
             size="sm"

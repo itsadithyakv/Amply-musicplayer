@@ -20,6 +20,13 @@ const HEART =
   'M12 20.4L10.3 18.9C6.6 15.5 4.2 13.2 4.2 10.2C4.2 8.1 5.8 6.5 7.9 6.5C9.2 6.5 10.4 7.1 11.2 8.1C12 7.1 13.2 6.5 14.5 6.5C16.6 6.5 18.2 8.1 18.2 10.2C18.2 13.2 15.8 15.5 12.1 18.9L12 19L12 20.4Z';
 const SPEAKER = 'M11 5 6 9H2v6h4l5 4V5Z';
 const MOON = 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z';
+/** Loop track with an arrowhead at each end; symmetric under a 180 degree turn about (12,12). */
+const REPEAT_LOOP = [
+  'M5 13v-3a3 3 0 0 1 3-3h9',
+  'm14 4 3 3-3 3',
+  'M19 11v3a3 3 0 0 1-3 3H7',
+  'm10 20-3-3 3-3',
+];
 /** A solid dot centred at (cx, cy); the stroke makes it ~2px wide. */
 const dot = (cx: number, cy: number) => `M${cx + 0.5} ${cy}a.5 .5 0 1 1-1 0 .5 .5 0 0 1 1 0Z`;
 
@@ -41,7 +48,7 @@ const ICONS = {
       'M8 17H14',
     ],
   },
-  next: { d: ['M6 6V18L15 12L6 6Z', 'M14 6V18L23 12L14 6Z'], filled: true },
+  next: { d: ['M4 6V18L11.5 12L4 6Z', 'M12.5 6V18L20 12L12.5 6Z'], filled: true },
   pause: {
     d: [
       'M7 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z',
@@ -51,10 +58,9 @@ const ICONS = {
   },
   play: { d: 'M7 5V19L19 12L7 5Z', filled: true },
   playlists: { d: ['M4 6H20', 'M4 12H20', 'M4 18H13', 'M20 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z'] },
-  prev: { d: ['M18 6V18L9 12L18 6Z', 'M10 6V18L1 12L10 6Z'], filled: true },
+  prev: { d: ['M20 6V18L12.5 12L20 6Z', 'M11.5 6V18L4 12L11.5 6Z'], filled: true },
   queue: { d: ['M5 7H15', 'M5 12H13', 'M5 17H11', 'M18 8V16', 'M16.5 14.5L18 16L19.5 14.5'] },
-  repeat: { d: ['M20 4V10H14', 'M4 20V14H10', 'M5 5L19 19'] },
-  'repeat-on': { d: ['M20 4V10H14', 'M4 20V14H10'] },
+  repeat: { d: REPEAT_LOOP },
   search: { d: ['M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z', 'M20 20L16.6 16.6'] },
   settings: {
     d: [
@@ -145,6 +151,14 @@ export type IconName = keyof typeof ICONS;
 
 /** Every icon name, in declaration order (for tests and the UI kit). */
 export const ICON_NAMES = Object.keys(ICONS) as readonly IconName[];
+
+/** Speaker glyph matching the level: silent, one wave, or two. */
+export const volumeIconName = (volume: number): IconName => {
+  if (!Number.isFinite(volume) || volume <= 0.001) {
+    return 'volume-off';
+  }
+  return volume < 0.5 ? 'volume-low' : 'volume';
+};
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   name: IconName;

@@ -94,7 +94,7 @@ export const TransportControls = memo(({ actionBusyRef }: PrimaryTransportProps)
       <PrimaryTransport actionBusyRef={actionBusyRef} />
       <div className="flex flex-1 items-center justify-start">
         <IconButton
-          name={isLooping ? 'repeat-on' : 'repeat'}
+          name="repeat"
           label={isLooping ? 'Loop on' : 'Loop off'}
           variant="ghost"
           active={isLooping}

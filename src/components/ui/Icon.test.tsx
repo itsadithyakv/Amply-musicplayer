@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { Icon, ICON_NAMES } from './Icon';
+import { Icon, ICON_NAMES, volumeIconName } from './Icon';
 
 describe('Icon', () => {
   it.each(ICON_NAMES)('renders "%s" as an <svg> with at least one non-empty <path>', (name) => {
@@ -14,6 +14,14 @@ describe('Icon', () => {
     for (const path of paths) {
       expect(path.getAttribute('d')?.trim()).toBeTruthy();
     }
+  });
+
+  it('picks the speaker glyph from the volume level', () => {
+    expect(volumeIconName(0)).toBe('volume-off');
+    expect(volumeIconName(Number.NaN)).toBe('volume-off');
+    expect(volumeIconName(0.2)).toBe('volume-low');
+    expect(volumeIconName(0.5)).toBe('volume');
+    expect(volumeIconName(1)).toBe('volume');
   });
 
   it('exposes a non-empty, duplicate-free ICON_NAMES list', () => {

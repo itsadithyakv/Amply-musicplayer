@@ -109,7 +109,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
           </div>
           <div className="flex flex-1 items-center justify-start">
             <IconButton
-              name={isLooping ? 'repeat-on' : 'repeat'}
+              name="repeat"
               label={isLooping ? 'Loop on' : 'Loop off'}
               variant="ghost"
               active={isLooping}
