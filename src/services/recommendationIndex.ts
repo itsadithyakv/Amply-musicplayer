@@ -72,7 +72,7 @@ type RecommendationIndex = {
 const INDEX_SUMMARY_PATH = 'recommendations/recommendation_index.json';
 const ROTATION_PATH = 'recommendations/recommendation_rotation.json';
 const DAY_SEC = 86_400;
-const ENHANCE_EXCLUDED_PLAYLISTS = new Set(['smart_daily_mix', 'smart_recently_played', 'smart_album_spotlight']);
+const ENHANCE_EXCLUDED_PLAYLISTS = new Set(['smart_daily_mix', 'smart_recently_played']);
 const current = {
   index: null as RecommendationIndex | null,
   signature: '',

@@ -6,12 +6,10 @@ import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { Icon, IconButton, Kicker, PageHeader, SectionTitle, Surface } from '@/components/ui';
 import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistProfileService';
-import { getAlbumTracklistKey, loadAlbumTracklistCache, normalizeTrackTitle } from '@/services/albumTracklistService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryVersions } from '@/store/libraryDataStore';
 import type { Playlist, Song } from '@/types/music';
-import { getPrimaryArtistName } from '@/utils/artists';
 import { buildArtworkSet, pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { isMoreMixPlaylistId } from '@/services/mixEngine';
@@ -29,8 +27,6 @@ import {
   pickUniqueAlbumSongs,
   scheduleIdleTask,
 } from '@/pages/Home/homeMixes';
-
-type AlbumTracklistSummary = { tracks?: Array<{ position: number; title: string }> };
 
 /** Cover chosen for a playlist under a given render seed, so it survives artwork arriving later. */
 const smartPlaylistCoverCache = new Map<string, string>();
@@ -59,12 +55,10 @@ const HomePage = () => {
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
-  const [albumTracklistCache, setAlbumTracklistCache] = useState<Record<string, AlbumTracklistSummary>>({});
   const [smartPlaylistRenderSeed, setSmartPlaylistRenderSeed] = useState(() => smartPlaylistSeed || Date.now());
   const [madeForYouRefreshSeed, setMadeForYouRefreshSeed] = useState(() => getMadeForYouRefreshSeed());
   const clickTimerRef = useRef<number | null>(null);
   const clickTargetRef = useRef<string | null>(null);
-  const albumSubtitleCacheRef = useRef<Map<string, string>>(new Map());
   const wasRegeneratingRef = useRef(regeneratingSmartPlaylists);
   const songsById = homeView.songsById;
   const allSongIds = homeView.allSongIds;
@@ -87,62 +81,6 @@ const HomePage = () => {
   const homeMixSeed = useMemo(
     () => hash(`${smartPlaylistRenderSeed || 0}:made-for-you:${madeForYouRefreshSeed}`),
     [madeForYouRefreshSeed, smartPlaylistRenderSeed],
-  );
-
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const cache = await loadAlbumTracklistCache();
-      if (alive) {
-        setAlbumTracklistCache(cache);
-      }
-    };
-    void load();
-    return () => {
-      alive = false;
-    };
-  }, [metadataFetchDone]);
-
-  const getAlbumSpotlightSubtitle = useCallback(
-    (playlist: Playlist): string => {
-      if (playlist.id !== 'smart_album_spotlight') {
-        return `${playlist.songIds.length} songs`;
-      }
-      const songsInPlaylist = playlist.songIds.map((id) => songsById.get(id)).filter((entry): entry is Song => Boolean(entry));
-      const first = songsInPlaylist[0];
-      if (!first) {
-        return `${playlist.songIds.length} songs`;
-      }
-      const cacheKey = `${playlist.id}:${first.id}`;
-      const key = getAlbumTracklistKey(getPrimaryArtistName(first.artist), first.album);
-      const tracklist = albumTracklistCache[key];
-      if (!tracklist?.tracks?.length) {
-        return albumSubtitleCacheRef.current.get(cacheKey) ?? `${playlist.songIds.length} songs`;
-      }
-      const byTrack = new Map<number, Song>();
-      const byTitle = new Map<string, Song>();
-      for (const song of songsInPlaylist) {
-        if (song.track && song.track > 0 && !byTrack.has(song.track)) {
-          byTrack.set(song.track, song);
-        }
-        const normalized = normalizeTrackTitle(song.title);
-        if (normalized && !byTitle.has(normalized)) {
-          byTitle.set(normalized, song);
-        }
-      }
-      let available = 0;
-      for (const track of tracklist.tracks) {
-        const normalized = normalizeTrackTitle(track.title);
-        const match = byTrack.get(track.position) ?? (normalized ? byTitle.get(normalized) : undefined);
-        if (match) {
-          available += 1;
-        }
-      }
-      const next = `${available}/${tracklist.tracks.length} available`;
-      albumSubtitleCacheRef.current.set(cacheKey, next);
-      return next;
-    },
-    [albumTracklistCache, songsById],
   );
 
   const handleSmartCardClick = useCallback(
@@ -318,7 +256,7 @@ const HomePage = () => {
           id: playlist.id,
           baseId: playlist.id,
           title: playlist.name,
-          subtitle: playlist.description || getAlbumSpotlightSubtitle(playlist),
+          subtitle: playlist.description || `${playlist.songIds.length} songs`,
           artwork,
           artworks,
           backgroundArtwork,
@@ -329,7 +267,7 @@ const HomePage = () => {
         };
       })
       .filter((entry) => entry.songIds.length);
-  }, [frozenPlaylists, getAlbumSpotlightSubtitle, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed]);
+  }, [frozenPlaylists, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed]);
 
   // Featured card plus six grid cards, ordered by the render seed only: usage no longer reorders
   // them under the pointer, so the section is stable until a manual regenerate.
