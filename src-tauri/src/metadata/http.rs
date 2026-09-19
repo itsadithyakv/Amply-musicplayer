@@ -55,7 +55,7 @@ pub(crate) fn is_offline_error(message: &str) -> bool {
     message.starts_with(OFFLINE_PREFIX)
 }
 
-fn describe_transport_error(err: reqwest::Error) -> String {
+pub(crate) fn describe_transport_error(err: reqwest::Error) -> String {
     if err.is_connect() || err.is_timeout() || err.is_request() {
         format!("{OFFLINE_PREFIX}{err}")
     } else {

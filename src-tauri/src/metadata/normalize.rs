@@ -6,14 +6,17 @@ use super::SongInput;
 
 static FEAT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bfeat\.?\b|\bft\.?\b|\bfeaturing\b").unwrap());
 static PARENS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*[\(\[].*?[\)\]]").unwrap());
-static NON_ALNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
+/// Everything that is not a letter, digit or combining mark in any script. Marks are kept because
+/// Indic vowel signs are combining marks: dropping them would shred Hindi, Tamil and Malayalam.
+static NON_ALNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^\p{L}\p{N}\p{M}]+").unwrap());
 static MULTISPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 static TRACK_CLEAN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(remaster(ed)?|mono|stereo|bonus track|explicit|clean)\b").unwrap());
 
 pub(crate) fn slugify(value: &str) -> String {
+    let canonical = canonicalize_stylized_text(value).trim().to_lowercase();
     let mut out = String::new();
     let mut prev_dash = false;
-    for ch in canonicalize_stylized_text(value).trim().to_lowercase().chars() {
+    for ch in canonical.chars() {
         if ch.is_ascii_alphanumeric() {
             out.push(ch);
             prev_dash = false;
@@ -22,7 +25,14 @@ pub(crate) fn slugify(value: &str) -> String {
             prev_dash = true;
         }
     }
-    out.trim_matches('-').to_string()
+    let slug = out.trim_matches('-').to_string();
+    // Scripts an ASCII slug cannot spell (Devanagari, Malayalam, CJK, 'ł', ...) would otherwise
+    // vanish, so every such title or artist shared one cache key. A hash of the text keeps them apart.
+    if canonical.chars().any(|ch| ch.is_alphanumeric() && !ch.is_ascii()) {
+        let suffix = hash_string(&canonical);
+        return if slug.is_empty() { suffix } else { format!("{slug}-{suffix}") };
+    }
+    slug
 }
 
 pub(crate) fn slugify_legacy(value: &str) -> String {
@@ -360,37 +370,95 @@ pub(crate) fn split_artist_title_hint(value: &str) -> Option<(String, String)> {
     None
 }
 
+/// A bracketed group with no brackets inside it: "(Official Audio)", "[HD]", "{Remix}".
+static BRACKET_GROUP_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*[\(\[\{]([^\(\)\[\]\{\}]*)[\)\]\}]").unwrap());
+/// Inline credit at the end of a title: "Song feat. X", "Song ft X", "Song featuring X".
+static INLINE_FEAT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s+(feat\.?|ft\.?|featuring)\s+.*$").unwrap());
+/// Markers that make a whole segment upload junk wherever they appear in it.
+static UPLOAD_NOISE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(official|visuali[sz]er|lyrics?\s+video|music\s+video|free\s+(dl|download)|out\s+now|prod(\.|uced)?\b|high\s+quality|thefloridaman)")
+        .unwrap()
+});
+/// Words that are junk only when they are the entire segment: "(Clean)", "[HD]", "- Lyrics".
+static UPLOAD_NOISE_ALONE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(clean|explicit|dirty|audio|video|hd|hq|4k|lyrics?|full\s+(song|version))$").unwrap()
+});
+/// Version qualifiers: the same song in another cut. Mirrors `isVersionQualifier` in src/utils/titles.ts.
+static VERSION_QUALIFIER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^((19|20)\d{2}|(from|with|feat\.?|ft\.?|featuring)\b.*|.*\b(remaster(ed)?|version|edit(ed)?|mix|remix|live|acoustic|demo|instrumental|mono|stereo|bonus\s+track|deluxe|edition|anniversary|single|soundtrack|motion\s+picture|ost|sped\s+up|slowed|reverb|nightcore|8d|session|show|take\s+\d+)\b.*)$",
+    )
+    .unwrap()
+});
+
+/// Whether a bracketed group or " - " suffix is upload junk ("Official Audio", "prod. X", "HD").
+pub(crate) fn is_upload_noise(segment: &str) -> bool {
+    let segment = segment.trim();
+    !segment.is_empty() && (UPLOAD_NOISE_RE.is_match(segment) || UPLOAD_NOISE_ALONE_RE.is_match(segment))
+}
+
+/// Whether a bracketed group or " - " suffix names a version of the song rather than the song:
+/// "2009 Remaster", "Radio Edit", "From \"Hridayam\"", "Live", "feat. X". Real parts of a name
+/// ("Pt. 2", "Reprise", "Interlude", "Choir Outro", "Backstreet's Back") are not qualifiers.
+pub(crate) fn is_version_qualifier(segment: &str) -> bool {
+    let segment = segment.trim();
+    !segment.is_empty() && VERSION_QUALIFIER_RE.is_match(segment)
+}
+
+/// Rightmost " - " style separator: (left, right).
+fn rsplit_title_dash(title: &str) -> Option<(&str, &str)> {
+    [" - ", " – ", " — ", " | "]
+        .iter()
+        .filter_map(|sep| title.rfind(sep).map(|index| (index, sep.len())))
+        .max_by_key(|(index, _)| *index)
+        .map(|(index, len)| (&title[..index], &title[index + len..]))
+}
+
+/// Removes bracketed groups anywhere, and trailing " - X" segments, whose content `is_removable`.
+/// Segments are judged whole, so a word inside a real title ("29 Intro", "Happy Birthday",
+/// "Clean Bandit") is never cut.
+pub(crate) fn strip_title_segments(title: &str, is_removable: impl Fn(&str) -> bool) -> String {
+    let without_groups = BRACKET_GROUP_RE.replace_all(title, |caps: &regex::Captures| {
+        let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        if is_removable(inner) {
+            " ".to_string()
+        } else {
+            caps[0].to_string()
+        }
+    });
+    let mut result = normalize_whitespace(&without_groups);
+    while let Some((left, right)) = rsplit_title_dash(&result) {
+        if left.trim().is_empty() || !is_removable(right) {
+            break;
+        }
+        result = left.trim().to_string();
+    }
+    normalize_whitespace(result.trim_end_matches(|c: char| "([{-–—|".contains(c) || c.is_whitespace()))
+}
+
+/// Title to look a song up by: artist prefix, upload junk, version qualifiers and credits removed.
+/// "Black Sabbath - War Pigs - 2009 Remaster" -> "War Pigs"; "Maangalyam - From \"Bangalore Days\""
+/// -> "Maangalyam"; "29 Intro" -> "29 Intro". Falls back to the raw title rather than returning "".
 pub(crate) fn clean_lyrics_title(raw: &str, artist_hint: Option<&str>) -> String {
-    let mut title = raw.to_string();
+    let mut title = normalize_whitespace(raw);
     if let Some((left, right)) = split_artist_title_hint(&title) {
-        if let Some(artist) = artist_hint {
-            if normalize_artist(&left) == normalize_artist(artist) {
-                title = right;
-            }
+        let left_key = normalize_artist(&left);
+        if !left_key.is_empty() && artist_hint.is_some_and(|artist| normalize_artist(artist) == left_key) {
+            title = right;
         }
     }
-    let lowered = title.to_lowercase();
-    let cut = [" feat.", " ft.", " featuring ", " prod.", " produced by "]
-        .iter()
-        .filter_map(|token| lowered.find(token))
-        .min();
-    if let Some(idx) = cut {
-        title = title[..idx].to_string();
+    let stripped = strip_title_segments(&title, |segment| is_upload_noise(segment) || is_version_qualifier(segment));
+    let stripped = INLINE_FEAT_RE.replace(&stripped, "");
+    let cleaned = normalize_part(&stripped);
+    if cleaned.is_empty() {
+        normalize_whitespace(raw)
+    } else {
+        cleaned
     }
-    let noise = [
-        "official", "audio", "video", "lyrics", "lyric", "visualizer", "hq", "hd",
-        "high quality", "remaster", "remastered", "instrumental", "acapella",
-        "slowed", "reverb", "speed up", "sped up", "clean", "explicit",
-        "vocals", "orchestral", "intro", "outro", "thefloridaman",
-    ];
-    let lowered = title.to_lowercase();
-    if let Some(pos) = noise.iter().filter_map(|token| lowered.find(token)).min() {
-        title = title[..pos].to_string();
-    }
-    let stripped = PARENS_RE.replace_all(&title, " ");
-    let stripped = TRACK_CLEAN_RE.replace_all(&stripped, " ");
-    normalize_part(&stripped)
 }
+
 
 pub(crate) fn is_close_match(candidate: &str, target: &str) -> bool {
     let left = normalize_title(candidate);
@@ -469,22 +537,79 @@ pub(crate) fn split_simple_and(value: &str) -> Vec<String> {
     vec![value.to_string()]
 }
 
+/// Acts whose names contain separators. Mirrors KNOWN_GROUP_NAMES in src/utils/artists.ts.
+const KNOWN_GROUP_NAMES: &[&str] = &[
+    "ac/dc", "simon & garfunkel", "earth, wind & fire", "crosby, stills, nash & young", "crosby, stills & nash",
+    "tyler, the creator", "mumford & sons", "hall & oates", "daryl hall & john oates", "blood, sweat & tears",
+    "peter, paul and mary", "emerson, lake & palmer", "brooks & dunn", "big & rich", "chase & status",
+    "above & beyond", "years & years", "iron & wine", "she & him", "matt & kim", "belle & sebastian",
+    "of monsters and men", "sam & dave", "sonny & cher", "ike & tina turner", "tegan and sara",
+    "macklemore & ryan lewis", "zach & cody", "black country, new road",
+];
+
+/// Replaces a known group name with an indexed placeholder, and hides the separator in
+/// "X & The Y" / "X + The Y" acts ("Kool & the Gang", "Florence + The Machine"), so the splitter
+/// leaves them whole. `restore_group_names` puts the original text back.
+fn protect_group_names(raw: &str) -> (String, Vec<String>) {
+    let mut value = raw.to_string();
+    let mut saved = Vec::new();
+    let lower = value.to_lowercase();
+    for name in KNOWN_GROUP_NAMES {
+        if let Some(start) = lower.find(name) {
+            let end = start + name.len();
+            let boundary_ok = lower[..start].chars().last().is_none_or(|c| !c.is_alphanumeric())
+                && lower[end..].chars().next().is_none_or(|c| !c.is_alphanumeric());
+            if boundary_ok && value.is_char_boundary(start) && value.is_char_boundary(end) {
+                saved.push(value[start..end].to_string());
+                value.replace_range(start..end, &format!("\u{E000}{}\u{E001}", saved.len() - 1));
+                break;
+            }
+        }
+    }
+    static AND_THE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s*([&+])\s*(the\s)").unwrap());
+    let value = AND_THE_RE
+        .replace_all(&value, |caps: &regex::Captures| {
+            let sep = if &caps[1] == "&" { '\u{E002}' } else { '\u{E003}' };
+            format!(" {sep} {}", &caps[2])
+        })
+        .into_owned();
+    (value, saved)
+}
+
+fn restore_group_names(value: &str, saved: &[String]) -> String {
+    static PLACEHOLDER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x{E000}(\d+)\x{E001}").unwrap());
+    PLACEHOLDER_RE
+        .replace_all(value, |caps: &regex::Captures| {
+            caps[1].parse::<usize>().ok().and_then(|index| saved.get(index)).cloned().unwrap_or_default()
+        })
+        .replace('\u{E002}', "&")
+        .replace('\u{E003}', "+")
+}
+
+static ARTIST_SEPARATOR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // Case-insensitive credits; "/" only with spaces around it so "AC/DC"-style names survive.
+    Regex::new(r"(?i)\s+(feat\.?|featuring|ft\.?|with|x|×)\s+|\s*[&+;|,]\s*|\s+/\s+").unwrap()
+});
+
 pub(crate) fn split_artist_names(artist: &str) -> Vec<String> {
     let raw = normalize_whitespace(artist);
     if raw.is_empty() {
         return vec!["Unknown Artist".to_string()];
     }
-    let normalized = raw
-        .replace("feat.", ",")
-        .replace("featuring", ",")
-        .replace("ft.", ",")
-        .replace(" with ", ",")
-        .replace('+', ",")
-        .replace("×", ",")
-        .replace(" x ", ",")
-        .replace(['&', ';', '/', '|'], ",");
+    let (protected, saved) = protect_group_names(&raw);
+    let normalized = ARTIST_SEPARATOR_RE.replace_all(&protected, ",");
     let mut parts: Vec<String> = Vec::new();
     for part in normalized.split(',') {
+        // A protected group name is one artist: skip the "A and B" splitter for it.
+        if part.contains('\u{E000}') {
+            let restored = normalize_part(&restore_group_names(part, &saved));
+            if !restored.is_empty() {
+                parts.push(restored);
+            }
+            continue;
+        }
+        let part = restore_group_names(part, &saved);
+        let part = part.as_str();
         for piece in split_simple_and(part) {
             let cleaned = normalize_part(&piece);
             if !cleaned.is_empty() {
@@ -515,25 +640,32 @@ pub(crate) fn get_primary_artist_name(artist: &str) -> String {
 }
 
 pub(crate) fn is_low_confidence_artist_name(artist: &str) -> bool {
-    let normalized = normalize_text(artist);
-    if normalized.is_empty() || normalized == "unknown artist" {
+    if artist.trim().is_empty() {
         return true;
     }
+    let normalized = normalize_text(artist);
+    if normalized.is_empty()
+        || matches!(normalized.as_str(), "unknown artist" | "unknown" | "various artists" | "various" | "va" | "soundcloud" | "youtube")
+    {
+        return true;
+    }
+    // Upload handles and channel names, matched as whole words or suffixes so real artists that
+    // merely contain the letters ("Musical Youth", "Channel Tres" aside) are not flagged.
+    let words: Vec<&str> = normalized.split_whitespace().collect();
     let compact = normalized.replace(' ', "");
-    let noisy_terms = [
-        "topic",
-        "vevo",
-        "official",
-        "channel",
-        "records",
-        "recordings",
-        "music",
-        "thefloridaman",
-        "youtube",
-        "lyrics",
-        "archive",
-    ];
-    noisy_terms.iter().any(|term| compact.contains(term))
+    if words.first() == Some(&"user") && words.get(1).is_some_and(|word| word.chars().all(|c| c.is_ascii_digit())) {
+        return true;
+    }
+    if words.iter().any(|word| matches!(*word, "topic" | "vevo" | "records" | "recordings" | "youtube" | "lyrics" | "thefloridaman" | "uploads"))
+        || compact.ends_with("vevo")
+        || compact.ends_with("topic")
+        || (words.len() > 1 && words.last() == Some(&"music") && words.first() != Some(&"the"))
+        || (words.len() > 1 && words.last() == Some(&"official"))
+        || (words.len() > 1 && words.last() == Some(&"channel"))
+    {
+        return true;
+    }
+    false
 }
 
 /// The artist to look metadata up under. A real artist tag always wins; the "Artist - Title"
@@ -545,6 +677,10 @@ pub(crate) fn metadata_artist_for_song(song: &SongInput) -> String {
         return primary_artist;
     }
     if let Some((parsed_artist, parsed_title)) = split_artist_title_hint(&song.title) {
+        // "War Pigs - 2009 Remaster": the right side is a version, so the left side is the title.
+        if is_version_qualifier(&parsed_title) || is_upload_noise(&parsed_title) {
+            return primary_artist;
+        }
         let cleaned_artist = normalize_whitespace(&parsed_artist);
         let cleaned_title = normalize_whitespace(&parsed_title);
         if !cleaned_artist.is_empty() && !cleaned_title.is_empty() {
@@ -580,6 +716,67 @@ mod tests {
             duration: None,
             genre: None,
         }
+    }
+
+    #[test]
+    fn lookup_titles_drop_versions_and_junk_but_keep_real_names() {
+        let clean = |title: &str| clean_lyrics_title(title, Some("Black Sabbath"));
+        assert_eq!(clean("War Pigs - 2009 Remaster"), "War Pigs");
+        assert_eq!(clean("Iron Man (2012 Remaster)"), "Iron Man");
+        assert_eq!(clean("Black Sabbath - Paranoid - 2009 Remaster"), "Paranoid");
+        assert_eq!(clean("Take Me Home, Country Roads (Original Version) [Remastered]"), "Take Me Home, Country Roads");
+        assert_eq!(clean("Many Men (Wish Death) - Album Version (Edited)"), "Many Men (Wish Death)");
+        assert_eq!(clean("Maangalyam - From \"Bangalore Days\""), "Maangalyam");
+        assert_eq!(clean("Around the World (Official Audio)"), "Around the World");
+        assert_eq!(clean("Song [HD] (prod. Metro Boomin)"), "Song");
+        assert_eq!(clean("Mmm Yeah - feat. Pitbull"), "Mmm Yeah");
+        assert_eq!(clean("Chase Me (feat. Run The Jewels & Big Boi) - Single Version - Music From The Motion Picture Baby Driver"), "Chase Me");
+        // Words inside real titles are never cut.
+        assert_eq!(clean("29 Intro"), "29 Intro");
+        assert_eq!(clean("Happy Birthday"), "Happy Birthday");
+        assert_eq!(clean("Cleanin' Out My Closet"), "Cleanin' Out My Closet");
+        assert_eq!(clean("Video Games"), "Video Games");
+        assert_eq!(clean("Everybody (Backstreet's Back) - Radio Edit"), "Everybody (Backstreet's Back)");
+        assert_eq!(clean("Let Down - Choir Outro"), "Let Down - Choir Outro");
+        assert_eq!(clean("Father Stretch My Hands (Pt. 1)"), "Father Stretch My Hands (Pt. 1)");
+    }
+
+    #[test]
+    fn version_suffix_is_not_an_artist_title_split() {
+        assert_eq!(metadata_artist_for_song(&song("Unknown Artist", "War Pigs - 2009 Remaster")), "Unknown Artist");
+        assert_eq!(metadata_artist_for_song(&song("Unknown Artist", "Daft Punk - Around the World")), "Daft Punk");
+    }
+
+    #[test]
+    fn non_latin_text_survives_normalisation_and_slugs_stay_distinct() {
+        assert!(!normalize_text("दिल तू जान तू").is_empty());
+        assert!(!is_low_confidence_artist_name("ഗോപി സുന്ദർ"));
+        assert_ne!(slugify("காதல்"), slugify("प्यार"));
+        assert!(!slugify("காதல்").is_empty());
+        assert_eq!(slugify("Beyoncé"), "beyonce");
+        assert_eq!(slugify("JAŸ-Z"), "jay-z");
+    }
+
+    #[test]
+    fn group_names_are_not_split() {
+        assert_eq!(get_primary_artist_name("AC/DC"), "AC/DC");
+        assert_eq!(get_primary_artist_name("Earth, Wind & Fire"), "Earth, Wind & Fire");
+        assert_eq!(get_primary_artist_name("Tyler, The Creator, Kali Uchis"), "Tyler, The Creator");
+        assert_eq!(get_primary_artist_name("Kool & the Gang"), "Kool & the Gang");
+        assert_eq!(split_artist_names("Metro Boomin, The Weeknd, 21 Savage").len(), 3);
+        assert_eq!(split_artist_names("Artist Feat. Guest"), vec!["Artist".to_string(), "Guest".to_string()]);
+        assert_eq!(split_artist_names("A / B").len(), 2);
+        assert_eq!(get_primary_artist_name("Tegan and Sara"), "Tegan and Sara");
+    }
+
+    #[test]
+    fn low_confidence_artists_use_whole_words() {
+        assert!(is_low_confidence_artist_name("TaylorSwiftVEVO"));
+        assert!(is_low_confidence_artist_name("Skrillex - Topic"));
+        assert!(is_low_confidence_artist_name("xyz music"));
+        assert!(is_low_confidence_artist_name("user-482910337"));
+        assert!(!is_low_confidence_artist_name("Musical Youth"));
+        assert!(!is_low_confidence_artist_name("The Music"));
     }
 
     #[test]

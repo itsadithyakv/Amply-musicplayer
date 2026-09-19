@@ -6,21 +6,29 @@ use std::{
 
 use regex::Regex;
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::cache::{read_json, read_text, to_storage_cache_path, write_json, write_text};
-use super::http::HTTP;
+use super::http::{describe_transport_error, is_offline_error, HTTP};
 use super::normalize::{
-    clean_lyrics_title, get_primary_artist_name, is_unknown_album, metadata_artist_for_song,
-    normalize_artist, normalize_match_name, normalize_plain_lyrics, normalize_title, safe_includes,
-    slugify, split_artist_title_hint,
+    clean_lyrics_title, get_primary_artist_name, is_low_confidence_artist_name, is_unknown_album,
+    metadata_artist_for_song, normalize_plain_lyrics, normalize_text, normalize_whitespace, safe_includes, slugify,
+    split_artist_names,
 };
 use super::{
-    LyricsCandidate, LyricsLoadResult, LyricsSaveResult, SongInput, LYRICS_CACHE_FOLDER, LYRICS_INDEX_PATH,
+    now_unix, LyricsCandidate, LyricsLoadResult, LyricsSaveResult, SongInput, LYRICS_CACHE_FOLDER, LYRICS_INDEX_PATH,
 };
 use crate::error::AmplyResult;
+use crate::storage::delete_storage_kv;
 
-static TIME_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]").unwrap());
+/// [mm:ss], [mm:ss.xx], [mm:ss.xxx] and the colon variant [mm:ss:xx].
+static TIME_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]").unwrap());
+/// Enhanced-LRC word timings, <mm:ss.xx>, stripped from the displayed text.
+static WORD_TIME_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>").unwrap());
+/// A whole-line metadata tag: [ar:Artist], [ti:Title], [offset:+250], [length:3:41].
+static META_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[([A-Za-z#]+):([^\]]*)\]$").unwrap());
 
 /// Serialises read-modify-write cycles on the lyrics index so concurrent lyrics
 /// loads cannot drop each other's entries.
@@ -147,11 +155,27 @@ async fn read_cached_lyrics_text(
     Ok(None)
 }
 
+/// Milliseconds from an LRC fraction: "5" is 500 ms, "50" is 500 ms, "123" is 123 ms.
+fn fraction_ms(fraction: &str) -> i64 {
+    let digits: String = fraction.chars().take(3).collect();
+    format!("{digits:0<3}").parse().unwrap_or(0)
+}
+
 fn parse_lrc(raw: &str) -> Vec<LyricLine> {
+    let mut offset_ms = 0i64;
     let mut parsed: Vec<LyricLine> = Vec::new();
     for line in raw.lines() {
-        let text = TIME_TAG_RE.replace_all(line, "").trim().to_string();
-        let matches: Vec<_> = TIME_TAG_RE.captures_iter(line).collect();
+        let trimmed = line.trim();
+        // [ar:], [ti:], [length:], [by:] ... are metadata, not lyrics; [offset:±ms] shifts timings.
+        if let Some(caps) = META_TAG_RE.captures(trimmed) {
+            if caps[1].eq_ignore_ascii_case("offset") {
+                offset_ms = caps[2].trim().parse().unwrap_or(0);
+            }
+            continue;
+        }
+        let without_times = TIME_TAG_RE.replace_all(trimmed, "");
+        let text = WORD_TIME_TAG_RE.replace_all(&without_times, "").trim().to_string();
+        let matches: Vec<_> = TIME_TAG_RE.captures_iter(trimmed).collect();
         if matches.is_empty() {
             if !text.is_empty() {
                 parsed.push(LyricLine { time_ms: None, text });
@@ -161,9 +185,8 @@ fn parse_lrc(raw: &str) -> Vec<LyricLine> {
         for capture in matches {
             let mins = capture.get(1).and_then(|m| m.as_str().parse::<i64>().ok()).unwrap_or(0);
             let secs = capture.get(2).and_then(|m| m.as_str().parse::<i64>().ok()).unwrap_or(0);
-            let fraction = capture.get(3).map(|m| m.as_str()).unwrap_or("0");
-            let centisecs = fraction.parse::<i64>().unwrap_or(0);
-            let time_ms = mins * 60_000 + secs * 1_000 + if fraction.len() == 3 { centisecs } else { centisecs * 10 };
+            let fraction = capture.get(3).map(|m| fraction_ms(m.as_str())).unwrap_or(0);
+            let time_ms = (mins * 60_000 + secs * 1_000 + fraction - offset_ms).max(0);
             parsed.push(LyricLine { time_ms: Some(time_ms), text: text.clone() });
         }
     }
@@ -182,15 +205,10 @@ fn validate_lyrics_quality(raw: &str) -> bool {
         if timed.len() < (lines.len() as f32 * 0.5) as usize {
             return false;
         }
-        let mut times: Vec<i64> = timed.iter().filter_map(|line| line.time_ms).collect();
-        times.sort();
-        for idx in 1..times.len() {
-            if times[idx] < times[idx - 1] {
-                return false;
-            }
-            if times[idx] - times[idx - 1] > 300_000 {
-                return false;
-            }
+        // Sorted above, so only gaps can be wrong: five minutes of silence means a broken file.
+        let times: Vec<i64> = timed.iter().filter_map(|line| line.time_ms).collect();
+        if times.windows(2).any(|pair| pair[1] - pair[0] > 300_000) {
+            return false;
         }
     }
 
@@ -205,55 +223,91 @@ fn validate_lyrics_quality(raw: &str) -> bool {
     unique.len() >= 2 || unique.len() as f32 >= (text_lines.len() as f32 * 0.15)
 }
 
-fn score_candidate(song: &SongInput, candidate: &LyricsCandidate) -> i32 {
+/// Punctuation-, case- and script-insensitive comparison key ("Don’t" == "Don't").
+fn match_key(value: &str) -> String {
+    normalize_text(value)
+}
+
+fn title_score(song: &SongInput, candidate: &LyricsCandidate) -> i32 {
+    let cleaned_title = lyrics_title_for_song(song);
+    let candidate_title = match_key(&candidate.track_name);
+    let candidate_clean = match_key(&clean_lyrics_title(&candidate.track_name, None));
+    if candidate_title == match_key(&cleaned_title) || candidate_clean == match_key(&cleaned_title) {
+        8
+    } else if candidate_title == match_key(&song.title) {
+        5
+    } else if safe_includes(&candidate.track_name, &cleaned_title) {
+        4
+    } else if safe_includes(&candidate.track_name, &song.title) {
+        2
+    } else {
+        0
+    }
+}
+
+fn artist_score(song: &SongInput, candidate: &LyricsCandidate) -> i32 {
     let primary_artist = metadata_artist_for_song(song);
     let fallback_artist = get_primary_artist_name(&song.artist);
-    let cleaned_title = lyrics_title_for_song(song);
-    let mut score = 0;
-
-    if normalize_match_name(&candidate.track_name) == normalize_match_name(&cleaned_title) {
-        score += 8;
-    } else if normalize_match_name(&candidate.track_name) == normalize_match_name(&song.title) {
-        score += 5;
-    } else if safe_includes(&candidate.track_name, &cleaned_title) {
-        score += 4;
-    } else if safe_includes(&candidate.track_name, &song.title) {
-        score += 2;
-    }
-
-    if normalize_match_name(&candidate.artist_name) == normalize_match_name(&primary_artist) {
-        score += 5;
-    } else if safe_includes(&candidate.artist_name, &primary_artist) {
-        score += 2;
-    } else if !fallback_artist.eq_ignore_ascii_case(&primary_artist)
-        && normalize_match_name(&candidate.artist_name) == normalize_match_name(&fallback_artist)
+    let candidate_artist = match_key(&candidate.artist_name);
+    if !candidate_artist.is_empty() && candidate_artist == match_key(&primary_artist) {
+        5
+    } else if !fallback_artist.eq_ignore_ascii_case(&primary_artist) && candidate_artist == match_key(&fallback_artist) {
+        4
+    } else if safe_includes(&candidate.artist_name, &primary_artist)
+        // Credits are listed in different orders by different uploads ("Gopi Sundar, Vijay Yesudas"
+        // vs "Vijay Yesudas, Sachin Warrier"): any shared credited artist counts.
+        || split_artist_names(&song.artist).iter().any(|name| safe_includes(&candidate.artist_name, name))
     {
-        score += 4;
+        2
+    } else {
+        0
     }
+}
+
+/// Seconds between the candidate's and the song's durations, when both are known.
+fn duration_gap(song: &SongInput, candidate: &LyricsCandidate) -> Option<f64> {
+    match (candidate.duration_sec, song.duration) {
+        (Some(candidate), Some(song)) if candidate > 0.0 && song > 0.0 => Some((candidate - song).abs()),
+        _ => None,
+    }
+}
+
+fn score_candidate(song: &SongInput, candidate: &LyricsCandidate) -> i32 {
+    let mut score = title_score(song, candidate) + artist_score(song, candidate);
 
     if let (Some(candidate_album), Some(song_album)) = (&candidate.album_name, &song.album) {
-        if !is_unknown_album(song_album) && normalize_match_name(candidate_album) == normalize_match_name(song_album) {
+        if !is_unknown_album(song_album) && match_key(candidate_album) == match_key(song_album) {
             score += 3;
         }
     }
-
     if candidate.is_synced {
         score += 2;
     }
-
-    if let (Some(candidate_duration), Some(song_duration)) = (candidate.duration_sec, song.duration) {
-        if song_duration > 0.0 {
-            let diff = (candidate_duration - song_duration).abs();
-            if diff <= 2.0 {
-                score += 3;
-            } else if diff <= 7.0 {
-                score += 2;
-            } else if diff <= 12.0 {
-                score += 1;
-            }
-        }
+    match duration_gap(song, candidate) {
+        Some(gap) if gap <= 2.0 => score += 3,
+        Some(gap) if gap <= 7.0 => score += 2,
+        Some(gap) if gap <= 12.0 => score += 1,
+        _ => {}
     }
     score
+}
+
+/// Whether a candidate is plausibly this recording: the title has to match, and the artist or the
+/// duration has to agree. More than 15 s off is a different recording (a remix, a live cut, another
+/// song with the same name), however well the names match.
+fn is_acceptable_match(song: &SongInput, candidate: &LyricsCandidate) -> bool {
+    let gap = duration_gap(song, candidate);
+    if gap.is_some_and(|gap| gap > 15.0) {
+        return false;
+    }
+    title_score(song, candidate) >= 4 && (artist_score(song, candidate) >= 2 || gap.is_some_and(|gap| gap <= 3.0))
+}
+
+/// Good enough to stop asking: acceptable, time-synced, and the same length (when known).
+fn is_confident_match(song: &SongInput, candidate: &LyricsCandidate) -> bool {
+    candidate.is_synced
+        && is_acceptable_match(song, candidate)
+        && duration_gap(song, candidate).is_none_or(|gap| gap <= 3.0)
 }
 
 fn dedupe_candidates(candidates: Vec<LyricsCandidate>) -> Vec<LyricsCandidate> {
@@ -302,6 +356,8 @@ struct LrcLibSearchHit {
     plain_lyrics: Option<String>,
     #[serde(rename = "plain_lyrics")]
     plain_lyrics_alt: Option<String>,
+    /// lrclib marks tracks it knows to have no vocals.
+    instrumental: Option<bool>,
 }
 
 fn parse_number(value: &serde_json::Value) -> Option<f64> {
@@ -324,11 +380,10 @@ fn parse_string(value: &serde_json::Value) -> Option<String> {
 }
 
 fn to_candidate(song: &SongInput, hit: &LrcLibSearchHit, index: usize) -> Option<LyricsCandidate> {
-    let synced = hit.synced_lyrics.clone().or_else(|| hit.synced_lyrics_alt.clone());
-    let plain_raw = hit.plain_lyrics.clone().or_else(|| hit.plain_lyrics_alt.clone());
+    let synced = hit.synced_lyrics.clone().or_else(|| hit.synced_lyrics_alt.clone()).filter(|text| !text.trim().is_empty());
+    let plain_raw = hit.plain_lyrics.clone().or_else(|| hit.plain_lyrics_alt.clone()).filter(|text| !text.trim().is_empty());
     let plain = plain_raw.as_ref().map(|value| normalize_plain_lyrics(value));
-    let raw = synced.clone().or_else(|| plain_raw.clone());
-    let raw = raw?;
+    let raw = synced.clone().or_else(|| plain_raw.clone())?;
     let track_name = hit
         .track_name
         .clone()
@@ -368,147 +423,194 @@ impl IfEmptyElse for String {
     }
 }
 
-async fn fetch_lyrics_search_candidates_for(
-    artist: &str,
-    title: &str,
-    album: Option<&str>,
-    song: &SongInput,
-) -> Result<Vec<LyricsCandidate>, String> {
-    if artist.trim().is_empty() || title.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut params = vec![("artist_name", artist), ("track_name", title)];
-    if let Some(album) = album {
-        if !album.trim().is_empty() && !is_unknown_album(album) {
-            params.push(("album_name", album));
-        }
-    }
-    let url = Url::parse_with_params("https://lrclib.net/api/search", &params).map_err(|err| err.to_string())?;
-    let response = HTTP
-        .get(url)
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    if !response.status().is_success() {
-        return Ok(Vec::new());
-    }
-    let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
-    let array = payload.as_array().cloned().unwrap_or_default();
-    let mut parsed = Vec::new();
-    for (index, entry) in array.into_iter().enumerate() {
-        if let Ok(hit) = serde_json::from_value::<LrcLibSearchHit>(entry) {
-            if let Some(candidate) = to_candidate(song, &hit, index) {
-                parsed.push(candidate);
-            }
-        }
-    }
-    Ok(dedupe_candidates(parsed))
+/// What one lrclib request came back with.
+enum LrcLibReply {
+    Hits(Vec<LrcLibSearchHit>),
+    /// 404, another non-success status, or an empty answer.
+    Nothing,
+    /// 429: stop asking for now, and do not remember a miss.
+    Throttled,
 }
 
-async fn fetch_lyrics_single_candidate_for(
-    artist: &str,
-    title: &str,
-    album: Option<&str>,
-    song: &SongInput,
-) -> Result<Vec<LyricsCandidate>, String> {
-    if artist.trim().is_empty() || title.trim().is_empty() {
-        return Ok(Vec::new());
+async fn lrclib_request(endpoint: &str, params: &[(&str, String)], timeout: Duration) -> Result<LrcLibReply, String> {
+    let url = Url::parse_with_params(&format!("https://lrclib.net/api/{endpoint}"), params).map_err(|err| err.to_string())?;
+    let response = HTTP.get(url).timeout(timeout).send().await.map_err(describe_transport_error)?;
+    let status = response.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Ok(LrcLibReply::Throttled);
     }
-    let mut params = vec![("artist_name", artist), ("track_name", title)];
-    if let Some(album) = album {
-        if !album.trim().is_empty() && !is_unknown_album(album) {
-            params.push(("album_name", album));
-        }
-    }
-    let url = Url::parse_with_params("https://lrclib.net/api/get", &params).map_err(|err| err.to_string())?;
-    let response = HTTP
-        .get(url)
-        .timeout(Duration::from_secs(8))
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    if !response.status().is_success() {
-        return Ok(Vec::new());
+    if !status.is_success() {
+        return Ok(LrcLibReply::Nothing);
     }
     let payload: serde_json::Value = response.json().await.map_err(|err| err.to_string())?;
-    if payload.is_array() || payload.is_null() {
-        return Ok(Vec::new());
-    }
-    if let Ok(hit) = serde_json::from_value::<LrcLibSearchHit>(payload) {
-        if let Some(candidate) = to_candidate(song, &hit, 0) {
-            return Ok(vec![candidate]);
-        }
-    }
-    Ok(Vec::new())
+    let hits: Vec<LrcLibSearchHit> = match payload {
+        serde_json::Value::Array(items) => items.into_iter().filter_map(|item| serde_json::from_value(item).ok()).collect(),
+        object @ serde_json::Value::Object(_) => serde_json::from_value(object).ok().into_iter().collect(),
+        _ => Vec::new(),
+    };
+    Ok(if hits.is_empty() { LrcLibReply::Nothing } else { LrcLibReply::Hits(hits) })
 }
 
-async fn fetch_lyrics_candidates(song: &SongInput) -> Result<Vec<LyricsCandidate>, String> {
+/// At most this many requests per song and lookup: one exact match plus a few searches.
+const MAX_LYRICS_REQUESTS: usize = 4;
+
+/// One planned lrclib request.
+struct LyricsLookup {
+    endpoint: &'static str,
+    params: Vec<(&'static str, String)>,
+    timeout: Duration,
+}
+
+/// Cheapest and most precise first: the exact endpoint (it needs album and duration), then searches
+/// by the cleaned and the raw title, then free text when the artist field is a channel or unknown.
+/// Identical requests are planned once.
+fn plan_lyrics_lookups(song: &SongInput) -> Vec<LyricsLookup> {
     let artist = metadata_artist_for_song(song);
-    let title = song.title.trim().to_string();
-    if artist.trim().is_empty() || title.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let cleaned_title = clean_lyrics_title(&title, Some(&artist));
-    let parsed = split_artist_title_hint(&title);
-    let mut queries: Vec<(String, String, Option<String>)> = Vec::new();
+    let artist_known = !is_low_confidence_artist_name(&artist);
+    let raw_title = normalize_whitespace(&song.title);
+    let clean_title = lyrics_title_for_song(song);
     let album = song
         .album
         .as_deref()
-        .filter(|value| !value.trim().is_empty() && !is_unknown_album(value));
-    let mut push_query = |artist: String, title: String, album: Option<String>| {
-        if artist.trim().is_empty() || title.trim().is_empty() {
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !is_unknown_album(value))
+        .map(str::to_string);
+    let duration = song.duration.filter(|value| *value > 0.0).map(|value| value.round() as u32);
+
+    let mut lookups: Vec<LyricsLookup> = Vec::new();
+    let mut planned: HashSet<String> = HashSet::new();
+    let mut push = |endpoint: &'static str, params: Vec<(&'static str, String)>, timeout: Duration| {
+        if params.iter().any(|(_, value)| value.trim().is_empty()) {
             return;
         }
-        queries.push((artist, title, album));
+        let signature = format!(
+            "{endpoint}?{}",
+            params.iter().map(|(key, value)| format!("{key}={}", value.to_lowercase())).collect::<Vec<_>>().join("&")
+        );
+        if planned.insert(signature) {
+            lookups.push(LyricsLookup { endpoint, params, timeout });
+        }
     };
 
-    if !cleaned_title.trim().is_empty() {
-        push_query(artist.clone(), cleaned_title.clone(), album.map(|value| value.to_string()));
-        push_query(artist.clone(), cleaned_title.clone(), None);
+    if artist_known {
+        if let (Some(album), Some(duration)) = (&album, duration) {
+            push(
+                "get",
+                vec![
+                    ("artist_name", artist.clone()),
+                    ("track_name", clean_title.clone()),
+                    ("album_name", album.clone()),
+                    ("duration", duration.to_string()),
+                ],
+                Duration::from_secs(8),
+            );
+        }
+        push("search", vec![("artist_name", artist.clone()), ("track_name", clean_title.clone())], Duration::from_secs(10));
+        if match_key(&raw_title) != match_key(&clean_title) {
+            push("search", vec![("artist_name", artist.clone()), ("track_name", raw_title.clone())], Duration::from_secs(10));
+        }
+    } else {
+        push("search", vec![("q", clean_title.clone())], Duration::from_secs(10));
     }
-    push_query(artist.clone(), title.clone(), album.map(|value| value.to_string()));
-    push_query(artist.clone(), title.clone(), None);
+    lookups.truncate(MAX_LYRICS_REQUESTS);
+    lookups
+}
 
-    if let Some((parsed_artist, parsed_title)) = parsed {
-        if normalize_artist(&parsed_artist) == normalize_artist(&artist) {
-            let cleaned = clean_lyrics_title(&parsed_title, Some(&artist));
-            push_query(artist.clone(), cleaned, None);
-        } else if song.artist.trim().eq_ignore_ascii_case("unknown artist") {
-            let cleaned = clean_lyrics_title(&parsed_title, Some(&parsed_artist));
-            push_query(parsed_artist, cleaned, None);
-        } else {
-            // "Blackbird - 2018 Mix" under a real artist tag: the left part is the song title and
-            // the right part a version qualifier, so query the bare title too.
-            let cleaned = clean_lyrics_title(&parsed_artist, Some(&artist));
-            push_query(artist.clone(), cleaned, album.map(|value| value.to_string()));
-            push_query(artist.clone(), parsed_artist.clone(), None);
+/// Outcome of looking a song's lyrics up online.
+enum LyricsFetch {
+    Found(Vec<LyricsCandidate>),
+    /// The service knows this track and says it has no vocals.
+    Instrumental,
+    /// Every request completed and nothing matched.
+    NotFound,
+    /// A request could not reach the service (offline, DNS, timeout): try again later.
+    Offline,
+    /// The service asked us to slow down: try again later.
+    Throttled,
+}
+
+/// Runs the planned lookups. Unless `exhaustive`, stops at the first confident synced match.
+/// A failed request no longer aborts the rest; only being offline or throttled does.
+async fn fetch_lyrics_candidates(song: &SongInput, exhaustive: bool) -> LyricsFetch {
+    let clean_title = match_key(&lyrics_title_for_song(song));
+    let mut candidates: Vec<LyricsCandidate> = Vec::new();
+    let mut instrumental = false;
+    let mut interrupted: Option<LyricsFetch> = None;
+
+    for lookup in plan_lyrics_lookups(song) {
+        let reply = match lrclib_request(lookup.endpoint, &lookup.params, lookup.timeout).await {
+            Ok(reply) => reply,
+            Err(error) if is_offline_error(&error) => {
+                log::warn!("Lyrics lookup for {:?} could not reach lrclib: {error}", song.title);
+                interrupted = Some(LyricsFetch::Offline);
+                break;
+            }
+            Err(error) => {
+                log::warn!("Lyrics {} request for {:?} failed: {error}", lookup.endpoint, song.title);
+                continue;
+            }
+        };
+        match reply {
+            LrcLibReply::Throttled => {
+                interrupted = Some(LyricsFetch::Throttled);
+                break;
+            }
+            LrcLibReply::Nothing => continue,
+            LrcLibReply::Hits(hits) => {
+                for hit in &hits {
+                    let same_track = hit
+                        .track_name
+                        .as_deref()
+                        .or(hit.track_name_alt.as_deref())
+                        .is_some_and(|name| match_key(&clean_lyrics_title(name, None)) == clean_title);
+                    if hit.instrumental == Some(true) && same_track {
+                        instrumental = true;
+                    }
+                    if let Some(candidate) = to_candidate(song, hit, candidates.len()) {
+                        candidates.push(candidate);
+                    }
+                }
+            }
+        }
+        if !exhaustive && candidates.iter().any(|candidate| is_confident_match(song, candidate)) {
+            break;
         }
     }
 
-    let mut seen = HashSet::new();
-    let mut all_candidates = Vec::new();
-    for (artist, title, album) in &queries {
-        let key = format!(
-            "{}::{}::{}",
-            normalize_artist(artist),
-            normalize_title(title),
-            album.as_deref().map(normalize_title).unwrap_or_default(),
-        );
-        if !seen.insert(key) {
-            continue;
-        }
-        let results = fetch_lyrics_search_candidates_for(artist, title, album.as_deref(), song).await?;
-        all_candidates.extend(results);
+    if !candidates.is_empty() {
+        LyricsFetch::Found(dedupe_candidates(candidates))
+    } else if let Some(interrupted) = interrupted {
+        interrupted
+    } else if instrumental {
+        LyricsFetch::Instrumental
+    } else {
+        LyricsFetch::NotFound
     }
-    if all_candidates.is_empty() {
-        for (artist, title, album) in &queries {
-            let results = fetch_lyrics_single_candidate_for(artist, title, album.as_deref(), song).await?;
-            all_candidates.extend(results);
-        }
+}
+
+/// A remembered lookup that found nothing, so the next play does not ask lrclib again.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LyricsMiss {
+    at: i64,
+    instrumental: bool,
+}
+
+/// How long a "no lyrics" answer is trusted before asking again (lrclib grows every day).
+const LYRICS_MISS_TTL_SECS: i64 = 14 * 24 * 60 * 60;
+
+fn lyrics_miss_key(cache_key: &str) -> String {
+    let stem = cache_key
+        .trim_start_matches(&format!("{LYRICS_CACHE_FOLDER}/"))
+        .trim_end_matches(".lrc");
+    format!("{LYRICS_CACHE_FOLDER}/_miss/{stem}.json")
+}
+
+async fn remember_lyrics_miss(app: &tauri::AppHandle, cache_key: &str, instrumental: bool) {
+    let miss = LyricsMiss { at: now_unix(), instrumental };
+    if let Err(error) = write_json(app, &lyrics_miss_key(cache_key), &miss).await {
+        log::warn!("Failed to remember lyrics miss for {cache_key}: {error}");
     }
-    Ok(dedupe_candidates(all_candidates))
 }
 
 fn build_lyrics_result(raw: &str, cache_key: &str, from_cache: bool) -> LyricsLoadResult {
@@ -520,17 +622,24 @@ fn build_lyrics_result(raw: &str, cache_key: &str, from_cache: bool) -> LyricsLo
     }
 }
 
+fn lyrics_status(status: &str, cache_key: &str) -> LyricsLoadResult {
+    LyricsLoadResult {
+        status: status.to_string(),
+        raw: None,
+        cache_path: to_storage_cache_path(cache_key),
+        from_cache: None,
+    }
+}
+
 #[tauri::command]
 pub async fn lyrics_find_candidates_rust(
     _app: tauri::AppHandle,
     song: SongInput,
 ) -> AmplyResult<Vec<LyricsCandidate>> {
-    let candidates = match fetch_lyrics_candidates(&song).await {
-        Ok(candidates) => candidates,
-        Err(error) => {
-            log::warn!("LRCLIB lyrics search for {:?} by {:?} failed: {error}", song.title, song.artist);
-            Vec::new()
-        }
+    // A manual search shows everything found, including weak matches: the user is choosing.
+    let candidates = match fetch_lyrics_candidates(&song, true).await {
+        LyricsFetch::Found(candidates) => candidates,
+        _ => Vec::new(),
     };
     Ok(rank_candidates(&song, candidates))
 }
@@ -546,12 +655,7 @@ pub async fn lyrics_read_cached_rust(
             return Ok(build_lyrics_result(&text, &cache_key, true));
         }
     }
-    Ok(LyricsLoadResult {
-        status: "missing".to_string(),
-        raw: None,
-        cache_path: to_storage_cache_path(&key),
-        from_cache: None,
-    })
+    Ok(lyrics_status("missing", &key))
 }
 
 #[tauri::command]
@@ -565,6 +669,10 @@ pub async fn lyrics_save_selection_rust(
     if let Some(song_id) = song.id.as_deref() {
         set_lyrics_index_entry(&app, song_id, &key).await?;
     }
+    // A hand-picked result overrides any remembered miss.
+    if let Err(error) = delete_storage_kv(&app, &lyrics_miss_key(&key)).await {
+        log::debug!("No lyrics miss to clear for {key}: {error}");
+    }
     Ok(LyricsSaveResult {
         status: "ready".to_string(),
         raw: Some(candidate.raw),
@@ -572,6 +680,8 @@ pub async fn lyrics_save_selection_rust(
     })
 }
 
+/// Cached lyrics, else a remembered miss, else a lookup. Statuses: "ready", "missing",
+/// "instrumental" (the service says the track has no vocals), "offline" (try again later).
 #[tauri::command]
 pub async fn lyrics_load_rust(
     app: tauri::AppHandle,
@@ -589,55 +699,59 @@ pub async fn lyrics_load_rust(
                 }
             }
             return Ok(build_lyrics_result(&text, &cache_key, true));
-        } else if let Err(error) = write_text(&app, &cache_key, "").await {
-            log::warn!("Failed to blank low-quality lyrics cache {cache_key}: {error}");
+        }
+        // Only this song's own entry is cleared: `cache_key` may be a legacy key or another song's
+        // entry reached through the index, which must not be destroyed.
+        if cache_key == key {
+            if let Err(error) = write_text(&app, &key, "").await {
+                log::warn!("Failed to clear low-quality lyrics cache {key}: {error}");
+            }
         }
     }
 
-    let candidates = match fetch_lyrics_candidates(&song).await {
-        Ok(candidates) => candidates,
-        Err(error) => {
-            log::warn!("LRCLIB lyrics search for {:?} by {:?} failed: {error}", song.title, song.artist);
-            Vec::new()
+    if let Some(miss) = read_json::<LyricsMiss>(&app, &lyrics_miss_key(&key)).await? {
+        if miss.instrumental {
+            return Ok(lyrics_status("instrumental", &key));
         }
-    };
-    if candidates.is_empty() {
-        return Ok(LyricsLoadResult {
-            status: "missing".to_string(),
-            raw: None,
-            cache_path: to_storage_cache_path(&key),
-            from_cache: None,
-        });
-    }
-
-    let ranked = rank_candidates(&song, candidates);
-    let best = match ranked.first() {
-        Some(candidate) => candidate.clone(),
-        None => {
-            return Ok(LyricsLoadResult {
-                status: "missing".to_string(),
-                raw: None,
-                cache_path: to_storage_cache_path(&key),
-                from_cache: None,
-            })
+        if now_unix() - miss.at < LYRICS_MISS_TTL_SECS {
+            return Ok(lyrics_status("missing", &key));
         }
-    };
-
-    if !validate_lyrics_quality(&best.raw) {
-        return Ok(LyricsLoadResult {
-            status: "missing".to_string(),
-            raw: None,
-            cache_path: to_storage_cache_path(&key),
-            from_cache: None,
-        });
     }
 
-    write_text(&app, &key, &best.raw).await?;
-    if let Some(song_id) = song.id.as_deref() {
-        set_lyrics_index_entry(&app, song_id, &key).await?;
+    match fetch_lyrics_candidates(&song, false).await {
+        LyricsFetch::Offline => Ok(lyrics_status("offline", &key)),
+        LyricsFetch::Throttled => Ok(lyrics_status("missing", &key)),
+        LyricsFetch::Instrumental => {
+            remember_lyrics_miss(&app, &key, true).await;
+            Ok(lyrics_status("instrumental", &key))
+        }
+        LyricsFetch::NotFound => {
+            remember_lyrics_miss(&app, &key, false).await;
+            Ok(lyrics_status("missing", &key))
+        }
+        LyricsFetch::Found(candidates) => {
+            // Among acceptable matches a synced one wins even if a plain one ranks higher: timed
+            // lyrics are strictly more useful (line highlighting, auto-scroll).
+            let acceptable: Vec<LyricsCandidate> = rank_candidates(&song, candidates)
+                .into_iter()
+                .filter(|candidate| is_acceptable_match(&song, candidate) && validate_lyrics_quality(&candidate.raw))
+                .collect();
+            let best = acceptable
+                .iter()
+                .find(|candidate| candidate.is_synced)
+                .or_else(|| acceptable.first())
+                .cloned();
+            let Some(best) = best else {
+                remember_lyrics_miss(&app, &key, false).await;
+                return Ok(lyrics_status("missing", &key));
+            };
+            write_text(&app, &key, &best.raw).await?;
+            if let Some(song_id) = song.id.as_deref() {
+                set_lyrics_index_entry(&app, song_id, &key).await?;
+            }
+            Ok(build_lyrics_result(&best.raw, &key, false))
+        }
     }
-
-    Ok(build_lyrics_result(&best.raw, &key, false))
 }
 
 #[cfg(test)]
@@ -714,6 +828,79 @@ mod tests {
     }
 
     #[test]
+    fn lrc_parser_handles_real_world_variants() {
+        let raw = "[ar:Someone]
+[ti:Song]
+[offset:+500]
+[00:12.5]Half second
+[00:20:50]Colon fraction
+[00:30.00]<00:30.10>Word <00:30.50>timed
+[00:40.00][00:50.00]Twice";
+        let lines = parse_lrc(raw);
+        let texts: Vec<_> = lines.iter().map(|line| line.text.as_str()).collect();
+        assert!(!texts.iter().any(|text| text.contains("ar:") || text.contains("offset")));
+        assert_eq!(lines[0].time_ms, Some(12_500 - 500));
+        assert_eq!(lines[1].time_ms, Some(20_500 - 500));
+        assert_eq!(lines[2].text, "Word timed");
+        assert_eq!(lines.iter().filter(|line| line.text == "Twice").count(), 2);
+    }
+
+    #[test]
+    fn acceptance_needs_title_plus_artist_or_duration() {
+        let song = SongInput {
+            id: Some("war-pigs".to_string()),
+            title: "War Pigs - 2009 Remaster".to_string(),
+            artist: "Black Sabbath".to_string(),
+            album: Some("Paranoid".to_string()),
+            duration: Some(475.0),
+            genre: None,
+        };
+        let candidate = |track: &str, artist: &str, duration: f64| LyricsCandidate {
+            id: "c".to_string(),
+            track_name: track.to_string(),
+            artist_name: artist.to_string(),
+            album_name: None,
+            duration_sec: Some(duration),
+            is_synced: true,
+            raw: "[00:01.00]a
+[00:02.00]b".to_string(),
+            preview: String::new(),
+        };
+        assert!(is_acceptable_match(&song, &candidate("War Pigs", "Black Sabbath", 476.0)));
+        assert!(is_confident_match(&song, &candidate("War Pigs", "Black Sabbath", 476.0)));
+        // Same name, other artist, other length: another song.
+        assert!(!is_acceptable_match(&song, &candidate("War Pigs", "Cake", 300.0)));
+        // Right song but a 40 s longer live version.
+        assert!(!is_acceptable_match(&song, &candidate("War Pigs", "Black Sabbath", 515.0)));
+        // Unrelated title.
+        assert!(!is_acceptable_match(&song, &candidate("Iron Man", "Black Sabbath", 475.0)));
+    }
+
+    #[test]
+    fn lookups_are_capped_deduplicated_and_exact_first() {
+        let song = SongInput {
+            id: None,
+            title: "War Pigs - 2009 Remaster".to_string(),
+            artist: "Black Sabbath".to_string(),
+            album: Some("Paranoid".to_string()),
+            duration: Some(475.0),
+            genre: None,
+        };
+        let lookups = plan_lyrics_lookups(&song);
+        assert!(lookups.len() <= MAX_LYRICS_REQUESTS);
+        assert_eq!(lookups[0].endpoint, "get");
+        let unknown = SongInput { artist: "Unknown Artist".to_string(), album: None, ..song };
+        let lookups = plan_lyrics_lookups(&unknown);
+        assert_eq!(lookups.len(), 1);
+        assert_eq!(lookups[0].params[0].0, "q");
+    }
+
+    #[test]
+    fn miss_keys_live_beside_the_lyrics() {
+        assert_eq!(lyrics_miss_key("lyrics_cache/a-b.lrc"), "lyrics_cache/_miss/a-b.json");
+    }
+
+    #[test]
     fn lyrics_quality_allows_repetitive_valid_lyrics() {
         let raw = "[00:01.00]Hello\n[00:02.00]Hello\n[00:03.00]Goodbye\n[00:04.00]Hello";
         assert!(validate_lyrics_quality(raw));
@@ -723,5 +910,56 @@ mod tests {
     fn lyrics_quality_rejects_one_repeated_line_only() {
         let raw = "[00:01.00]Na\n[00:02.00]Na\n[00:03.00]Na\n[00:04.00]Na\n[00:05.00]Na\n[00:06.00]Na\n[00:07.00]Na";
         assert!(!validate_lyrics_quality(raw));
+    }
+}
+
+#[cfg(test)]
+mod live_probe {
+    use super::*;
+
+    /// Live lrclib check against real library titles: `cargo test -- --ignored lyrics_live_probe --nocapture`.
+    #[test]
+    #[ignore]
+    fn lyrics_live_probe() {
+        let cases = [
+            ("Black Sabbath", "War Pigs - 2009 Remaster", "Paranoid", 475.0),
+            ("Eagles", "Hotel California - 2013 Remaster", "Hotel California", 391.0),
+            ("Gopi Sundar, Vijay Yesudas, Sachin Warrier", "Maangalyam - From \"Bangalore Days\"", "Bangalore Days", 234.0),
+            ("Backstreet Boys", "Everybody (Backstreet's Back) - Radio Edit", "Backstreet's Back", 225.0),
+            ("Kendrick Lamar", "For Free? - Interlude", "To Pimp A Butterfly", 130.0),
+            ("Pink Floyd", "Speak to Me", "The Dark Side of the Moon", 65.0),
+        ];
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        for (artist, title, album, duration) in cases {
+            let song = SongInput {
+                id: None,
+                title: title.to_string(),
+                artist: artist.to_string(),
+                album: Some(album.to_string()),
+                duration: Some(duration),
+                genre: None,
+            };
+            let started = std::time::Instant::now();
+            let requests = plan_lyrics_lookups(&song).len();
+            let outcome = rt.block_on(fetch_lyrics_candidates(&song, false));
+            let summary = match outcome {
+                LyricsFetch::Found(candidates) => {
+                    let acceptable: Vec<_> = rank_candidates(&song, candidates)
+                        .into_iter()
+                        .filter(|c| is_acceptable_match(&song, c) && validate_lyrics_quality(&c.raw))
+                        .collect();
+                    let best = acceptable.iter().find(|c| c.is_synced).or_else(|| acceptable.first()).cloned();
+                    match best {
+                        Some(best) => format!("FOUND {} / {} synced={}", best.artist_name, best.track_name, best.is_synced),
+                        None => "found candidates but none acceptable".to_string(),
+                    }
+                }
+                LyricsFetch::Instrumental => "INSTRUMENTAL".to_string(),
+                LyricsFetch::NotFound => "not found".to_string(),
+                LyricsFetch::Offline => "offline".to_string(),
+                LyricsFetch::Throttled => "throttled".to_string(),
+            };
+            eprintln!("{title:55} planned={requests} {:>5}ms  {summary}", started.elapsed().as_millis());
+        }
     }
 }
