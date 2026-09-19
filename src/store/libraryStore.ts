@@ -1079,6 +1079,18 @@ const removeSongIdFromOverrides = (
   return next;
 };
 
+/** Lower-cased, forward-slashed, with a trailing slash: comparable path prefix on Windows. */
+const toPathPrefix = (path: string): string => {
+  const normalized = path.trim().replace(/\\/g, '/').toLowerCase();
+  return normalized.endsWith('/') ? normalized : `${normalized}/`;
+};
+
+const isAbsoluteLibraryPath = (path: string): boolean => /^([a-z]:[\\/]|\\\\|\/)/i.test(path.trim());
+
+/** Tauri rejects with the command's error string, not an Error instance. */
+const errorMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error ? error.message : typeof error === 'string' && error.trim() ? error : fallback;
+
 const normalizeLibraryPaths = (paths: string[]): string[] => {
   const cleaned = paths.map((path) => path.trim()).filter(Boolean);
   const unique = Array.from(new Set(cleaned));
@@ -1953,10 +1965,35 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     try {
       const yieldToMain = () => yieldToIdle(200);
 
-      const scannedByFolder = await measurePerfAsync('library.scan.native-folders', () =>
-        Promise.all(targetPaths.map((path) => scanMusicFolder(path))),
+      const scanResults = await measurePerfAsync('library.scan.native-folders', () =>
+        Promise.all(
+          targetPaths.map(async (path) => {
+            try {
+              return { path, songs: await scanMusicFolder(path), available: true };
+            } catch (error) {
+              recordPerfEvent('library.scan.folder-unavailable', { path, message: errorMessage(error, 'unavailable') });
+              return { path, songs: [] as Song[], available: false };
+            }
+          }),
+        ),
       );
-      const flattened = scannedByFolder.flat();
+      // An unplugged drive or offline cloud folder is not an empty folder: keep the songs we already
+      // know from it (with their play counts, favourites and playlist membership) until it is back.
+      const unavailablePaths = scanResults.filter((result) => !result.available).map((result) => result.path);
+      if (unavailablePaths.length === targetPaths.length) {
+        throw new Error(`Library folder not available: ${unavailablePaths.join(', ')}. Your library was kept as it was.`);
+      }
+      const unavailablePrefixes = unavailablePaths.filter(isAbsoluteLibraryPath).map(toPathPrefix);
+      const keepAllUnscanned = unavailablePaths.some((path) => !isAbsoluteLibraryPath(path));
+      const scannedIds = new Set(scanResults.flatMap((result) => result.songs.map((song) => song.id)));
+      const carriedOver = unavailablePaths.length
+        ? get().songs.filter(
+            (song) =>
+              !scannedIds.has(song.id) &&
+              (keepAllUnscanned || unavailablePrefixes.some((prefix) => toPathPrefix(song.path).startsWith(prefix))),
+          )
+        : [];
+      const flattened = [...scanResults.flatMap((result) => result.songs), ...carriedOver];
       const dedupedById = new Map<string, Song>();
       await yieldToMain();
 
@@ -2016,6 +2053,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         songs: artHydrated,
         playlists,
         isScanning: false,
+        scanError: unavailablePaths.length
+          ? `Not available right now: ${unavailablePaths.join(', ')}. Songs from there were kept.`
+          : null,
         smartPlaylistSeed: weeklySeed,
         libraryVersion: get().libraryVersion + 1,
         artworkVersion: get().artworkVersion + 1,
@@ -2060,11 +2100,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     } catch (error) {
       set({
         isScanning: false,
-        scanError: error instanceof Error ? error.message : 'Library scan failed.',
+        scanError: errorMessage(error, 'Library scan failed.'),
       });
       recordPerfEvent('library.scan.error', {
         runId,
-        message: error instanceof Error ? error.message : 'Library scan failed.',
+        message: errorMessage(error, 'Library scan failed.'),
       });
     }
   },

@@ -53,7 +53,11 @@ fn main() {
         )
         .plugin(tauri_plugin_opener::init())
         // Album art is served from the on-disk artwork store instead of travelling as base64.
-        .register_uri_scheme_protocol(artwork::SCHEME, |_ctx, request| artwork::handle_request(&request))
+        // Asynchronous: on Windows a synchronous handler runs on the UI thread, and the first request
+        // for a thumbnail decodes and re-encodes it, which stuttered scrolling through big grids.
+        .register_asynchronous_uri_scheme_protocol(artwork::SCHEME, |_ctx, request, responder| {
+            tauri::async_runtime::spawn_blocking(move || responder.respond(artwork::handle_request(&request)));
+        })
         .manage(AudioState::new(audio_tx.clone()))
         .setup(|app| {
             let storage_root = storage::storage_root_path(app.handle())?;

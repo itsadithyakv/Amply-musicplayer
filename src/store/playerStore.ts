@@ -404,6 +404,10 @@ let lastProgressUpdate = 0;
 let pendingProgress: { position: number; duration: number } | null = null;
 const PROGRESS_UPDATE_MS = 250;
 let lastPreloadSongId: string | null = null;
+/** Tracks in a row that failed to load; the first one that plays resets it. */
+let consecutiveLoadFailures = 0;
+/** After this many failures in a row, stop instead of walking the rest of a broken queue. */
+const MAX_CONSECUTIVE_LOAD_FAILURES = 3;
 const preloadOnceCache = new Map<string, number>();
 const PRELOAD_CACHE_LIMIT = 200;
 let defaultOutputPollHandle: number | null = null;
@@ -1039,6 +1043,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       });
       setGlobalPlayingFlag(true);
       set({ isPlaying: true });
+      consecutiveLoadFailures = 0;
       recordPlaybackLatency(fastSkip ? 'next-track-fast' : 'track-load', performance.now() - latencyStart);
       if (preloadIds.length && !fastSkip && get().settings.gaplessEnabled) {
         const library = useLibraryStore.getState();
@@ -1053,8 +1058,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     } catch {
       setGlobalPlayingFlag(false);
       set({ isPlaying: false });
-      get().showToast('Track failed to load');
       recordPlaybackLatency('track-load-failed', performance.now() - latencyStart);
+      // A moved, deleted or undecodable file should cost one song, not the whole queue.
+      consecutiveLoadFailures += 1;
+      if (consecutiveLoadFailures < MAX_CONSECUTIVE_LOAD_FAILURES && resolveNextSongId(get())) {
+        get().showToast(`Skipped "${song.title}": the file could not be played`);
+        void get().playNext(false, { skipRecord: true });
+      } else {
+        consecutiveLoadFailures = 0;
+        get().showToast('Several tracks in a row could not be played. Check that the files are still there.');
+      }
       return;
     }
 

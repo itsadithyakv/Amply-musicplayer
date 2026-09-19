@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
@@ -8,15 +8,18 @@ use std::{
 };
 
 use lofty::{
+    config::{ParseOptions, ParsingMode},
     file::TaggedFile,
     picture::{Picture, PictureType},
     prelude::{Accessor, AudioFile, TaggedFileExt},
     probe::Probe,
     tag::Tag,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, LazyLock, OnceLock};
 use tauri::Manager;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 use crate::error::{AmplyError, AmplyResult};
 use crate::storage;
@@ -169,7 +172,9 @@ pub(crate) fn is_supported_audio(path: &Path) -> bool {
         Some(ext) => {
             matches!(
                 ext.to_ascii_lowercase().as_str(),
-                "mp3" | "mp4" | "m4a" | "aac" | "wav" | "flac" | "ogg" | "aif" | "aiff"
+                // Kept in step with the symphonia features in Cargo.toml. Opus and WMA have no
+                // decoder, so they are not listed rather than listed-but-silent.
+                "mp3" | "mp4" | "m4a" | "m4b" | "aac" | "wav" | "wave" | "flac" | "ogg" | "oga" | "aif" | "aiff" | "aifc"
             )
         }
         None => false,
@@ -219,26 +224,27 @@ fn parse_replay_gain(input: Option<&str>) -> Option<f32> {
     Some(value)
 }
 
+/// First non-blank value of a text field, preferring the primary tag and falling back to the
+/// file's other tags (an empty ID3v2 title must not hide the ID3v1 one).
+fn first_text(tagged_file: &TaggedFile, field: impl Fn(&Tag) -> Option<std::borrow::Cow<'_, str>>) -> Option<String> {
+    tagged_file
+        .primary_tag()
+        .into_iter()
+        .chain(tagged_file.tags())
+        .filter_map(field)
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
+}
+
 fn extract_text_metadata(tagged_file: &TaggedFile, filename_fallback: &str) -> (String, String, String, String, u32, Option<u32>, Option<f32>) {
     let tag = tagged_file
         .primary_tag()
         .or_else(|| tagged_file.first_tag());
 
-    let title = tag
-        .and_then(|entry| entry.title().map(|value| value.into_owned()))
-        .unwrap_or_else(|| filename_fallback.to_string());
-
-    let artist = tag
-        .and_then(|entry| entry.artist().map(|value| value.into_owned()))
-        .unwrap_or_else(|| "Unknown Artist".to_string());
-
-    let album = tag
-        .and_then(|entry| entry.album().map(|value| value.into_owned()))
-        .unwrap_or_else(|| "Unknown Album".to_string());
-
-    let genre = tag
-        .and_then(|entry| entry.genre().map(|value| value.into_owned()))
-        .unwrap_or_else(|| "Unknown Genre".to_string());
+    let title = first_text(tagged_file, |tag| tag.title()).unwrap_or_else(|| filename_fallback.to_string());
+    let artist = first_text(tagged_file, |tag| tag.artist()).unwrap_or_else(|| "Unknown Artist".to_string());
+    let album = first_text(tagged_file, |tag| tag.album()).unwrap_or_else(|| "Unknown Album".to_string());
+    let genre = first_text(tagged_file, |tag| tag.genre()).unwrap_or_else(|| "Unknown Genre".to_string());
 
     let track = tag.and_then(|entry| entry.track()).unwrap_or(0);
     let year = tag.and_then(|entry| entry.date()).map(|date| u32::from(date.year));
@@ -340,12 +346,59 @@ fn clean_title(raw: &str) -> String {
         .to_string()
 }
 
+static FILENAME_SITE_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(y2mate\.(com|is)|ytmp3\.(cc|nu)|savefrom\.net|mp3juices\.cc|flvto\.biz|soundcloud)\s*[-_:|]\s*")
+        .expect("static regex")
+});
+static FILENAME_SITE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)[\s_\-]*(spotdown\.org|spotifydown\.com|spotifymate\.com|y2mate\.(com|is)|ytmp3\.(cc|nu)|mp3juices\.cc|soundcloud|free\s*download)\s*$")
+        .expect("static regex")
+});
+static FILENAME_COPY_COUNTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*\(\d{1,2}\)\s*$").expect("static regex"));
+static FILENAME_VIDEO_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*\[[A-Za-z0-9_-]{11}\]\s*$").expect("static regex"));
+static FILENAME_BITRATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s*[\(\[]\s*\d{2,3}\s*kbps\s*[\)\]]").expect("static regex"));
+static FILENAME_TRACK_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d{1,3}\s*[.\-_)]\s+").expect("static regex"));
+
+/// Strips download-site junk from a file name so it can stand in for a missing title tag.
+/// "500 Miles_spotdown.org (1)" -> "500 Miles", "y2mate.com - Artist - Song [dQw4w9WgXcQ]" ->
+/// "Artist - Song", "01 - Song" -> "Song". Returns the stem unchanged if cleaning empties it.
+pub(crate) fn clean_filename_stem(stem: &str) -> String {
+    let mut value = stem.trim().to_string();
+    for _ in 0..2 {
+        // Twice: "X_spotdown.org (1)" needs the counter off before the site suffix matches.
+        value = FILENAME_COPY_COUNTER.replace(&value, "").into_owned();
+        value = FILENAME_VIDEO_ID.replace(&value, "").into_owned();
+        value = FILENAME_SITE_SUFFIX.replace(&value, "").into_owned();
+    }
+    value = FILENAME_SITE_PREFIX.replace(&value, "").into_owned();
+    value = FILENAME_BITRATE.replace_all(&value, "").into_owned();
+    value = FILENAME_TRACK_NUMBER.replace(&value, "").into_owned();
+    if !value.contains(' ') && value.contains('_') {
+        value = value.replace('_', " ");
+    }
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let value = value.trim_matches(|c: char| c == '-' || c == '_' || c == '.' || c.is_whitespace());
+    if value.is_empty() {
+        stem.trim().to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 fn split_artist_title(raw: &str) -> Option<(String, String)> {
     let separators = [" - ", " – ", " — ", " -- ", " | "];
     for sep in separators {
         if let Some((left, right)) = raw.split_once(sep) {
             let artist = left.trim();
             let title = right.trim();
+            // A bare number on the left is a track number ("01 - Intro"), never an artist.
+            if artist.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
             if !artist.is_empty() && !title.is_empty() {
                 return Some((artist.to_string(), clean_title(title)));
             }
@@ -381,8 +434,26 @@ fn is_low_confidence_scan_artist(artist: &str) -> bool {
     .any(|term| normalized.contains(term))
 }
 
-/// Read one audio file's tags and artwork. `artwork_cache` dedupes pictures per album within a worker.
-fn scan_one(path: &Path, artwork_cache: &mut HashMap<String, Option<String>>) -> Option<ScannedSong> {
+/// Reads tags, sniffing the real container from the content (YouTube converters often save an
+/// m4a or webm as ".mp3") and retrying in relaxed mode when a tag is malformed, so one broken
+/// frame does not also throw away the duration and cover.
+pub(crate) fn read_tagged_file(path: &Path) -> Option<TaggedFile> {
+    for mode in [ParsingMode::BestAttempt, ParsingMode::Relaxed] {
+        let probe = Probe::open(path).ok()?.guess_file_type().ok()?;
+        if let Ok(file) = probe.options(ParseOptions::new().parsing_mode(mode)).read() {
+            return Some(file);
+        }
+    }
+    None
+}
+
+/// Album covers decoded so far in this scan, shared by every worker. A `OnceLock` per album means
+/// the first worker to reach an album decodes its cover while any other worker holding a track
+/// from the same album waits for that result instead of decoding the same picture again.
+type ArtworkCache = Mutex<HashMap<String, Arc<OnceLock<Option<String>>>>>;
+
+/// Read one audio file's tags and artwork.
+fn scan_one(path: &Path, artwork_cache: &ArtworkCache) -> Option<ScannedSong> {
     let metadata = match fs::metadata(path) {
         Ok(meta) => meta,
         Err(_) => return None,
@@ -390,32 +461,36 @@ fn scan_one(path: &Path, artwork_cache: &mut HashMap<String, Option<String>>) ->
 
     let filename = path
         .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("Unknown File")
-        .to_string();
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Unknown File".to_string());
 
-    let filename_no_ext = path
+    let raw_stem = path
         .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or("Unknown Title");
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Unknown Title".to_string());
+    let filename_no_ext = clean_filename_stem(&raw_stem);
+    let filename_no_ext = filename_no_ext.as_str();
 
     let (mut title, mut artist, mut album, genre, track, year, replay_gain, duration, album_art) =
-        match Probe::open(path).and_then(|probe| probe.read()) {
-            Ok(tagged_file) => {
+        match read_tagged_file(path) {
+            Some(tagged_file) => {
                 let (title, artist, album, genre, track, year, replay_gain) =
                     extract_text_metadata(&tagged_file, filename_no_ext);
                 let duration = tagged_file.properties().duration().as_secs_f64();
                 let artwork_key = scan_artwork_cache_key(path, &artist, &album);
-                let album_art = if let Some(cached) = artwork_cache.get(&artwork_key) {
-                    cached.clone()
-                } else {
-                    let extracted = extract_embedded_artwork(&tagged_file);
-                    artwork_cache.insert(artwork_key, extracted.clone());
-                    extracted
+                let cell = {
+                    let mut cache = artwork_cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    Arc::clone(cache.entry(artwork_key).or_default())
                 };
+                // The album's cover when one decoded; otherwise try this track's own picture, so a
+                // corrupt cover on the first track does not leave the whole album blank.
+                let album_art = cell
+                    .get_or_init(|| extract_embedded_artwork(&tagged_file))
+                    .clone()
+                    .or_else(|| extract_embedded_artwork(&tagged_file));
                 (title, artist, album, genre, track, year, replay_gain, duration, album_art)
             }
-            Err(_) => (
+            None => (
                 filename_no_ext.to_string(),
                 "Unknown Artist".to_string(),
                 "Unknown Album".to_string(),
@@ -468,18 +543,47 @@ fn scan_one(path: &Path, artwork_cache: &mut HashMap<String, Option<String>>) ->
 
 /// Walk `scan_root`, then read tags and artwork on a small pool of worker threads.
 /// Tag parsing and JPEG re-encoding dominate scan time and parallelise cleanly per file.
-fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
-    if !scan_root.exists() {
-        return Vec::new();
+/// Folders a music scan should never descend into: hidden and dot folders, the recycle bin and
+/// other `$` system folders, and tooling folders that turn up inside drive roots.
+fn is_skipped_dir(entry: &DirEntry) -> bool {
+    if entry.depth() == 0 || !entry.file_type().is_dir() {
+        return false;
     }
+    let name = entry.file_name().to_string_lossy();
+    let lowered = name.to_ascii_lowercase();
+    name.starts_with('.')
+        || name.starts_with('$')
+        || matches!(lowered.as_str(), "system volume information" | "node_modules" | "__macosx" | "windows" | "program files" | "program files (x86)" | "appdata")
+}
 
-    let paths: Vec<PathBuf> = WalkDir::new(&scan_root)
+/// Files smaller than this are zero-byte placeholders or truncated downloads, never playable songs.
+const MIN_AUDIO_FILE_BYTES: u64 = 4 * 1024;
+
+fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
+    let mut walk_errors = 0usize;
+    let mut paths: Vec<PathBuf> = WalkDir::new(&scan_root)
         .follow_links(true)
         .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file() && is_supported_audio(entry.path()))
+        .filter_entry(|entry| !is_skipped_dir(entry))
+        .filter_map(|entry| match entry {
+            Ok(entry) => Some(entry),
+            Err(_) => {
+                walk_errors += 1;
+                None
+            }
+        })
+        .filter(|entry| {
+            entry.file_type().is_file()
+                && is_supported_audio(entry.path())
+                && entry.metadata().map(|meta| meta.len() >= MIN_AUDIO_FILE_BYTES).unwrap_or(false)
+        })
         .map(|entry| entry.into_path())
         .collect();
+    if walk_errors > 0 {
+        log::warn!("Library scan of {} skipped {walk_errors} unreadable entries", scan_root.display());
+    }
+    // Deterministic order, so id-collision resolution below is stable between scans.
+    paths.sort();
 
     let workers = std::thread::available_parallelism()
         .map(|count| count.get())
@@ -487,22 +591,28 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
         .clamp(1, 8)
         .min(paths.len().max(1));
     let next = AtomicUsize::new(0);
+    let artwork_cache: ArtworkCache = Mutex::new(HashMap::new());
 
-    let mut songs: Vec<ScannedSong> = std::thread::scope(|scope| {
+    let mut indexed: Vec<(usize, ScannedSong)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 let next = &next;
                 let paths = &paths;
+                let artwork_cache = &artwork_cache;
                 scope.spawn(move || {
-                    let mut artwork_cache: HashMap<String, Option<String>> = HashMap::new();
                     let mut out = Vec::new();
                     loop {
                         let index = next.fetch_add(1, Ordering::Relaxed);
                         if index >= paths.len() {
                             break;
                         }
-                        if let Some(song) = scan_one(&paths[index], &mut artwork_cache) {
-                            out.push(song);
+                        let path = &paths[index];
+                        // A decoder or tag-parser panic on one malformed file must not take down
+                        // the worker and every song it had already read.
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan_one(path, artwork_cache))) {
+                            Ok(Some(song)) => out.push((index, song)),
+                            Ok(None) => {}
+                            Err(_) => log::warn!("Skipped {} after a parser panic", path.display()),
                         }
                     }
                     out
@@ -515,16 +625,42 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
             .collect()
     });
 
-    songs.sort_by(|a, b| {
-        a.artist
-            .to_ascii_lowercase()
-            .cmp(&b.artist.to_ascii_lowercase())
-            .then_with(|| a.album.to_ascii_lowercase().cmp(&b.album.to_ascii_lowercase()))
-            .then_with(|| a.track.cmp(&b.track))
-            .then_with(|| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()))
+    // Path-derived ids fold every non-ASCII character to '_', so "காதல்.mp3" and "प्यार.mp3" in the
+    // same folder collide. Keep the first (by path order) and give later ones a path-hash suffix,
+    // so existing ids stay stable and a colliding song is no longer silently dropped.
+    indexed.sort_by_key(|(index, _)| *index);
+    let mut seen_ids: HashSet<String> = HashSet::with_capacity(indexed.len());
+    let mut songs: Vec<ScannedSong> = indexed
+        .into_iter()
+        .map(|(_, mut song)| {
+            if !seen_ids.insert(song.id.clone()) {
+                song.id = format!("{}_{:08x}", song.id, path_hash(&song.path));
+                seen_ids.insert(song.id.clone());
+            }
+            song
+        })
+        .collect();
+
+    songs.sort_by_cached_key(|song| {
+        (
+            song.artist.to_lowercase(),
+            song.album.to_lowercase(),
+            song.track,
+            song.title.to_lowercase(),
+        )
     });
 
     songs
+}
+
+/// FNV-1a of the path, for disambiguating ids that sanitize to the same string.
+fn path_hash(path: &str) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in path.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 #[tauri::command]
@@ -544,6 +680,12 @@ pub async fn scan_music(
         if let Err(error) = persisted {
             log::warn!("Failed to persist library roots: {error}");
         }
+    }
+
+    // An unplugged drive or an offline cloud folder must not read as "this folder is now empty":
+    // the frontend would replace the library with nothing and drop every song's history.
+    if !scan_root.is_dir() {
+        return Err(AmplyError::Unavailable(format!("Folder not available: {}", scan_root.display())));
     }
 
     let songs = tauri::async_runtime::spawn_blocking(move || scan_folder_blocking(scan_root))
@@ -612,9 +754,8 @@ pub async fn pick_music_folders() -> Vec<String> {
 #[tauri::command]
 pub async fn load_embedded_artwork(path: String) -> AmplyResult<Option<String>> {
     let artwork = tauri::async_runtime::spawn_blocking(move || {
-        let tagged_file = Probe::open(Path::new(&path))
-            .and_then(|probe| probe.read())
-            .map_err(|err| err.to_string())?;
+        let tagged_file =
+            read_tagged_file(Path::new(&path)).ok_or_else(|| "Could not read audio tags".to_string())?;
         Ok::<_, String>(extract_embedded_artwork(&tagged_file))
     })
     .await
@@ -656,6 +797,44 @@ pub fn build_album_art_frequency_rust(songs: Vec<ArtworkSongInput>) -> AmplyResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filename_stems_lose_download_junk() {
+        assert_eq!(clean_filename_stem("500 Miles_spotdown.org (1)"), "500 Miles");
+        assert_eq!(clean_filename_stem("500 Miles_spotdown.org"), "500 Miles");
+        assert_eq!(clean_filename_stem("y2mate.com - Artist - Song [dQw4w9WgXcQ]"), "Artist - Song");
+        assert_eq!(clean_filename_stem("01 - Intro"), "Intro");
+        assert_eq!(clean_filename_stem("Artist - Song (128kbps)"), "Artist - Song");
+        assert_eq!(clean_filename_stem("my_song_name"), "my song name");
+        // Real titles that only look like junk stay intact.
+        assert_eq!(clean_filename_stem("29 Intro"), "29 Intro");
+        assert_eq!(clean_filename_stem("500 Miles"), "500 Miles");
+        assert_eq!(clean_filename_stem("16"), "16");
+        assert_eq!(clean_filename_stem("4 Your Eyez Only"), "4 Your Eyez Only");
+    }
+
+    #[test]
+    fn track_numbers_are_not_artists() {
+        assert_eq!(split_artist_title("01 - Intro"), None);
+        assert_eq!(split_artist_title("Daft Punk - Around the World").map(|(artist, _)| artist), Some("Daft Punk".to_string()));
+    }
+
+    #[test]
+    fn scan_skips_system_folders_and_stub_files() {
+        let root = temp_dir("skip");
+        let hidden = root.join("$RECYCLE.BIN");
+        let dotted = root.join(".cache");
+        fs::create_dir_all(&hidden).unwrap();
+        fs::create_dir_all(&dotted).unwrap();
+        fs::write(hidden.join("deleted.mp3"), vec![0u8; 8192]).unwrap();
+        fs::write(dotted.join("cached.mp3"), vec![0u8; 8192]).unwrap();
+        fs::write(root.join("stub.mp3"), b"x").unwrap();
+        fs::write(root.join("song.mp3"), vec![0u8; 8192]).unwrap();
+        let songs = scan_folder_blocking(root.clone());
+        let names: Vec<_> = songs.iter().map(|song| song.filename.clone()).collect();
+        assert_eq!(names, vec!["song.mp3".to_string()]);
+        fs::remove_dir_all(&root).unwrap();
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

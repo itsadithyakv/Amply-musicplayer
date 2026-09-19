@@ -56,13 +56,52 @@ fn content_key(bytes: &[u8]) -> String {
     format!("{hash:016x}{:08x}", bytes.len() as u32)
 }
 
+/// Writes via a temp file unique to this call, so two scan workers storing the same cover never
+/// clobber each other's temp file. Losing the rename race to an identical file counts as success.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("jpg.tmp");
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("{}.{unique}.tmp", std::process::id()));
     {
         let mut file = fs::File::create(&tmp).map_err(|err| err.to_string())?;
         file.write_all(bytes).map_err(|err| err.to_string())?;
     }
-    fs::rename(&tmp, path).map_err(|err| err.to_string())
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(_) if path.exists() => {
+            let _ = fs::remove_file(&tmp);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&tmp);
+            Err(error.to_string())
+        }
+    }
+}
+
+/// Embedded covers larger than this are skipped: they are scans or mistakes, and decoding one on
+/// every worker at once is what spikes memory during a library scan.
+const MAX_PICTURE_BYTES: usize = 25 * 1024 * 1024;
+
+/// Decodes a cover of any supported format (sniffed from the bytes, not trusted from the tag's
+/// MIME type), with dimension and allocation limits, and applies its EXIF orientation so photos
+/// taken sideways do not show up rotated.
+fn decode_picture(bytes: &[u8]) -> Option<image::DynamicImage> {
+    use image::ImageDecoder;
+    if bytes.is_empty() || bytes.len() > MAX_PICTURE_BYTES {
+        return None;
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    let mut decoder = reader.into_decoder().ok()?;
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    image.apply_orientation(orientation);
+    Some(image)
 }
 
 /// Resize an arbitrary picture to a `MAX_EDGE` JPEG, store it, and return its URL.
@@ -75,7 +114,7 @@ pub(crate) fn store_picture(bytes: &[u8]) -> Option<String> {
         return Some(artwork_url(&key));
     }
 
-    let image = image::load_from_memory(bytes).ok()?;
+    let image = decode_picture(bytes)?;
     let (width, height) = image.dimensions();
     if width == 0 || height == 0 {
         return None;
