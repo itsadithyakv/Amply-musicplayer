@@ -645,20 +645,6 @@ pub async fn lyrics_find_candidates_rust(
 }
 
 #[tauri::command]
-pub async fn lyrics_read_cached_rust(
-    app: tauri::AppHandle,
-    song: SongInput,
-) -> AmplyResult<LyricsLoadResult> {
-    let key = cache_key_for_song(&song);
-    if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
-        if !text.trim().is_empty() {
-            return Ok(build_lyrics_result(&text, &cache_key, true));
-        }
-    }
-    Ok(lyrics_status("missing", &key))
-}
-
-#[tauri::command]
 pub async fn lyrics_save_selection_rust(
     app: tauri::AppHandle,
     song: SongInput,

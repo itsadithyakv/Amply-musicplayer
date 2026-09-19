@@ -3,25 +3,32 @@
  * Artist-name specific canonicalisation lives in `@/utils/artists` (normalizeArtistLookupText).
  */
 
-/** Lowercase, NFKD, strip punctuation to spaces, collapse whitespace. Used by the search index. */
+/**
+ * Folds Latin accents ("Beyoncé" -> "beyonce", "JAŸ-Z" -> "jay-z") by dropping the combining
+ * diacritics block only. Marks from other scripts (Devanagari, Tamil, Malayalam vowel signs) are
+ * part of the letters and must stay.
+ */
+const foldLatinAccents = (value: string): string => value.normalize('NFKD').replace(/[̀-ͯ]/g, '');
+
+/** Lowercase, accent-folded, punctuation to spaces, whitespace collapsed; any script. Used by search. */
 export const normalizeSearchText = (value: string): string =>
-  value
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^\w\s-]/g, ' ')
+  foldLatinAccents(value.toLowerCase())
+    .replace(/[^\p{L}\p{N}\p{M}\s-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
 export const tokenizeSearchText = (value: string): string[] =>
   normalizeSearchText(value).split(' ').filter(Boolean);
 
-/** ASCII-only token form: lowercase, `&` -> and, non-alphanumerics to single spaces. */
+/**
+ * Token form: lowercase, accent-folded, `&` -> and, everything but letters and digits (any
+ * script) to single spaces. ASCII input gives the same result as before; non-Latin names no longer
+ * collapse to "" and collide with each other in keys, groupings and mix diversity rules.
+ */
 export const normalizeToken = (value: string | undefined | null): string =>
-  (value ?? '')
-    .trim()
-    .toLowerCase()
+  foldLatinAccents((value ?? '').trim().toLowerCase())
     .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 

@@ -23,9 +23,15 @@ export interface LyricsCandidate {
   preview: string;
 }
 
+/** Statuses from `lyrics_load_rust` besides "ready". */
+type LyricsUnavailableStatus = 'missing' | 'instrumental' | 'offline';
+
 type LyricsLoadResult =
   | { status: 'ready'; lyrics: LyricsResult; cachePath: string }
-  | { status: 'missing'; cachePath: string };
+  | { status: LyricsUnavailableStatus; cachePath: string };
+
+const toUnavailableStatus = (status: string): LyricsUnavailableStatus =>
+  status === 'instrumental' || status === 'offline' ? status : 'missing';
 
 const buildLyricsResult = (raw: string, fromCache: boolean, cachePath: string): LyricsResult => {
   const lines = parseLrc(raw);
@@ -51,11 +57,9 @@ const validateLyricsQuality = (lyrics: LyricsResult): boolean => {
       return false;
     }
 
+    // Sorted, so only the gaps can be wrong: five minutes without a line means a broken file.
     const times = timedLines.map(line => line.timeMs!).sort((a, b) => a - b);
     for (let i = 1; i < times.length; i += 1) {
-      if (times[i] < times[i - 1]) {
-        return false;
-      }
       if (times[i] - times[i - 1] > 300000) {
         return false;
       }
@@ -132,15 +136,11 @@ export const saveLyricsSelection = async (song: Song, candidate: LyricsCandidate
   return buildLyricsResult(result.raw, false, result.cachePath);
 };
 
-export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
-  if (!isTauri()) {
-    return {
-      status: 'missing',
-      cachePath: 'storage/lyrics_cache/unknown.lrc',
-    };
-  }
+/** One lookup per song at a time: reopening the lyrics tab mid-fetch joins the running request. */
+const inFlightLoads = new Map<string, Promise<LyricsLoadResult>>();
 
-  const result = await invoke<{ status: 'ready' | 'missing'; raw?: string | null; cachePath: string; fromCache?: boolean | null }>(
+const loadLyricsUncached = async (song: Song): Promise<LyricsLoadResult> => {
+  const result = await invoke<{ status: string; raw?: string | null; cachePath: string; fromCache?: boolean | null }>(
     'lyrics_load_rust',
     { song: toRustSong(song) },
   );
@@ -155,10 +155,14 @@ export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
     }
   }
 
-  return { status: 'missing', cachePath: result.cachePath };
+  return { status: toUnavailableStatus(result.status), cachePath: result.cachePath };
 };
 
-export const readCachedLyrics = async (song: Song): Promise<LyricsLoadResult> => {
+/**
+ * Cached lyrics, else a remembered miss, else an online lookup (all decided in Rust). Statuses:
+ * "ready", "missing", "instrumental" (no vocals), "offline" (could not reach the service).
+ */
+export const loadLyrics = async (song: Song): Promise<LyricsLoadResult> => {
   if (!isTauri()) {
     return {
       status: 'missing',
@@ -166,18 +170,12 @@ export const readCachedLyrics = async (song: Song): Promise<LyricsLoadResult> =>
     };
   }
 
-  const result = await invoke<{ status: 'ready' | 'missing'; raw?: string | null; cachePath: string; fromCache?: boolean | null }>(
-    'lyrics_read_cached_rust',
-    { song: toRustSong(song) },
-  );
-
-  if (result.status === 'ready' && result.raw) {
-    const lyrics = buildLyricsResult(result.raw, true, result.cachePath);
-    if (song.id) {
-      void markSongCached(song.id, 'lyrics');
-    }
-    return { status: 'ready', lyrics, cachePath: result.cachePath };
+  const key = song.id || song.path;
+  const pending = inFlightLoads.get(key);
+  if (pending) {
+    return pending;
   }
-
-  return { status: 'missing', cachePath: result.cachePath };
+  const request = loadLyricsUncached(song).finally(() => inFlightLoads.delete(key));
+  inFlightLoads.set(key, request);
+  return request;
 };

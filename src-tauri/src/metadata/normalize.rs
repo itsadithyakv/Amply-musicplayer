@@ -732,6 +732,9 @@ mod tests {
         assert_eq!(clean("Mmm Yeah - feat. Pitbull"), "Mmm Yeah");
         assert_eq!(clean("Chase Me (feat. Run The Jewels & Big Boi) - Single Version - Music From The Motion Picture Baby Driver"), "Chase Me");
         // Words inside real titles are never cut.
+        assert_eq!(clean("Hold On - Remix"), "Hold On");
+        assert_eq!(clean("Sweet Child O' Mine (Live at the Ritz)"), "Sweet Child O' Mine");
+        assert_eq!(clean("For Free? - Interlude"), "For Free? - Interlude");
         assert_eq!(clean("29 Intro"), "29 Intro");
         assert_eq!(clean("Happy Birthday"), "Happy Birthday");
         assert_eq!(clean("Cleanin' Out My Closet"), "Cleanin' Out My Closet");

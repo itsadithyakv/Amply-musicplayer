@@ -4,7 +4,28 @@ import { mulberry32, pickRandom, rngFor, seededShuffle, shuffle } from '@/utils/
 import { normalizeLooseKey, normalizeSearchText, normalizeSlug, normalizeToken, tokenizeSearchText } from '@/utils/text';
 import { dailySeed, dayKey, getIsoWeek, isoWeekKey, seedFromKey, weeklySeed } from '@/utils/dateSeed';
 import { cancelIdle, requestIdle, yieldToIdle } from '@/utils/idle';
-import { getMetadataArtistName, getMetadataLookupParts } from '@/utils/artists';
+import { getMetadataArtistName, getMetadataLookupParts, getPrimaryArtistName, normalizeArtistLookupText, splitArtistNames } from '@/utils/artists';
+
+describe('artist credits and every script', () => {
+  it('keeps group names whole but still splits real collaborations', () => {
+    expect(getPrimaryArtistName('AC/DC')).toBe('AC/DC');
+    expect(getPrimaryArtistName('Earth, Wind & Fire')).toBe('Earth, Wind & Fire');
+    expect(getPrimaryArtistName('Tyler, The Creator, Kali Uchis')).toBe('Tyler, The Creator');
+    expect(getPrimaryArtistName('Kool & the Gang')).toBe('Kool & the Gang');
+    expect(getPrimaryArtistName('Tegan and Sara')).toBe('Tegan and Sara');
+    expect(splitArtistNames('Metro Boomin, The Weeknd, 21 Savage')).toHaveLength(3);
+    expect(splitArtistNames('A / B')).toHaveLength(2);
+  });
+
+  it('normalizes non-Latin and accented text instead of erasing it', () => {
+    expect(normalizeToken('दिल तू जान तू')).not.toBe('');
+    expect(normalizeToken('காதல்')).not.toBe(normalizeToken('प्यार'));
+    expect(normalizeToken('Beyoncé')).toBe('beyonce');
+    expect(normalizeToken('JAŸ-Z')).toBe(normalizeToken('JAY-Z'));
+    expect(normalizeSearchText('Gdzie Jest Biały Węgorz')).toContain('wegorz');
+    expect(normalizeArtistLookupText('ഗോപി സുന്ദർ')).not.toBe('');
+  });
+});
 
 describe('metadata artist resolution', () => {
   it('trusts a real artist tag over an "Artist - Title" hint in the title', () => {

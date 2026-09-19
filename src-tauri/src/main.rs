@@ -132,7 +132,6 @@ fn main() {
             metadata::genre::load_song_genre_cache_rust,
             metadata::genre::load_song_genre_rust,
             metadata::lyrics::lyrics_find_candidates_rust,
-            metadata::lyrics::lyrics_read_cached_rust,
             metadata::lyrics::lyrics_save_selection_rust,
             metadata::lyrics::lyrics_load_rust,
             metadata::http::fetch_recommendation_json_rust,

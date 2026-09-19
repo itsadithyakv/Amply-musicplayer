@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { Song } from '@/types/music';
 import { Badge, Button, Card, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
 import {
-  readCachedLyrics,
   loadLyrics,
   saveLyricsSelection,
   type LyricsCandidate,
@@ -194,7 +193,6 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     lyricsAbortRef.current = abortController;
 
     let alive = true;
-    let retryHandle: number | null = null;
     setLoading(true);
     setSavingChoiceId(null);
     setError(null);
@@ -205,17 +203,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
 
     const load = async () => {
       try {
-        const cached = await readCachedLyrics(currentSong);
-        if (abortController.signal.aborted || !alive) {
-          return;
-        }
-
-        if (cached.status === 'ready') {
-          setLyrics(cached.lyrics);
-          return;
-        }
-
-        // No cache yet: attempt a live fetch once.
+        // One call: the backend reads the cache first, then any remembered miss, then looks it up.
         const fetched = await loadLyrics(currentSong);
         if (abortController.signal.aborted || !alive) {
           return;
@@ -227,29 +215,13 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
           return;
         }
 
-        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-        setError(offline ? 'Lyrics unavailable (offline).' : 'No lyrics found for this track yet.');
-
-        retryHandle = window.setTimeout(() => {
-          if (abortController.signal.aborted || !alive) {
-            return;
-          }
-          readCachedLyrics(currentSong)
-            .then((retryResult) => {
-              if (abortController.signal.aborted || !alive) {
-                return;
-              }
-              if (retryResult.status === 'ready') {
-                setLyrics(retryResult.lyrics);
-                setError(null);
-              }
-            })
-            .catch((error) => {
-              if (!abortController.signal.aborted && alive) {
-                console.warn('[Lyrics] Retry failed:', error);
-              }
-            });
-        }, 4000);
+        setError(
+          fetched.status === 'instrumental'
+            ? 'This track is instrumental.'
+            : fetched.status === 'offline'
+              ? 'Could not reach the lyrics service. Check your connection and reopen this tab.'
+              : 'No lyrics found for this track. You can search for them manually.',
+        );
       } catch (error) {
         if (!abortController.signal.aborted && alive) {
           console.warn('[Lyrics] Initial load failed:', error);
@@ -267,9 +239,6 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     return () => {
       alive = false;
       abortController.abort();
-      if (retryHandle !== null) {
-        window.clearTimeout(retryHandle);
-      }
     };
   }, [active, songId, gameMode, surfaceReady]);
 

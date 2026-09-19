@@ -1,4 +1,47 @@
+import { isUploadNoise, isVersionQualifier, stripForLookup, stripUploadNoise } from '@/utils/titles';
+
 const UNKNOWN_ARTIST = 'Unknown Artist';
+
+/** Acts whose names contain separators. Mirrors KNOWN_GROUP_NAMES in src-tauri/src/metadata/normalize.rs. */
+const KNOWN_GROUP_NAMES = [
+  'ac/dc', 'simon & garfunkel', 'earth, wind & fire', 'crosby, stills, nash & young', 'crosby, stills & nash',
+  'tyler, the creator', 'mumford & sons', 'hall & oates', 'daryl hall & john oates', 'blood, sweat & tears',
+  'peter, paul and mary', 'emerson, lake & palmer', 'brooks & dunn', 'big & rich', 'chase & status',
+  'above & beyond', 'years & years', 'iron & wine', 'she & him', 'matt & kim', 'belle & sebastian',
+  'of monsters and men', 'sam & dave', 'sonny & cher', 'ike & tina turner', 'tegan and sara',
+  'macklemore & ryan lewis', 'zach & cody', 'black country, new road',
+];
+
+const isWordChar = (char: string | undefined): boolean => Boolean(char && /[\p{L}\p{N}]/u.test(char));
+
+/**
+ * Replaces a known group name with an indexed placeholder, and hides the separator in
+ * "X & The Y" / "X + The Y" acts, so splitting leaves them whole.
+ */
+const protectGroupNames = (raw: string): { value: string; saved: string[] } => {
+  let value = raw;
+  const saved: string[] = [];
+  const lower = raw.toLowerCase();
+  for (const name of KNOWN_GROUP_NAMES) {
+    const start = lower.indexOf(name);
+    const end = start + name.length;
+    if (start >= 0 && !isWordChar(lower[start - 1]) && !isWordChar(lower[end])) {
+      saved.push(raw.slice(start, end));
+      value = `${raw.slice(0, start)}${saved.length - 1}${raw.slice(end)}`;
+      break;
+    }
+  }
+  value = value.replace(/\s*([&+])\s*(the\s)/gi, (_match, separator: string, the: string) =>
+    ` ${separator === '&' ? '' : ''} ${the}`,
+  );
+  return { value, saved };
+};
+
+const restoreGroupNames = (value: string, saved: string[]): string =>
+  value
+    .replace(/(\d+)/g, (_match, index: string) => saved[Number(index)] ?? '')
+    .replace(//g, '&')
+    .replace(//g, '+');
 
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
@@ -36,7 +79,8 @@ const splitArtistNamesUncached = (artist: string | null | undefined): string[] =
     return [UNKNOWN_ARTIST];
   }
 
-  const normalizedSeparators = raw
+  const { value: protectedRaw, saved } = protectGroupNames(raw);
+  const normalizedSeparators = protectedRaw
     .replace(/\s+feat(?:uring)?\.?\s+/gi, ',')
     .replace(/\s+ft\.?\s+/gi, ',')
     .replace(/\s+with\s+/gi, ',')
@@ -44,11 +88,14 @@ const splitArtistNamesUncached = (artist: string | null | undefined): string[] =
     .replace(/\s*×\s*/g, ',')
     .replace(/\s+x\s+/gi, ',')
     .replace(/\s*&\s*/g, ',')
-    .replace(/[;,/|]+/g, ',');
+    // "/" only with spaces around it, so "AC/DC"-style names survive.
+    .replace(/\s+\/\s+/g, ',')
+    .replace(/[;,|]+/g, ',');
 
   const parts = normalizedSeparators
     .split(',')
-    .flatMap((part) => splitSimpleAnd(part))
+    // A protected group name is one artist: the "A and B" splitter must not run on it.
+    .flatMap((part) => (part.includes('') ? [restoreGroupNames(part, saved)] : splitSimpleAnd(restoreGroupNames(part, saved))))
     .map(normalizePart)
     .filter(Boolean);
 
@@ -116,31 +163,42 @@ export const normalizeArtistLookupText = (value: string): string =>
     .replace(/œ/g, 'oe')
     .replace(/ß/g, 'ss')
     .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
+    // Any script: letters, digits and combining marks (Indic vowel signs are marks).
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
 const normalizeLookupText = normalizeArtistLookupText;
 
+const PLACEHOLDER_ARTISTS = new Set(['unknown artist', 'unknown', 'various artists', 'various', 'va', 'soundcloud', 'youtube']);
+const CHANNEL_WORDS = new Set(['topic', 'vevo', 'records', 'recordings', 'youtube', 'lyrics', 'thefloridaman', 'uploads']);
+
+/**
+ * Whether an artist field is an uploader handle or channel rather than an artist. Whole words and
+ * suffixes only, so real acts containing the letters ("Musical Youth", "The Music") are not
+ * flagged, and a name in a non-Latin script is a real name. Mirrors the Rust check.
+ */
 const isLowConfidenceArtistName = (artist: string): boolean => {
-  const normalized = normalizeLookupText(artist);
-  if (!normalized || normalized === UNKNOWN_ARTIST.toLowerCase()) {
+  if (!artist.trim()) {
     return true;
   }
-  const compact = normalized.replace(/\s+/g, '');
-  return [
-    'topic',
-    'vevo',
-    'official',
-    'channel',
-    'records',
-    'recordings',
-    'music',
-    'thefloridaman',
-    'youtube',
-    'lyrics',
-    'archive',
-  ].some((term) => compact.includes(term));
+  const normalized = normalizeLookupText(artist);
+  if (!normalized || PLACEHOLDER_ARTISTS.has(normalized)) {
+    return true;
+  }
+  const words = normalized.split(' ');
+  const compact = words.join('');
+  const last = words[words.length - 1];
+  if (words[0] === 'user' && /^\d+$/.test(words[1] ?? '')) {
+    return true;
+  }
+  return (
+    words.some((word) => CHANNEL_WORDS.has(word)) ||
+    compact.endsWith('vevo') ||
+    compact.endsWith('topic') ||
+    (words.length > 1 && last === 'music' && words[0] !== 'the') ||
+    (words.length > 1 && (last === 'official' || last === 'channel'))
+  );
 };
 
 const splitArtistTitleHint = (title: string | null | undefined): { artist: string; title: string } | null => {
@@ -152,7 +210,8 @@ const splitArtistTitleHint = (title: string | null | undefined): { artist: strin
       continue;
     }
     const artist = normalizePart(raw.slice(0, index));
-    const trackTitle = normalizePart(raw.slice(index + separator.length));
+    // Only separators are trimmed from the title side: "Kendrick Lamar - HUMBLE." keeps its period.
+    const trackTitle = normalizeWhitespace(raw.slice(index + separator.length).replace(/^[\s\-–—|]+|[\s\-–—|]+$/g, ''));
     if (artist && trackTitle) {
       return { artist, title: trackTitle };
     }
@@ -175,72 +234,28 @@ export const getMetadataArtistName = (
   if (!isLowConfidenceArtistName(primaryArtist)) {
     return primaryArtist;
   }
+  // "War Pigs - 2009 Remaster": the right side is a version, so the left side is the title.
+  if (isVersionQualifier(parsed.title) || isUploadNoise(parsed.title)) {
+    return primaryArtist;
+  }
   return normalizeLookupText(parsed.artist) ? parsed.artist : primaryArtist;
 };
 
+/** Drops an "Artist - " prefix when it names the song's own artist. */
+const stripArtistPrefix = (title: string, artistHint: string | null | undefined): string => {
+  const parsed = splitArtistTitleHint(title);
+  const parsedKey = parsed ? normalizeLookupText(parsed.artist) : '';
+  if (parsed && parsedKey && artistHint && parsedKey === normalizeLookupText(artistHint)) {
+    return parsed.title;
+  }
+  return title;
+};
+
+/** The name to look a song up by: artist prefix, upload junk, versions and credits removed. */
 const cleanMetadataTrackTitle = (
   title: string | null | undefined,
   artistHint?: string | null,
-): string => {
-  let cleaned = normalizeWhitespace(title ?? '');
-  const parsed = splitArtistTitleHint(cleaned);
-  if (parsed && artistHint && normalizeLookupText(parsed.artist) === normalizeLookupText(artistHint)) {
-    cleaned = parsed.title;
-  }
-
-  const lower = cleaned.toLowerCase();
-  const cutTokens = [' feat.', ' ft.', ' featuring ', ' prod.', ' produced by '];
-  const cutIndex = cutTokens
-    .map((token) => lower.indexOf(token))
-    .filter((index) => index >= 0)
-    .sort((a, b) => a - b)[0];
-  if (cutIndex !== undefined) {
-    cleaned = cleaned.slice(0, cutIndex);
-  }
-
-  const noiseTokens = [
-    'official',
-    'audio',
-    'video',
-    'lyrics',
-    'lyric',
-    'visualizer',
-    'hq',
-    'hd',
-    'high quality',
-    'remaster',
-    'remastered',
-    'instrumental',
-    'acapella',
-    'slowed',
-    'reverb',
-    'sped up',
-    'speed up',
-    'clean',
-    'explicit',
-    'vocals',
-    'orchestral',
-    'intro',
-    'outro',
-    'thefloridaman',
-  ];
-  const noisyLower = cleaned.toLowerCase();
-  const noiseIndex = noiseTokens
-    .map((token) => noisyLower.indexOf(token))
-    .filter((index) => index >= 0)
-    .sort((a, b) => a - b)[0];
-  if (noiseIndex !== undefined) {
-    cleaned = cleaned.slice(0, noiseIndex);
-  }
-
-  return normalizePart(
-    normalizeWhitespace(
-      cleaned
-        .replace(/\s*[\(\[].*?[\)\]]/g, ' ')
-        .replace(/\b(remaster(?:ed)?|mono|stereo|bonus track|explicit|clean)\b/gi, ' '),
-    ),
-  );
-};
+): string => normalizePart(stripForLookup(stripArtistPrefix(normalizeWhitespace(title ?? ''), artistHint)));
 
 export const getMetadataLookupParts = (
   artist: string | null | undefined,
@@ -261,48 +276,23 @@ const titleHasArtistPrefix = (artist: string | null | undefined, title: string |
   return Boolean(artistKey && parsedKey && (artistKey === parsedKey || artistKey.includes(parsedKey) || parsedKey.includes(artistKey)));
 };
 
-const titleHasUploadNoise = (title: string | null | undefined): boolean => {
-  const normalized = normalizeLookupText(title ?? '');
-  if (!normalized) {
-    return false;
-  }
-  return [
-    'official',
-    'audio',
-    'video',
-    'lyrics',
-    'lyric',
-    'visualizer',
-    'hq',
-    'hd',
-    'high quality',
-    'remaster',
-    'remastered',
-    'instrumental',
-    'acapella',
-    'slowed',
-    'reverb',
-    'sped up',
-    'speed up',
-    'vocals',
-    'orchestral',
-    'intro',
-    'outro',
-    'thefloridaman',
-  ].some((token) => normalized.includes(token));
-};
-
+/**
+ * The title to show, when the tag needs repair: an uploader's "Artist - " prefix and upload junk
+ * ("(Official Audio)", "[HD]", "(prod. X)") are removed. Version information the artist put in the
+ * name ("- 2013 Remaster", "(with Tems)") is kept. Returns null when the tag is fine as it is.
+ */
 export const getDisplayTitleRepair = (
   artist: string | null | undefined,
   title: string | null | undefined,
 ): string | null => {
   const raw = normalizeWhitespace(title ?? '');
-  if (!raw || (!titleHasArtistPrefix(artist, raw) && !titleHasUploadNoise(raw))) {
+  if (!raw) {
     return null;
   }
-
-  const repaired = normalizePart(getMetadataLookupParts(artist, raw).title);
-  if (!repaired || normalizeLookupText(repaired) === normalizeLookupText(raw)) {
+  const withoutPrefix = titleHasArtistPrefix(artist, raw) ? splitArtistTitleHint(raw)?.title ?? raw : raw;
+  // Not normalizePart: its trim eats trailing periods, which belong to "HUMBLE.", "DNA.", "T.N.T.".
+  const repaired = normalizeWhitespace(stripUploadNoise(withoutPrefix));
+  if (!repaired || repaired === raw) {
     return null;
   }
   if (normalizeLookupText(repaired) === normalizeLookupText(getPrimaryArtistName(artist))) {

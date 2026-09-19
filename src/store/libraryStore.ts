@@ -178,7 +178,6 @@ type SongActivityPatch = Partial<
     | 'playCount'
     | 'lastPlayed'
     | 'favorite'
-    | 'title'
     | 'genre'
     | 'albumArt'
     | 'skipCount'
@@ -673,6 +672,20 @@ const loadSongActivityCache = async (): Promise<SongActivityCache> => {
     return songActivityCache;
   }
   songActivityCache = await readStorageJson<SongActivityCache>(songActivityPath, {});
+  // Older versions stored play-time title "repairs" here, and those overrode the tag forever: the
+  // old substring cleaner turned "Hotel California - 2013 Remaster" into "2013". Titles now come
+  // from the tag at every scan, so any stored title is dropped (once; the file is rewritten).
+  let purged = 0;
+  for (const patch of Object.values(songActivityCache)) {
+    if (patch && typeof patch === 'object' && 'title' in patch) {
+      delete (patch as { title?: unknown }).title;
+      purged += 1;
+    }
+  }
+  if (purged) {
+    recordPerfEvent('library.song-activity.title-overrides-purged', { purged });
+    void writeStorageJsonDebounced(songActivityPath, songActivityCache, 1500);
+  }
   songActivityRevision += 1;
   return songActivityCache;
 };
@@ -1677,17 +1690,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       skipGenre,
       skipLyrics,
     });
-
-    if (repairedTitle && repairedTitle !== song.title) {
-      tasks.push((async () => {
-        await updateSongActivityPatch(song.id, (current) => ({
-          ...current,
-          title: repairedTitle,
-        }));
-        set((state) => ({ activityVersion: state.activityVersion + 1 }));
-        recordPerfEvent('metadata.current-song.title-repair', { songId, title: repairedTitle });
-      })());
-    }
 
     if (!artworkCached) {
       tasks.push((async () => {
