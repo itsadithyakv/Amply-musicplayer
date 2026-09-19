@@ -522,7 +522,7 @@ const AppShell = () => {
         className={`grid min-h-0 ${
           gameMode
             ? 'grid-cols-1'
-            : 'grid-cols-[var(--sidebar-w-collapsed)_minmax(0,1fr)] lg:grid-cols-[var(--sidebar-w)_minmax(0,1fr)_320px]'
+            : 'grid-cols-[var(--sidebar-w-collapsed)_minmax(0,1fr)] lg:grid-cols-[var(--sidebar-w)_minmax(0,1fr)] xl:grid-cols-[var(--sidebar-w)_minmax(0,1fr)_320px]'
         }`}
       >
         {gameMode ? null : (
@@ -585,8 +585,8 @@ const AppShell = () => {
             fallback={<ShellFallback label="Track details unavailable." />}
             onError={(error) => recordUiError('now-playing-panel', error)}
           >
-            <Suspense fallback={<div className="hidden bg-amply-bg lg:block" />}>
-              <div className="hidden min-h-0 lg:block">
+            <Suspense fallback={<div className="hidden bg-amply-bg xl:block" />}>
+              <div className="hidden min-h-0 xl:block">
               {heavyPanelsReady ? (
                 <NowPlayingPanel />
               ) : (

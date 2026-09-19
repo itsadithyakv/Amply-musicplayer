@@ -21,6 +21,16 @@ fn main() {
     let (audio_tx, audio_rx) = mpsc::channel::<AudioCommand>();
 
     tauri::Builder::default()
+        // Must be the first plugin: a second launch (autostart plus a manual start, a double-click on
+        // the shortcut) hands off to the running player instead of opening a rival that fights it
+        // for the audio device, the media keys and the mini player.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -146,8 +156,9 @@ fn main() {
 }
 
 fn close_all_windows(app: &tauri::AppHandle) {
+    // destroy(), not close(): close() would re-enter this CloseRequested handler for every window.
     for (label, window) in app.webview_windows() {
-        if let Err(error) = window.close() {
+        if let Err(error) = window.destroy() {
             log::warn!("Failed to close window {label}: {error}");
         }
     }

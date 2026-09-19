@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { PhysicalPosition, currentMonitor } from '@tauri-apps/api/window';
+import { PhysicalPosition, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { usePlayerStore } from '@/store/playerStore';
 import { useCurrentSongSnapshot } from '@/hooks/useLibraryViews';
@@ -101,7 +101,8 @@ export const useOverlayController = (enabled: boolean): void => {
     };
 
     const positionNewOverlay = async (overlay: WebviewWindow) => {
-      const monitor = await currentMonitor();
+      // The main window's monitor; when it is minimized (parked at -32000) there is none, so use the primary.
+      const monitor = (await currentMonitor()) ?? (await primaryMonitor());
       if (!monitor) {
         await overlay.setPosition(new PhysicalPosition(100, 200));
         return;

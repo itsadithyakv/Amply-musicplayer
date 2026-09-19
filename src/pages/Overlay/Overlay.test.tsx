@@ -23,9 +23,17 @@ vi.mock('@tauri-apps/api/window', () => ({
   LogicalSize: class {
     constructor(public width: number, public height: number) {}
   },
+  PhysicalPosition: class {
+    constructor(public x: number, public y: number) {}
+  },
+  currentMonitor: vi.fn(async () => null),
   getCurrentWindow: () => ({
     setBackgroundColor: vi.fn(async () => undefined),
     setSize: vi.fn(async () => undefined),
+    setPosition: vi.fn(async () => undefined),
+    outerPosition: vi.fn(async () => ({ x: 0, y: 0 })),
+    onMoved: vi.fn(async () => () => undefined),
+    onScaleChanged: vi.fn(async () => () => undefined),
     startDragging: vi.fn(),
   }),
 }));

@@ -15,7 +15,6 @@ use windows::{
     core::Interface,
     Win32::{
         Foundation::{LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST},
         Media::Audio::{
             eMultimedia, eRender, AudioSessionStateActive, IAudioSessionControl2, IAudioSessionManager2,
             IMMDeviceEnumerator, MMDeviceEnumerator,
@@ -27,7 +26,12 @@ use windows::{
                 PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
             },
         },
-        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, PostThreadMessageW, WM_QUIT},
+        UI::{
+            Shell::{
+                SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+            },
+            WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, PostThreadMessageW, WM_QUIT},
+        },
     },
 };
 
@@ -35,7 +39,7 @@ use windows::Win32::UI::{
     Input::KeyboardAndMouse::{VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MEDIA_STOP},
     WindowsAndMessaging::{
         CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
-        MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+        MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     },
 };
 
@@ -99,21 +103,35 @@ pub(crate) fn start_windows_audio_focus_watcher(app: tauri::AppHandle) {
     }
 }
 
+/// Maps a media virtual-key code to (action, bit in `MEDIA_KEYS_DOWN`).
+fn media_key_action(vk_code: u32) -> Option<(&'static str, u8)> {
+    match vk_code {
+        vk if vk == VK_MEDIA_PLAY_PAUSE.0 as u32 => Some(("playpause", 1)),
+        vk if vk == VK_MEDIA_NEXT_TRACK.0 as u32 => Some(("next", 2)),
+        vk if vk == VK_MEDIA_PREV_TRACK.0 as u32 => Some(("previous", 4)),
+        vk if vk == VK_MEDIA_STOP.0 as u32 => Some(("stop", 8)),
+        _ => None,
+    }
+}
+
 pub(crate) fn start_windows_media_key_listener(app: tauri::AppHandle) {
     static MEDIA_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+    /// Media keys currently held. Windows auto-repeats WM_KEYDOWN while a key is held, which would
+    /// toggle play/pause several times per press; only the first down per press is acted on.
+    static MEDIA_KEYS_DOWN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
     unsafe extern "system" fn hook_proc(code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         if code == HC_ACTION as i32 {
             let message = w_param.0 as u32;
-            if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
-                let info = *(l_param.0 as *const KBDLLHOOKSTRUCT);
-                let action = match info.vkCode {
-                    vk if vk == VK_MEDIA_PLAY_PAUSE.0 as u32 => Some("playpause"),
-                    vk if vk == VK_MEDIA_NEXT_TRACK.0 as u32 => Some("next"),
-                    vk if vk == VK_MEDIA_PREV_TRACK.0 as u32 => Some("previous"),
-                    vk if vk == VK_MEDIA_STOP.0 as u32 => Some("stop"),
-                    _ => None,
-                };
+            let info = *(l_param.0 as *const KBDLLHOOKSTRUCT);
+            if message == WM_KEYUP || message == WM_SYSKEYUP {
+                if let Some((_, bit)) = media_key_action(info.vkCode) {
+                    MEDIA_KEYS_DOWN.fetch_and(!bit, Ordering::SeqCst);
+                }
+            } else if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
+                let action = media_key_action(info.vkCode)
+                    .filter(|(_, bit)| MEDIA_KEYS_DOWN.fetch_or(*bit, Ordering::SeqCst) & bit == 0)
+                    .map(|(action, _)| action);
                 if let Some(action) = action {
                     if let Some(app) = MEDIA_APP.get() {
                         if let Err(error) = app.emit(
@@ -296,7 +314,7 @@ fn poll_focus_state(
 
     process_names.retain(|pid, _| seen_pids.contains(pid));
 
-    Ok((found, active_apps, is_foreground_fullscreen()))
+    Ok((found, active_apps, is_foreground_fullscreen(current_pid)))
 }
 
 fn process_name_from_pid(pid: u32) -> Option<String> {
@@ -335,37 +353,25 @@ fn process_name_from_pid(pid: u32) -> Option<String> {
     }
 }
 
-fn is_foreground_fullscreen() -> bool {
+/// Whether a genuinely fullscreen app (exclusive D3D, borderless fullscreen game or video,
+/// presentation mode) is in front.
+///
+/// Asks the shell rather than comparing window rectangles: a rectangle test also matches every
+/// maximized window (its frame overhangs the monitor), the desktop, and Amply itself, which made
+/// auto-pause stop working whenever a browser was maximized.
+fn is_foreground_fullscreen(current_pid: u32) -> bool {
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            return false;
+        if !hwnd.0.is_null() {
+            let mut owner_pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut owner_pid));
+            if owner_pid == current_pid {
+                return false;
+            }
         }
-        let mut rect = std::mem::MaybeUninit::uninit();
-        if GetWindowRect(hwnd, rect.as_mut_ptr()).is_err() {
-            return false;
-        }
-        let rect = rect.assume_init();
-        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        if monitor.0.is_null() {
-            return false;
-        }
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return false;
-        }
-        let win_w = rect.right - rect.left;
-        let win_h = rect.bottom - rect.top;
-        let mon_w = info.rcMonitor.right - info.rcMonitor.left;
-        let mon_h = info.rcMonitor.bottom - info.rcMonitor.top;
-        if mon_w <= 0 || mon_h <= 0 {
-            return false;
-        }
-        let coverage_w = win_w as f32 / mon_w as f32;
-        let coverage_h = win_h as f32 / mon_h as f32;
-        coverage_w >= 0.95 && coverage_h >= 0.95
+        matches!(
+            SHQueryUserNotificationState(),
+            Ok(state) if state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_BUSY || state == QUNS_PRESENTATION_MODE
+        )
     }
 }

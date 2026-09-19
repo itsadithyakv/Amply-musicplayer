@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { emitTo, listen } from '@tauri-apps/api/event';
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition, type Window } from '@tauri-apps/api/window';
 import { isTauri } from '@/services/storageService';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { IconButton } from '@/components/ui';
@@ -43,6 +43,28 @@ const OVERLAY_HEIGHT = PILL_HEIGHT + WINDOW_MARGIN * 2;
 
 const isOverlayTheme = (value: unknown): value is OverlayTheme => value === 'light' || value === 'dark';
 
+/**
+ * Moves the overlay so a window of `logicalWidth` fits inside its monitor's work area (the screen
+ * minus the taskbar). Returns the horizontal shift applied, in physical pixels (negative = left).
+ * Near the right edge, or on a narrow portrait screen, the pill slides left instead of expanding
+ * off-screen; a drag that ends half off a monitor is pulled back.
+ */
+const fitToWorkArea = async (overlayWindow: Window, logicalWidth: number): Promise<number> => {
+  const monitor = await currentMonitor();
+  if (!monitor) return 0;
+  const area = monitor.workArea ?? { position: monitor.position, size: monitor.size };
+  const width = Math.round(logicalWidth * monitor.scaleFactor);
+  const height = Math.round(OVERLAY_HEIGHT * monitor.scaleFactor);
+  const position = await overlayWindow.outerPosition();
+  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
+  const x = clamp(position.x, area.position.x, area.position.x + area.size.width - width);
+  const y = clamp(position.y, area.position.y, area.position.y + area.size.height - height);
+  if (x !== position.x || y !== position.y) {
+    await overlayWindow.setPosition(new PhysicalPosition(x, y));
+  }
+  return x - position.x;
+};
+
 /** Wrapper that collapses a control to zero width while the pill is at rest. */
 const revealClass =
   'invisible w-0 shrink-0 overflow-hidden opacity-0 transition-[width,margin,opacity] duration-150 group-data-[state=expanded]:visible group-data-[state=expanded]:w-7 group-data-[state=expanded]:opacity-100';
@@ -52,6 +74,8 @@ const OverlayPage = () => {
   const [expanded, setExpanded] = useState(false);
   const desiredExpandedRef = useRef(false);
   const resizingRef = useRef(false);
+  /** Physical px the pill slid left to fit its expanded width; undone when it collapses. */
+  const expandShiftRef = useRef(0);
 
   const emitMainCommand = useCallback(async (eventName: string) => {
     if (!isTauri()) return;
@@ -75,10 +99,18 @@ const OverlayPage = () => {
       let applied: boolean | null = null;
       for (let attempt = 0; attempt < 3 && applied !== desiredExpandedRef.current; attempt += 1) {
         const target: boolean = desiredExpandedRef.current;
-        await overlayWindow.setSize(new LogicalSize(
-          target ? EXPANDED_WIDTH : COLLAPSED_WIDTH,
-          OVERLAY_HEIGHT,
-        ));
+        if (target) {
+          // Slide first, then grow, so the expanded pill never flashes past the screen edge.
+          expandShiftRef.current = await fitToWorkArea(overlayWindow, EXPANDED_WIDTH);
+          await overlayWindow.setSize(new LogicalSize(EXPANDED_WIDTH, OVERLAY_HEIGHT));
+        } else {
+          await overlayWindow.setSize(new LogicalSize(COLLAPSED_WIDTH, OVERLAY_HEIGHT));
+          if (expandShiftRef.current !== 0) {
+            const position = await overlayWindow.outerPosition();
+            await overlayWindow.setPosition(new PhysicalPosition(position.x - expandShiftRef.current, position.y));
+            expandShiftRef.current = 0;
+          }
+        }
         applied = target;
       }
     })().catch((error) => {
@@ -92,6 +124,35 @@ const OverlayPage = () => {
     setExpanded(nextExpanded);
     resizeOverlay(nextExpanded);
   }, [resizeOverlay]);
+
+  // Pull the pill back on screen after a drag, a monitor unplug, or a resolution/DPI change.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const overlayWindow = getCurrentWindow();
+    let settleHandle: number | null = null;
+    let unlisten: (() => void) | null = null;
+    let alive = true;
+    const settle = () => {
+      if (settleHandle !== null) window.clearTimeout(settleHandle);
+      settleHandle = window.setTimeout(() => {
+        if (resizingRef.current) return;
+        const width = desiredExpandedRef.current ? EXPANDED_WIDTH : COLLAPSED_WIDTH;
+        void fitToWorkArea(overlayWindow, width).catch(() => {});
+      }, 300);
+    };
+    void Promise.all([overlayWindow.onMoved(settle), overlayWindow.onScaleChanged(settle)])
+      .then((disposers) => {
+        const dispose = () => disposers.forEach((stop) => stop());
+        if (alive) unlisten = dispose;
+        else dispose();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
+      if (settleHandle !== null) window.clearTimeout(settleHandle);
+    };
+  }, []);
 
   useEffect(() => {
     const root = document.getElementById('root');

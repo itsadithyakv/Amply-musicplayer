@@ -15,12 +15,13 @@
         "title": "Amply",
         "width": 1440,
         "height": 900,
-        "minWidth": 1100,
-        "minHeight": 700,
+        "minWidth": 760,
+        "minHeight": 540,
         "resizable": true,
         "fullscreen": false,
         "devtools": false,
-        "maximized": true
+        "maximized": true,
+        "center": true
       }
     ],
     "security": {
