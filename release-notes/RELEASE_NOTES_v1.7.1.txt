@@ -1,0 +1,26 @@
+Amply v1.7.1
+Release date: 2026-09-26
+
+Artist details
+- Artist bios and photos now come from the right artist. Amply matches the songs in your library
+  to the artist on MusicBrainz and follows that artist's own link to Wikipedia, instead of
+  searching Wikipedia by name. Artists who share a name with a city, a composer or another band
+  (Berlin, Bellini, Player, Nirvana, Drake, Shaggy) now show the right page.
+- Song, album and list pages are never shown as an artist bio.
+- When no page can be tied to an artist, the panel stays empty instead of showing a stranger.
+- Artist names in any script resolve (for example 千葉雄喜 -> Yuki Chiba).
+- Profiles saved by earlier versions are re-checked automatically in the background.
+- Artist photos served from Wikipedia's new thumbnail host load again.
+- Genre and artwork lookups compare whole artist names, so "Drake" no longer matches "Drake Bell".
+
+Library and playback
+- Every listed format plays (.wav, .ogg, .aiff, ALAC .m4a); unreadable files and missing drives
+  no longer stop a scan.
+- 49 broken titles healed (e.g. "Hotel California" no longer shows as "2013"); titles in every
+  script are kept intact.
+
+Lyrics
+- Fewer requests, stricter matching, and clear states for instrumental tracks and offline mode.
+
+Window
+- Fits small and portrait screens, runs as a single instance, and detects real fullscreen apps.
