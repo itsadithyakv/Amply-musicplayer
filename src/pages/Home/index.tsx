@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { Icon, IconButton, Kicker, PageHeader, SectionTitle, Surface } from '@/components/ui';
 import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistProfileService';
+import { getArtistLookupContext } from '@/utils/artists';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryVersions } from '@/store/libraryDataStore';
@@ -178,7 +179,7 @@ const HomePage = () => {
       for (const artistName of artistNames) {
         let result = await readCachedArtistProfile(artistName);
         if (result.status === 'missing' && !metadataFetchPaused) {
-          result = await loadArtistProfile(artistName);
+          result = await loadArtistProfile(artistName, { context: getArtistLookupContext(snapshotRef.current?.songs ?? [], artistName) });
         }
         if (!alive) {
           return;

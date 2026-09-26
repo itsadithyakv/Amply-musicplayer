@@ -191,62 +191,116 @@ pub(crate) fn is_music_related_text(value: &str) -> bool {
     keywords.iter().any(|keyword| text.contains(keyword))
 }
 
-pub(crate) fn is_likely_artist_title(title: &str, artist_name: &str) -> bool {
-    let normalized_title = normalize_text(title);
-    let normalized_artist = normalize_text(artist_name);
-    let compact_title = normalize_compact(title);
-    let compact_artist = normalize_compact(artist_name);
-
-    normalized_title == normalized_artist
-        || normalized_title.starts_with(&format!("{normalized_artist} "))
-        || normalized_title.ends_with(&format!(" {normalized_artist}"))
-        || (!compact_artist.is_empty()
-            && (compact_title == compact_artist
-                || compact_title.starts_with(&compact_artist)
-                || compact_title.ends_with(&compact_artist)))
+/// Whether two credits name the same act. Case, accents, stylised letters, punctuation, spacing and
+/// a leading "The" are ignored ("JAŸ-Z" = "Jay-Z", "The Weeknd" = "Weeknd", "A$AP" = "ASAP");
+/// nothing else is, so "Drake" is not "Drake Bell" and "Future" is not "Future Islands".
+pub(crate) fn same_artist_name(left: &str, right: &str) -> bool {
+    let key = |value: &str| {
+        let normalized = normalize_text(value);
+        normalized.strip_prefix("the ").unwrap_or(&normalized).replace(' ', "")
+    };
+    let left = key(left);
+    !left.is_empty() && left == key(right)
 }
 
-pub(crate) fn is_non_artist_page_title(title: &str) -> bool {
-    let normalized_title = normalize_text(title);
-    [
-        "discography",
-        "songs",
-        "albums",
-        "awards",
-        "tour",
-        "concert",
-        "filmography",
-        "production discography",
-        " song",
-    ]
-    .iter()
-    .any(|term| normalized_title.contains(term))
+/// A Wikipedia page title without its disambiguating suffix: "Berlin (band)" -> "Berlin".
+pub(crate) fn page_title_core(title: &str) -> &str {
+    let trimmed = title.trim();
+    match trimmed.rfind(" (") {
+        Some(index) if trimmed.ends_with(')') => trimmed[..index].trim(),
+        _ => trimmed,
+    }
 }
 
-pub(crate) fn artist_identity_matches(title: &str, summary: &str, source_url: Option<&str>, artist_name: &str) -> bool {
-    let normalized_artist = normalize_text(artist_name);
-    if normalized_artist.is_empty() {
-        return false;
-    }
+/// The page title in an English Wikipedia article URL: ".../wiki/Tyler%2C_the_Creator" ->
+/// "Tyler, the Creator". None for anything that is not an en.wikipedia.org article.
+pub(crate) fn wikipedia_title_from_url(url: &str) -> Option<String> {
+    let path = url
+        .strip_prefix("https://en.wikipedia.org/wiki/")
+        .or_else(|| url.strip_prefix("http://en.wikipedia.org/wiki/"))?;
+    let path = path.split(['#', '?']).next().unwrap_or("");
+    let decoded = percent_decode(path)?.replace('_', " ");
+    let title = decoded.trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
 
-    if is_non_artist_page_title(title) {
-        return false;
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = value.get(index + 1..index + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
     }
+    String::from_utf8(out).ok()
+}
 
-    let title_matches = is_likely_artist_title(title, artist_name);
-    let summary_matches = identity_contains(summary, artist_name);
-    if title_matches && summary_matches {
-        return true;
+/// What a Wikipedia page is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageKind {
+    /// A musician, band, producer or other act.
+    Artist,
+    /// A song, album, tour or other work: "Planet Caravan is a song by Black Sabbath".
+    Work,
+    /// A list, discography or awards page.
+    List,
+    Disambiguation,
+    /// Anything else: a city, a person known for something other than music, a brand.
+    Other,
+}
+
+/// Role nouns that make the subject of a lead sentence an act.
+const ACT_NOUNS: &[&str] = &[
+    "band", "group", "duo", "trio", "quartet", "quintet", "ensemble", "orchestra", "choir", "collective",
+    "project", "supergroup", "musician", "singer", "rapper", "songwriter", "vocalist", "producer", "dj",
+    "composer", "lyricist", "guitarist", "pianist", "drummer", "bassist", "violinist", "keyboardist",
+    "saxophonist", "trumpeter", "cellist", "instrumentalist", "conductor", "artist", "mc", "emcee",
+    "beatmaker", "performer", "entertainer",
+];
+
+/// Nouns that make the subject of a lead sentence a work or an event rather than an act.
+const WORK_NOUNS: &[&str] = &[
+    "song", "single", "album", "ep", "mixtape", "soundtrack", "track", "ballad", "anthem", "hymn", "tour",
+    "concert", "festival", "film", "series", "episode", "novel", "game", "discography", "list",
+];
+
+/// Classifies a page from its title and opening text. The lead sentence decides: the first role
+/// noun after "is a" / "were an" / "is the" names what the subject is, so "Kanye West ... is an
+/// American rapper" is an act while "Runaway is a song by American rapper Kanye West" is a work.
+pub(crate) fn classify_wikipedia_page(title: &str, lead: &str) -> PageKind {
+    if is_disambiguation_text(lead) {
+        return PageKind::Disambiguation;
     }
-
-    if summary_matches && is_music_related_text(summary) {
-        return true;
+    let normalized_title = normalize_text(title);
+    if normalized_title.starts_with("list of")
+        || ["discography", "filmography", "videography", "awards and nominations", "concert tours"]
+            .iter()
+            .any(|term| normalized_title.contains(term))
+    {
+        return PageKind::List;
     }
-
-    source_url
-        .map(|url| identity_contains(url, artist_name))
-        .unwrap_or(false)
-        && summary_matches
+    let normalized_lead = normalize_text(lead);
+    let words: Vec<&str> = normalized_lead.split_whitespace().collect();
+    let Some(copula) = words.windows(2).position(|pair| {
+        matches!(pair[0], "is" | "was" | "are" | "were") && matches!(pair[1], "a" | "an" | "the")
+    }) else {
+        return PageKind::Other;
+    };
+    for word in words.iter().skip(copula + 2).take(16) {
+        if ACT_NOUNS.contains(word) {
+            return PageKind::Artist;
+        }
+        if WORK_NOUNS.contains(word) {
+            return if *word == "list" || *word == "discography" { PageKind::List } else { PageKind::Work };
+        }
+    }
+    PageKind::Other
 }
 
 pub(crate) fn to_word_range(value: &str, min_words: usize, max_words: usize) -> String {
@@ -479,23 +533,14 @@ pub(crate) fn is_exact_match(candidate: &str, target: &str) -> bool {
     normalize_title(candidate) == normalize_title(target)
 }
 
+/// Whether any act credited in `candidate` is an act credited in `target`. Names are compared
+/// whole ("Drake" never matches "Drake Bell"), so a same-titled song by another act is rejected.
 pub(crate) fn is_artist_close_match(candidate: &str, target: &str) -> bool {
     let left_parts = split_artists(candidate);
     let right_parts = split_artists(target);
-    if left_parts.is_empty() || right_parts.is_empty() {
-        return false;
-    }
-    for left in &left_parts {
-        for right in &right_parts {
-            if left == right {
-                return true;
-            }
-            if left.len() >= 3 && right.len() >= 3 && (left.contains(right) || right.contains(left)) {
-                return true;
-            }
-        }
-    }
-    false
+    left_parts
+        .iter()
+        .any(|left| right_parts.iter().any(|right| same_artist_name(left, right)))
 }
 
 pub(crate) fn normalize_whitespace(value: &str) -> String {
@@ -815,20 +860,45 @@ mod tests {
     }
 
     #[test]
-    fn artist_identity_accepts_birth_name_inserted_between_tokens() {
-        let summary = "Ye, born Kanye Omari West, is an American rapper, singer, songwriter, and record producer.";
-        assert!(identity_contains(summary, "Kanye West"));
-        assert!(artist_identity_matches("Ye", summary, Some("https://en.wikipedia.org/wiki/Ye"), "Kanye West"));
+    fn artist_names_compare_whole_not_by_substring() {
+        assert!(same_artist_name("JAŸ-Z", "Jay-Z"));
+        assert!(same_artist_name("The Weeknd", "Weeknd"));
+        assert!(same_artist_name("A$AP Rocky", "ASAP Rocky"));
+        assert!(same_artist_name("*NSYNC", "NSYNC"));
+        assert!(same_artist_name("Tyler, The Creator", "Tyler, the Creator"));
+        assert!(!same_artist_name("Drake", "Drake Bell"));
+        assert!(!same_artist_name("Future", "Future Islands"));
+        assert!(!same_artist_name("", ""));
+        assert!(!is_artist_close_match("Drake Bell", "Drake"));
+        assert!(is_artist_close_match("50 Cent, Olivia", "Olivia"));
     }
 
     #[test]
-    fn artist_identity_rejects_song_pages() {
-        let summary = "Runaway is a song by American rapper Kanye West from his fifth studio album.";
-        assert!(!artist_identity_matches(
-            "Runaway (Kanye West song)",
-            summary,
-            Some("https://en.wikipedia.org/wiki/Runaway_(Kanye_West_song)"),
-            "Kanye West"
-        ));
+    fn page_titles_come_apart_from_urls_and_qualifiers() {
+        assert_eq!(page_title_core("Berlin (band)"), "Berlin");
+        assert_eq!(page_title_core("Tyler, the Creator"), "Tyler, the Creator");
+        assert_eq!(page_title_core("Many Men (Wish Death)"), "Many Men");
+        assert_eq!(
+            wikipedia_title_from_url("https://en.wikipedia.org/wiki/Tyler%2C_the_Creator").as_deref(),
+            Some("Tyler, the Creator")
+        );
+        assert_eq!(wikipedia_title_from_url("https://en.wikipedia.org/wiki/Beyonc%C3%A9").as_deref(), Some("Beyoncé"));
+        assert_eq!(wikipedia_title_from_url("https://de.wikipedia.org/wiki/Bellini"), None);
+    }
+
+    #[test]
+    fn lead_sentence_tells_acts_from_songs_lists_and_places() {
+        let kind = |title: &str, lead: &str| classify_wikipedia_page(title, lead);
+        // Real leads from the app's cache.
+        assert_eq!(kind("Kanye West", "Ye ( YAY; born Kanye Omari West, June 8, 1977) is an American rapper, songwriter, record producer."), PageKind::Artist);
+        assert_eq!(kind("Tame Impala", "Tame Impala is the psychedelic music project of Australian singer Kevin Parker."), PageKind::Artist);
+        assert_eq!(kind("ABBA", "ABBA ( AB-ə [ˈâbːa]) (often stylised as ABBA) were a Swedish pop music group formed in Stockholm."), PageKind::Artist);
+        assert_eq!(kind("C418", "Daniel Rosenfeld, known professionally as C418, is a German musician, composer, producer."), PageKind::Artist);
+        assert_eq!(kind("Planet Caravan", "\"Planet Caravan\" is a song by the English heavy metal band Black Sabbath."), PageKind::Work);
+        assert_eq!(kind("Many Men (Wish Death)", "\"Many Men (Wish Death)\" is a song by American rapper 50 Cent."), PageKind::Work);
+        assert_eq!(kind("Paranoid (album)", "Paranoid is the second studio album by English rock band Black Sabbath."), PageKind::Work);
+        assert_eq!(kind("List of Billy Joel band members", "Billy Joel is an American singer-songwriter and pianist who has used various musicians."), PageKind::List);
+        assert_eq!(kind("Berlin", "Berlin is the capital and largest city of Germany."), PageKind::Other);
+        assert_eq!(kind("Spectrum", "Spectrum may refer to:"), PageKind::Disambiguation);
     }
 }

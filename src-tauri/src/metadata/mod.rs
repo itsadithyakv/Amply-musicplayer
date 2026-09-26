@@ -1,5 +1,6 @@
 pub mod artist;
 pub mod artwork;
+pub mod identity;
 pub mod cache;
 pub mod genre;
 pub mod http;
@@ -27,6 +28,21 @@ pub struct ArtistProfile {
     pub image_url: Option<String>,
     pub source_url: Option<String>,
     pub fetched_at: i64,
+    /// The MusicBrainz artist the page was reached through, when it was.
+    #[serde(default)]
+    pub mbid: Option<String>,
+    /// Which resolver accepted the page; 0 for entries written before identities were checked.
+    #[serde(default)]
+    pub resolver: u32,
+}
+
+/// Songs and albums the library files under an artist: the evidence that picks the right act out
+/// of everyone who shares its name ("Berlin" the band, not the city; the German "Bellini").
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ArtistContext {
+    pub titles: Vec<String>,
+    pub albums: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

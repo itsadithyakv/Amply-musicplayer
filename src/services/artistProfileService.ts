@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { waitForMetadataIdle } from '@/services/metadataActivityGate';
 import { markArtistCached } from '@/services/metadataCacheIndex';
 import { isTauri } from '@/services/storageService';
-import { normalizeArtistLookupText } from '@/utils/artists';
+import { normalizeArtistLookupText, type ArtistLookupContext } from '@/utils/artists';
 
 export interface ArtistProfile {
   artistName: string;
@@ -84,9 +84,13 @@ export const readCachedArtistProfile = async (artistNameRaw: string): Promise<Ar
   return { status: 'missing', cachePath: result.cachePath };
 };
 
+/**
+ * Resolves an artist's profile. `context` (songs and albums the library files under the artist) is
+ * what tells namesakes apart; without it an ambiguous name ("Berlin", "Spectrum") may stay missing.
+ */
 export const loadArtistProfile = async (
   artistNameRaw: string,
-  options: { waitForIdle?: boolean } = {},
+  options: { waitForIdle?: boolean; context?: ArtistLookupContext } = {},
 ): Promise<ArtistProfileLoadResult> => {
   if (!isTauri()) {
     return emptyResult(artistNameRaw);
@@ -105,7 +109,7 @@ export const loadArtistProfile = async (
     profile?: ArtistProfile | null;
     fromCache?: boolean | null;
     cachePath: string;
-  }>('load_artist_profile_rust', { artistName: artistNameRaw });
+  }>('load_artist_profile_rust', { artistName: artistNameRaw, context: options.context ?? null });
 
   if (result.status === 'ready' && result.profile) {
     void markArtistCached(normalizeText(result.profile.artistName));

@@ -37,7 +37,7 @@ import {
   releaseMetadata,
 } from '@/services/metadataAttemptService';
 import { isMetadataActivityPaused } from '@/services/metadataActivityGate';
-import { getDisplayTitleRepair, getMetadataArtistName, getPrimaryArtistName, normalizeArtistLookupText } from '@/utils/artists';
+import { getArtistLookupContext, getDisplayTitleRepair, getMetadataArtistName, getPrimaryArtistName, normalizeArtistLookupText } from '@/utils/artists';
 import {
   isSongCached,
   loadMetadataCacheIndex,
@@ -1521,7 +1521,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
               return;
             }
             try {
-              const artistResult = await loadArtistProfile(primaryArtist, { waitForIdle: false });
+              const artistResult = await loadArtistProfile(primaryArtist, {
+              waitForIdle: false,
+              context: getArtistLookupContext(get().songs, primaryArtist),
+            });
               if (artistResult.status === 'ready') {
                 artistCount += 1;
                 noteMetadataSuccess(attemptsCache, 'artist', artistKey);
@@ -1717,7 +1720,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           try {
             // The current song's artist is user-visible in the Now Playing panel: never park this
             // request behind the idle gate while holding the artist lock.
-            const artistResult = await loadArtistProfile(primaryArtist, { waitForIdle: false });
+            const artistResult = await loadArtistProfile(primaryArtist, {
+              waitForIdle: false,
+              context: getArtistLookupContext(get().songs, primaryArtist),
+            });
             if (artistResult.status === 'ready') {
               noteMetadataSuccess(attemptsCache, 'artist', artistKey);
             } else if (artistResult.status === 'missing' && isOnline) {

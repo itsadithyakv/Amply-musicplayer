@@ -15,7 +15,7 @@ import { formatDuration } from '@/utils/time';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { useIdleRender } from '@/hooks/useIdleRender';
 import { useMetadataPriority } from '@/hooks/useMetadataPriority';
-import { getMetadataArtistName, getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
+import { getArtistLookupContext, getMetadataArtistName, getPrimaryArtistName, splitArtistNames } from '@/utils/artists';
 import {
   getAlbumTracklistKey,
   loadAlbumTracklist,
@@ -190,7 +190,7 @@ const NowPlayingPanel = () => {
           return;
         }
         setArtistLoading(true);
-        loadArtistProfile(primaryArtist, { waitForIdle: false })
+        loadArtistProfile(primaryArtist, { waitForIdle: false, context: getArtistLookupContext(useLibraryStore.getState().songs, primaryArtist) })
           .then((fresh) => {
             if (!alive) {
               return;
@@ -257,7 +257,7 @@ const NowPlayingPanel = () => {
             scheduleRetry();
             return;
           }
-          loadArtistProfile(primaryArtist, { waitForIdle: false })
+          loadArtistProfile(primaryArtist, { waitForIdle: false, context: getArtistLookupContext(useLibraryStore.getState().songs, primaryArtist) })
             .then((fresh) => {
               if (!alive) {
                 return;
@@ -300,7 +300,7 @@ const NowPlayingPanel = () => {
       await fetchMissingMetadataForSong(song.id, { forceRetry: true, ignoreCooldown: true, allowWhenPaused: true });
       let result = await readCachedArtistProfile(primaryArtist);
       if (result.status !== 'ready') {
-        result = await loadArtistProfile(primaryArtist, { waitForIdle: false });
+        result = await loadArtistProfile(primaryArtist, { waitForIdle: false, context: getArtistLookupContext(useLibraryStore.getState().songs, primaryArtist) });
       }
       setArtistStatus(result.status);
       if (result.status === 'ready') {

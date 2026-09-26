@@ -1,16 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use reqwest::Url;
 use serde::Deserialize;
 
 use super::cache::{read_json, to_storage_cache_path, write_json};
 use super::http::{fetch_json, wikipedia_summary_url, HTTP};
+use super::identity::{resolve_artist_page, RESOLVER_VERSION};
 use super::normalize::{
-    artist_identity_matches, count_words, hash_string, identity_contains, is_disambiguation_text,
-    is_likely_artist_title, is_music_related_text, normalize_text, slugify, slugify_legacy,
-    to_word_range,
+    classify_wikipedia_page, count_words, hash_string, identity_contains, is_disambiguation_text,
+    is_music_related_text, normalize_text, page_title_core, same_artist_name, slugify, slugify_legacy,
+    to_word_range, wikipedia_title_from_url, PageKind,
 };
-use super::{now_unix, ArtistProfile, ArtistProfileLoadResult, ARTIST_CACHE_FOLDER};
+use super::{now_unix, ArtistContext, ArtistProfile, ArtistProfileLoadResult, ARTIST_CACHE_FOLDER};
 use crate::error::AmplyResult;
 use crate::storage::delete_storage_kv;
 
@@ -110,34 +111,6 @@ pub(crate) async fn fetch_wikipedia_summary(title: &str) -> Result<Option<Wikipe
     response.json::<WikipediaSummaryPayload>().await.map(Some).map_err(|err| err.to_string())
 }
 
-async fn fetch_wikipedia_search_titles(artist_name: &str) -> Result<Vec<String>, String> {
-    let quoted_query = format!("\"{}\" musician singer rapper band", artist_name);
-    let mut titles = fetch_wikipedia_search_titles_for_query(&quoted_query, 8).await?;
-    if titles.is_empty() {
-        let fallback_query = format!("{} musician singer rapper band", artist_name);
-        titles = fetch_wikipedia_search_titles_for_query(&fallback_query, 8).await?;
-    }
-
-    titles.sort_by(|a, b| {
-        let score = |title: &str| -> i32 {
-            let mut points = 0;
-            if is_likely_artist_title(title, artist_name) {
-                points += 4;
-            }
-            if normalize_text(title) == normalize_text(artist_name) {
-                points += 3;
-            }
-            if is_music_related_text(title) {
-                points += 2;
-            }
-            points
-        };
-        score(b).cmp(&score(a))
-    });
-
-    Ok(titles)
-}
-
 pub(crate) async fn fetch_wikipedia_search_titles_for_query(query: &str, limit: usize) -> Result<Vec<String>, String> {
     let limit_string = limit.clamp(1, 20).to_string();
     let url = Url::parse_with_params(
@@ -186,87 +159,32 @@ async fn fetch_wikipedia_intro_extract(title: &str) -> Result<Option<String>, St
         if trimmed.is_empty() { None } else { Some(trimmed) }
     }))
 }
-
-pub(crate) async fn build_candidate_titles(artist_name: &str) -> Result<Vec<String>, String> {
-    let trimmed = artist_name.trim();
-    let qualifiers = ["musician", "band", "singer", "rapper", "dj", "group"];
-    let mut candidates = qualifiers
-        .iter()
-        .map(|qualifier| format!("{trimmed} ({qualifier})"))
-        .collect::<Vec<_>>();
-    candidates.push(trimmed.to_string());
-    match fetch_wikipedia_search_titles(trimmed).await {
-        Ok(searched) => candidates.extend(searched),
-        Err(error) => log::warn!("Wikipedia search for artist {trimmed:?} failed: {error}"),
+async fn fetch_artist_profile(artist_name: &str, context: &ArtistContext) -> Result<Option<ArtistProfile>, String> {
+    let Some(page) = resolve_artist_page(artist_name, context).await? else {
+        return Ok(None);
+    };
+    let lead = page.summary.extract.clone().unwrap_or_default();
+    let intro = match fetch_wikipedia_intro_extract(&page.title).await {
+        Ok(extract) => extract,
+        Err(error) => {
+            log::warn!("Wikipedia intro extract for {:?} failed: {error}", page.title);
+            None
+        }
+    };
+    let summary = to_word_range(intro.as_deref().unwrap_or(&lead), 100, 200);
+    if summary.trim().is_empty() || is_disambiguation_text(&summary) {
+        return Ok(None);
     }
-
-    Ok(candidates
-        .into_iter()
-        .filter(|title| !title.trim().is_empty())
-        .collect())
-}
-
-async fn fetch_artist_profile(artist_name: &str) -> Result<Option<ArtistProfile>, String> {
-    let candidate_titles = build_candidate_titles(artist_name).await?;
-    let mut seen = HashSet::new();
-
-    for title in candidate_titles {
-        let normalized = normalize_text(&title);
-        if normalized.is_empty() || !seen.insert(normalized) {
-            continue;
-        }
-        let summary_payload = match fetch_wikipedia_summary(&title).await? {
-            Some(payload) => payload,
-            None => continue,
-        };
-
-        let summary_extract = summary_payload.extract.clone().unwrap_or_default();
-        let is_disambiguation = summary_payload.page_type.as_deref() == Some("disambiguation")
-            || is_disambiguation_text(&summary_extract);
-        if is_disambiguation {
-            continue;
-        }
-
-        let resolved_title = summary_payload.title.clone().unwrap_or_else(|| title.clone());
-        let intro_extract = match fetch_wikipedia_intro_extract(&resolved_title).await {
-            Ok(extract) => extract,
-            Err(error) => {
-                log::warn!("Wikipedia intro extract for {resolved_title:?} failed: {error}");
-                None
-            }
-        };
-        let merged_summary = to_word_range(
-            intro_extract.as_deref().unwrap_or(&summary_extract),
-            100,
-            200,
-        );
-        if merged_summary.trim().is_empty() || is_disambiguation_text(&merged_summary) {
-            continue;
-        }
-
-        let source_url = summary_payload
-            .content_urls
-            .as_ref()
-            .and_then(|urls| urls.desktop.as_ref())
-            .and_then(|desktop| desktop.page.as_deref());
-        let identity_matches = artist_identity_matches(&resolved_title, &merged_summary, source_url, artist_name);
-        if !identity_matches || !is_music_related_text(&merged_summary) {
-            continue;
-        }
-
-        return Ok(Some(ArtistProfile {
-            artist_name: artist_name.to_string(),
-            summary: merged_summary,
-            image_url: summary_payload.thumbnail.and_then(|thumb| thumb.source),
-            source_url: summary_payload
-                .content_urls
-                .and_then(|urls| urls.desktop)
-                .and_then(|desktop| desktop.page),
-            fetched_at: now_unix(),
-        }));
-    }
-
-    Ok(None)
+    let source_url = page.summary.content_urls.and_then(|urls| urls.desktop).and_then(|desktop| desktop.page);
+    Ok(Some(ArtistProfile {
+        artist_name: artist_name.to_string(),
+        summary,
+        image_url: page.summary.thumbnail.and_then(|thumb| thumb.source),
+        source_url,
+        fetched_at: now_unix(),
+        mbid: page.mbid,
+        resolver: RESOLVER_VERSION,
+    }))
 }
 
 fn is_valid_cached_summary(summary: &str) -> bool {
@@ -279,38 +197,100 @@ fn is_valid_cached_summary(summary: &str) -> bool {
     is_music_related_text(summary) || count_words(summary) >= 20
 }
 
+/// Whether a cached profile may be shown for `artist_name`. Song, album and list pages never are.
+/// Profiles from the current resolver had their identity checked when fetched; older ones were
+/// accepted on a name match alone, so they must at least sit on a page named for the artist.
 pub(crate) fn is_valid_artist_profile(profile: &ArtistProfile, artist_name: &str) -> bool {
-    if !is_valid_cached_summary(&profile.summary) {
+    if !is_valid_cached_summary(&profile.summary) || normalize_text(artist_name).is_empty() {
         return false;
     }
-
-    let normalized_artist = normalize_text(artist_name);
-    if normalized_artist.is_empty() {
+    let page_title = profile.source_url.as_deref().and_then(wikipedia_title_from_url).unwrap_or_default();
+    if matches!(
+        classify_wikipedia_page(&page_title, &profile.summary),
+        PageKind::Work | PageKind::List | PageKind::Disambiguation
+    ) {
         return false;
     }
-
-    identity_contains(&profile.summary, artist_name)
-        || identity_contains(&profile.artist_name, artist_name)
-        || identity_contains(artist_name, &profile.artist_name)
+    if profile.resolver >= RESOLVER_VERSION {
+        return true;
+    }
+    same_artist_name(page_title_core(&page_title), artist_name) && identity_contains(&profile.summary, artist_name)
 }
 
+/// An entry from before identities were checked that sits on a disambiguated page ("Bellini
+/// (Italian band)"): the old resolver guessed which namesake to show, so it stays hidden until the
+/// new one has re-checked it.
+fn is_unchecked_namesake_guess(profile: &ArtistProfile) -> bool {
+    let page_title = profile.source_url.as_deref().and_then(wikipedia_title_from_url).unwrap_or_default();
+    profile.resolver < RESOLVER_VERSION && page_title_core(&page_title) != page_title.trim()
+}
+
+/// The first cached profile valid for `name`, with the key it was found under. Invalid entries are
+/// deleted on the way.
+async fn read_valid_cached_profile(app: &tauri::AppHandle, name: &str) -> AmplyResult<Option<(String, ArtistProfile)>> {
+    for candidate_key in cache_keys_for_artist(name) {
+        let Some(profile) = read_json::<ArtistProfile>(app, &candidate_key).await? else {
+            continue;
+        };
+        if is_valid_artist_profile(&profile, name) {
+            return Ok(Some((candidate_key, profile)));
+        }
+        if let Err(error) = delete_storage_kv(app, &candidate_key).await {
+            log::warn!("Failed to drop invalid artist profile cache {candidate_key}: {error}");
+        }
+    }
+    Ok(None)
+}
+
+async fn drop_cached_profiles(app: &tauri::AppHandle, name: &str) {
+    for key in cache_keys_for_artist(name) {
+        if let Err(error) = delete_storage_kv(app, &key).await {
+            log::warn!("Failed to drop artist profile cache {key}: {error}");
+        }
+    }
+}
+
+async fn migrate_cache_key(app: &tauri::AppHandle, found_key: &str, cache_key: &str, profile: &ArtistProfile) {
+    if found_key != cache_key {
+        if let Err(error) = write_json(app, cache_key, profile).await {
+            log::warn!("Failed to migrate artist profile cache to {cache_key}: {error}");
+        }
+    }
+}
+
+fn ready_result(profile: ArtistProfile, from_cache: bool, cache_path: String) -> ArtistProfileLoadResult {
+    ArtistProfileLoadResult {
+        status: "ready".to_string(),
+        profile: Some(profile),
+        from_cache: Some(from_cache),
+        cache_path,
+    }
+}
+
+fn empty_result(status: &str, cache_path: String) -> ArtistProfileLoadResult {
+    ArtistProfileLoadResult {
+        status: status.to_string(),
+        profile: None,
+        from_cache: None,
+        cache_path,
+    }
+}
+
+fn is_placeholder_artist(name: &str) -> bool {
+    name.is_empty() || name.eq_ignore_ascii_case("unknown artist")
+}
+
+/// True when a checked profile is cached. Profiles from an older resolver report false so the
+/// library's metadata pass re-resolves them; the read below still serves them meanwhile.
 #[tauri::command]
 pub async fn has_cached_artist_profile_rust(app: tauri::AppHandle, artist_name: String) -> AmplyResult<bool> {
     let name = artist_name.trim().to_string();
-    if name.is_empty() || name.to_lowercase() == "unknown artist" {
+    if is_placeholder_artist(&name) {
         return Ok(true);
     }
-    for cache_key in cache_keys_for_artist(&name) {
-        let cached: Option<ArtistProfile> = read_json(&app, &cache_key).await?;
-        if cached
-            .as_ref()
-            .map(|profile| is_valid_artist_profile(profile, &name))
-            .unwrap_or(false)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    Ok(read_valid_cached_profile(&app, &name)
+        .await?
+        .is_some_and(|(_, profile)| profile.resolver >= RESOLVER_VERSION))
 }
 
 /// Batch form of `has_cached_artist_profile_rust`: one IPC round trip for a whole library's
@@ -334,114 +314,64 @@ pub async fn read_cached_artist_profile_rust(
 ) -> AmplyResult<ArtistProfileLoadResult> {
     let name = artist_name.trim().to_string();
     let cache_key = cache_key_for_artist(&name);
-    let cache_path = to_storage_cache_path(&cache_key);
-
-    if name.is_empty() || name.to_lowercase() == "unknown artist" {
-        return Ok(ArtistProfileLoadResult {
-            status: "missing".to_string(),
-            profile: None,
-            from_cache: None,
-            cache_path,
-        });
+    if is_placeholder_artist(&name) {
+        return Ok(empty_result("missing", to_storage_cache_path(&cache_key)));
     }
-
-    for candidate_key in cache_keys_for_artist(&name) {
-        let cached: Option<ArtistProfile> = read_json(&app, &candidate_key).await?;
-        if let Some(profile) = cached {
-            if is_valid_artist_profile(&profile, &name) {
-                if candidate_key != cache_key {
-                    if let Err(error) = write_json(&app, &cache_key, &profile).await {
-                        log::warn!("Failed to migrate artist profile cache to {cache_key}: {error}");
-                    }
-                }
-                let resolved_cache_path = to_storage_cache_path(&candidate_key);
-                return Ok(ArtistProfileLoadResult {
-                    status: "ready".to_string(),
-                    profile: Some(profile),
-                    from_cache: Some(true),
-                    cache_path: resolved_cache_path,
-                });
-            }
-            if let Err(error) = delete_storage_kv(&app, &candidate_key).await {
-                log::warn!("Failed to drop invalid artist profile cache {candidate_key}: {error}");
-            }
+    match read_valid_cached_profile(&app, &name).await? {
+        Some((found_key, profile)) if !is_unchecked_namesake_guess(&profile) => {
+            migrate_cache_key(&app, &found_key, &cache_key, &profile).await;
+            Ok(ready_result(profile, true, to_storage_cache_path(&found_key)))
         }
+        _ => Ok(empty_result("missing", to_storage_cache_path(&cache_key))),
     }
-
-    Ok(ArtistProfileLoadResult {
-        status: "missing".to_string(),
-        profile: None,
-        from_cache: None,
-        cache_path,
-    })
 }
 
+/// Returns the cached profile when it is current, otherwise resolves the artist. `context` holds
+/// songs and albums the library files under this artist; they decide between namesakes.
 #[tauri::command]
 pub async fn load_artist_profile_rust(
     app: tauri::AppHandle,
     artist_name: String,
+    context: Option<ArtistContext>,
 ) -> AmplyResult<ArtistProfileLoadResult> {
     let name = artist_name.trim().to_string();
     let cache_key = cache_key_for_artist(&name);
     let cache_path = to_storage_cache_path(&cache_key);
-
-    if name.is_empty() || name.to_lowercase() == "unknown artist" {
-        return Ok(ArtistProfileLoadResult {
-            status: "missing".to_string(),
-            profile: None,
-            from_cache: None,
-            cache_path,
-        });
+    if is_placeholder_artist(&name) {
+        return Ok(empty_result("missing", cache_path));
     }
 
-    for candidate_key in cache_keys_for_artist(&name) {
-        if let Some(cached) = read_json::<ArtistProfile>(&app, &candidate_key).await? {
-            if is_valid_artist_profile(&cached, &name) {
-                if candidate_key != cache_key {
-                    if let Err(error) = write_json(&app, &cache_key, &cached).await {
-                        log::warn!("Failed to migrate artist profile cache to {cache_key}: {error}");
-                    }
-                }
-                let resolved_cache_path = to_storage_cache_path(&candidate_key);
-                return Ok(ArtistProfileLoadResult {
-                    status: "ready".to_string(),
-                    profile: Some(cached),
-                    from_cache: Some(true),
-                    cache_path: resolved_cache_path,
-                });
-            }
-            if let Err(error) = delete_storage_kv(&app, &candidate_key).await {
-                log::warn!("Failed to drop invalid artist profile cache {candidate_key}: {error}");
-            }
+    let cached = read_valid_cached_profile(&app, &name).await?;
+    if let Some((found_key, profile)) = cached.as_ref() {
+        if profile.resolver >= RESOLVER_VERSION {
+            migrate_cache_key(&app, found_key, &cache_key, profile).await;
+            return Ok(ready_result(profile.clone(), true, to_storage_cache_path(found_key)));
         }
     }
 
-    match fetch_artist_profile(&name).await {
+    match fetch_artist_profile(&name, &context.unwrap_or_default()).await {
         Ok(Some(profile)) => {
             write_json(&app, &cache_key, &profile).await?;
-            Ok(ArtistProfileLoadResult {
-                status: "ready".to_string(),
-                profile: Some(profile),
-                from_cache: Some(false),
-                cache_path,
-            })
+            Ok(ready_result(profile, false, cache_path))
         }
-        Ok(None) => Ok(ArtistProfileLoadResult {
-            status: "missing".to_string(),
-            profile: None,
-            from_cache: None,
-            cache_path,
-        }),
+        Ok(None) => {
+            // The re-check tied no page to this artist, so an older entry was a guess.
+            if cached.is_some() {
+                drop_cached_profiles(&app, &name).await;
+            }
+            Ok(empty_result("missing", cache_path))
+        }
         Err(error) => {
-            log::warn!("Wikipedia artist profile for {name:?} failed: {error}");
+            log::warn!("Artist profile for {name:?} failed: {error}");
             // Only transport failures mean "offline"; anything else is a lookup miss the user can retry.
-            let status = if super::http::is_offline_error(&error) { "no-internet" } else { "missing" };
-            Ok(ArtistProfileLoadResult {
-                status: status.to_string(),
-                profile: None,
-                from_cache: None,
-                cache_path,
-            })
+            let offline = super::http::is_offline_error(&error);
+            match cached {
+                // Offline, an older entry beats nothing, unless it was a namesake guess.
+                Some((found_key, profile)) if offline && !is_unchecked_namesake_guess(&profile) => {
+                    Ok(ready_result(profile, true, to_storage_cache_path(&found_key)))
+                }
+                _ => Ok(empty_result(if offline { "no-internet" } else { "missing" }, cache_path)),
+            }
         }
     }
 }
@@ -468,10 +398,46 @@ mod tests {
             summary: "ASAP Rocky is an American rapper, singer, songwriter, and record producer."
                 .to_string(),
             image_url: None,
-            source_url: None,
+            source_url: Some("https://en.wikipedia.org/wiki/ASAP_Rocky".to_string()),
             fetched_at: 0,
+            mbid: None,
+            resolver: 0,
         };
 
         assert!(is_valid_artist_profile(&profile, "A$AP Rocky"));
+    }
+}
+
+#[cfg(test)]
+mod cache_probe {
+    use super::*;
+
+    /// Replays the cache rules over the real app database (read-only):
+    /// `cargo test -- --ignored artist_cache_probe --nocapture`.
+    #[test]
+    #[ignore]
+    fn artist_cache_probe() {
+        let db = std::path::PathBuf::from(std::env::var("APPDATA").unwrap())
+            .join("AdithyaKV.AmplyMusicPlayer/storage/amply_cache.db");
+        let conn = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut stmt = conn.prepare("select value from kv where path like 'artist_cache/%'").unwrap();
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
+        let (mut shown, mut hidden, mut dropped) = (0, 0, 0);
+        for value in rows.flatten() {
+            let Ok(profile) = serde_json::from_str::<ArtistProfile>(&value) else { continue };
+            let page = profile.source_url.as_deref().and_then(wikipedia_title_from_url).unwrap_or_default();
+            let verdict = if !is_valid_artist_profile(&profile, &profile.artist_name) {
+                dropped += 1;
+                "DROP"
+            } else if is_unchecked_namesake_guess(&profile) {
+                hidden += 1;
+                "HIDE"
+            } else {
+                shown += 1;
+                continue;
+            };
+            eprintln!("{verdict}  {:<24} -> {page}", profile.artist_name);
+        }
+        eprintln!("kept {shown}, hidden until re-checked {hidden}, dropped {dropped}");
     }
 }

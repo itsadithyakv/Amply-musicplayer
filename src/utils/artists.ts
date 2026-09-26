@@ -266,7 +266,56 @@ export const getMetadataLookupParts = (
   return { artist: lookupArtist, title: lookupTitle };
 };
 
-const titleHasArtistPrefix = (artist: string | null | undefined, title: string | null | undefined): boolean => {
+/** Songs and albums the library files under an artist, sent with artist lookups to tell namesakes apart. */
+export interface ArtistLookupContext {
+  titles: string[];
+  albums: string[];
+}
+
+const MAX_CONTEXT_TITLES = 4;
+const MAX_CONTEXT_ALBUMS = 3;
+
+/**
+ * Collects lookup titles and albums of songs credited to `artistName`. Songs where the artist is
+ * the lookup artist come first; features ("50 Cent, Olivia") fill in when that is all there is.
+ */
+export const getArtistLookupContext = (
+  songs: ReadonlyArray<{ artist: string; title: string; album?: string | null }>,
+  artistName: string,
+): ArtistLookupContext => {
+  const key = normalizeLookupText(artistName);
+  const context: ArtistLookupContext = { titles: [], albums: [] };
+  if (!key) {
+    return context;
+  }
+  const add = (list: string[], value: string | null | undefined, limit: number) => {
+    const trimmed = normalizeWhitespace(value ?? '');
+    const valueKey = normalizeLookupText(trimmed);
+    if (list.length < limit && valueKey && !['unknown album', 'unknown title'].includes(valueKey)
+      && !list.some((entry) => normalizeLookupText(entry) === valueKey)) {
+      list.push(trimmed);
+    }
+  };
+  const featured: typeof songs[number][] = [];
+  for (const song of songs) {
+    if (context.titles.length >= MAX_CONTEXT_TITLES && context.albums.length >= MAX_CONTEXT_ALBUMS) {
+      break;
+    }
+    if (normalizeLookupText(getMetadataArtistName(song.artist, song.title)) === key) {
+      add(context.titles, getMetadataLookupParts(song.artist, song.title).title, MAX_CONTEXT_TITLES);
+      add(context.albums, song.album, MAX_CONTEXT_ALBUMS);
+    } else if (featured.length < MAX_CONTEXT_TITLES && splitArtistNames(song.artist).some((name) => normalizeLookupText(name) === key)) {
+      featured.push(song);
+    }
+  }
+  for (const song of featured) {
+    add(context.titles, getMetadataLookupParts(song.artist, song.title).title, MAX_CONTEXT_TITLES);
+    add(context.albums, song.album, MAX_CONTEXT_ALBUMS);
+  }
+  return context;
+};
+
+const titleHasArtistPrefix =(artist: string | null | undefined, title: string | null | undefined): boolean => {
   const parsed = splitArtistTitleHint(title);
   if (!parsed) {
     return false;

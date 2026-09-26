@@ -3,19 +3,17 @@ use std::collections::HashMap;
 use reqwest::Url;
 use serde::Deserialize;
 
-use super::artist::{
-    build_candidate_titles, cache_keys_for_artist, fetch_wikipedia_search_titles_for_query,
-    fetch_wikipedia_summary, is_valid_artist_profile,
-};
+use super::artist::{cache_keys_for_artist, fetch_wikipedia_search_titles_for_query, is_valid_artist_profile};
+use super::identity::resolve_artist_page;
 use super::cache::{cache_all, cache_get, cache_put, read_json, to_storage_cache_path, CacheKind};
 use super::http::{fetch_json, musicbrainz_throttle, score_itunes_hit, ItunesSongHit, ItunesSongPayload};
 use super::normalize::{
-    artist_identity_matches, clean_lyrics_title, get_primary_artist_name, identity_contains,
+    clean_lyrics_title, get_primary_artist_name, identity_contains,
     is_artist_close_match, is_close_match, is_exact_match, is_unknown_genre, metadata_artist_for_song,
     normalize_text, slugify,
 };
 use super::{
-    now_unix, ArtistProfile, SongGenreCacheEntry, SongGenreLoadResult, SongInput, SONG_GENRE_CACHE_PATH,
+    now_unix, ArtistContext, ArtistProfile, SongGenreCacheEntry, SongGenreLoadResult, SongInput, SONG_GENRE_CACHE_PATH,
 };
 use crate::error::AmplyResult;
 
@@ -433,48 +431,30 @@ fn infer_genre_from_artist_text(value: &str) -> Option<&'static str> {
     None
 }
 
-async fn fetch_wikipedia_artist_genre_fallback(artist_name: &str) -> Result<Option<String>, String> {
+/// The artist's genre from their Wikipedia page, when the song itself has none anywhere. The page
+/// is the one the artist resolver ties to this song, never a namesake's.
+async fn fetch_wikipedia_artist_genre_fallback(artist_name: &str, song: &SongInput) -> Result<Option<String>, String> {
     if artist_name.trim().is_empty() {
         return Ok(None);
     }
-
-    let titles = build_candidate_titles(artist_name).await?;
-    for title in titles.into_iter().take(6) {
-        let Some(summary) = fetch_wikipedia_summary(&title).await? else {
-            continue;
-        };
-        let summary_text = summary.extract.as_deref().unwrap_or("");
-        let source_url = summary
-            .content_urls
-            .as_ref()
-            .and_then(|urls| urls.desktop.as_ref())
-            .and_then(|desktop| desktop.page.as_deref());
-        if !artist_identity_matches(
-            summary.title.as_deref().unwrap_or(&title),
-            summary_text,
-            source_url,
-            artist_name,
-        ) {
-            continue;
-        }
-        if let Some(genre) = infer_genre_from_artist_text(summary_text) {
-            return Ok(Some(genre.to_string()));
-        }
-
-        let categories = match fetch_wikipedia_categories_for_title(&title).await {
-            Ok(categories) => categories,
-            Err(error) => {
-                log::warn!("Wikipedia categories for {title:?} failed: {error}");
-                Vec::new()
-            }
-        };
-        let scored = score_genre_categories(&categories, 1);
-        if let Some(genre) = display_ranked_genres(scored) {
-            return Ok(Some(genre));
-        }
+    let context = ArtistContext {
+        titles: vec![song.title.clone()],
+        albums: song.album.clone().into_iter().collect(),
+    };
+    let Some(page) = resolve_artist_page(artist_name, &context).await? else {
+        return Ok(None);
+    };
+    if let Some(genre) = infer_genre_from_artist_text(page.summary.extract.as_deref().unwrap_or("")) {
+        return Ok(Some(genre.to_string()));
     }
-
-    Ok(None)
+    let categories = match fetch_wikipedia_categories_for_title(&page.title).await {
+        Ok(categories) => categories,
+        Err(error) => {
+            log::warn!("Wikipedia categories for {:?} failed: {error}", page.title);
+            Vec::new()
+        }
+    };
+    Ok(display_ranked_genres(score_genre_categories(&categories, 1)))
 }
 
 fn score_musicbrainz_recording(song: &SongInput, hit: &MbRecordingGenreHit) -> i32 {
@@ -682,7 +662,7 @@ async fn fetch_song_genre(song: &SongInput) -> Result<Option<String>, String> {
         Ok(None) => {}
         Err(error) => log::warn!("iTunes genre for {:?} failed: {error}", song.title),
     }
-    fetch_wikipedia_artist_genre_fallback(&primary_artist).await
+    fetch_wikipedia_artist_genre_fallback(&primary_artist, song).await
 }
 
 async fn infer_cached_artist_profile_genre(
