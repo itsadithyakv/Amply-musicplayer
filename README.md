@@ -100,11 +100,12 @@ Up to ~30 playlists are generated locally from your listening history. See
 | Feature | How it is built |
 |---|---|
 | Neumorphic light and dark themes | See [Design system](#design-system). The theme is applied by an inline script in `index.html` before first paint, so there is no flash. |
+| Window memory | The main window reopens at its last size, position and maximised state (`tauri-plugin-window-state`, pinned to ~2.4 to match Tauri 2.11). |
 | Mini player | A separate always-on-top, transparent, undecorated `WebviewWindow` (`src/pages/Overlay/`, `useOverlayController.ts`). It collapses to artwork plus play, expands on hover, is draggable, and can auto-hide when paused. Toggled from the sidebar or Settings. |
 | Audio visualizer | A compact spectrum strip on the top edge of the player bar, in three styles (Ember, Aurora, Mono), drawn on a canvas from the live spectrum and the theme tokens. |
 | Game Mode | A single low-cost page with no artwork grids; disables the FPS monitor and collapses every shadow to a hairline. For playing while something else needs the GPU. |
 | Now Playing | Full-page view with artwork, queue, lyrics and the artist panel; a condensed version of the same lives in the right-hand sidebar. |
-| Keyboard shortcuts | Space play/pause, ←/→ seek 5 s, Shift+←/→ previous/next track (`useGlobalShortcuts.ts`; ignored while typing). |
+| Keyboard shortcuts | Space play/pause, ←/→ seek 5 s, Shift+←/→ previous/next track, ↑/↓ volume ±5 %, M mute (`useGlobalShortcuts.ts`; ignored while typing or on a focused slider). |
 | Media keys | A low-level Windows keyboard hook forwards play/pause/next/previous as `amply://media-key`. |
 | System media session | `useMediaSession.ts` publishes title, artist and artwork to the OS. |
 | Toasts, modals, confirmations | `src/components/ui/` — every modal traps focus, closes on Escape and restores focus on close (`useDialog.ts`). |

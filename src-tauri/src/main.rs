@@ -51,6 +51,18 @@ fn main() {
                 })
                 .build(),
         )
+        // Reopen where the user left the main window: size, position and maximised state. The
+        // first launch keeps the config's maximised window. The mini player places itself.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .with_denylist(&["overlay"])
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         // Album art is served from the on-disk artwork store instead of travelling as base64.
         // Asynchronous: on Windows a synchronous handler runs on the UI thread, and the first request
