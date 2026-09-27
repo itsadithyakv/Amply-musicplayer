@@ -4,11 +4,13 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
+import { Icon } from '@/components/ui/Icon';
 import { Toast } from '@/components/ui/Toast';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useOverlayController } from '@/hooks/useOverlayController';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { useMediaSession } from '@/hooks/useMediaSession';
+import { useExternalFiles } from '@/hooks/useExternalFiles';
 import { useFpsMonitor } from '@/hooks/useFpsMonitor';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { StoreReviewPrompt } from '@/components/StoreReviewPrompt/StoreReviewPrompt';
@@ -174,6 +176,7 @@ const AppShell = () => {
   useThemeSync();
   useOverlayController(miniNowPlayingOverlay);
   useMediaSession();
+  const draggingFiles = useExternalFiles(libraryInitialized);
   useGlobalShortcuts();
 
   useEffect(() => {
@@ -619,6 +622,14 @@ const AppShell = () => {
           <div className="neu-raised flex items-center gap-2 rounded-full px-4 py-2 text-[12px] text-amply-textPrimary">
             <Spinner size={14} />
             <span>{interactionFeedback.message ?? 'Loading…'}</span>
+          </div>
+        </div>
+      ) : null}
+      {draggingFiles ? (
+        <div className="pointer-events-none absolute inset-0 z-feedback flex items-center justify-center bg-amply-bg/60">
+          <div className="neu-raised flex items-center gap-3 rounded-lg px-6 py-4 text-[14px] font-semibold text-amply-textPrimary">
+            <Icon name="play" size={18} className="text-amply-accent" />
+            <span>Drop to play</span>
           </div>
         </div>
       ) : null}

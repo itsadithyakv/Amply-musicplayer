@@ -1,7 +1,7 @@
 import type { Song } from '@/types/music';
-import { splitArtistNames } from '@/utils/artists';
+import { getPrimaryArtistName, normalizeArtistLookupText, splitArtistNames } from '@/utils/artists';
 import { isUnknownGenre } from '@/services/songMetadataService';
-import { normalizeTrackTitle, type AlbumTracklist } from '@/services/albumTracklistService';
+import { getAlbumTracklistKey, normalizeTrackTitle, type AlbumTracklist } from '@/services/albumTracklistService';
 import { oneOf } from '@/services/preferences';
 
 export interface SongGroup {
@@ -21,6 +21,92 @@ export type AlbumEntry = {
   songs: Song[];
   key: string;
   totalPlays: number;
+};
+
+export const VARIOUS_ARTISTS = 'Various Artists';
+
+const isUnknownAlbumName = (name: string): boolean => {
+  const normalized = name.trim().toLowerCase();
+  return !normalized || normalized === 'unknown album' || normalized === 'unknown';
+};
+
+/** "Single" is a placeholder shared by unrelated releases: each artist keeps their own card. */
+const isPlaceholderAlbumName = (name: string): boolean =>
+  isUnknownAlbumName(name) || ['single', 'singles'].includes(name.trim().toLowerCase());
+
+/** Album titles that announce a multi-artist release. */
+const COMPILATION_TITLE =
+  /\b(soundtrack|o\.?s\.?t\.?|original score|music (from|of|inspired by)|motion picture|compilation|various artists|now that's what|the (hits|best) of \d{4}s?)(\b|$)/i;
+
+/**
+ * The artist each album is filed under, per normalised album name. A tagged album artist wins.
+ * Otherwise an artist with more than half the tracks owns the album, so a stray "Kanye West, JAY-Z"
+ * credit or a "JAŸ-Z" spelling stays inside Watch the Throne. With no majority, a soundtrack-like
+ * title or three or more artists makes it "Various Artists"; anything else (two artists' separate
+ * "Greatest Hits") stays split by artist.
+ */
+export const resolveAlbumArtists = (songs: readonly Song[]): Map<string, string> => {
+  type Tally = { tagged: Map<string, { name: string; count: number }>; artists: Map<string, { name: string; count: number }>; total: number; title: string };
+  const albums = new Map<string, Tally>();
+  const bump = (map: Tally['artists'], name: string) => {
+    const key = normalizeArtistLookupText(name);
+    const entry = map.get(key) ?? { name, count: 0 };
+    entry.count += 1;
+    map.set(key, entry);
+  };
+  for (const song of songs) {
+    if (isPlaceholderAlbumName(song.album ?? '')) {
+      continue;
+    }
+    const albumKey = song.album.trim().toLowerCase();
+    const tally = albums.get(albumKey) ?? { tagged: new Map(), artists: new Map(), total: 0, title: song.album.trim() };
+    tally.total += 1;
+    bump(tally.artists, getPrimaryArtistName(song.artist));
+    if (song.albumArtist?.trim()) {
+      bump(tally.tagged, song.albumArtist.trim());
+    }
+    albums.set(albumKey, tally);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const [albumKey, tally] of albums) {
+    const top = (map: Tally['artists']) => [...map.values()].sort((a, b) => b.count - a.count)[0];
+    const tagged = top(tally.tagged);
+    const leader = top(tally.artists);
+    if (tagged) {
+      resolved.set(albumKey, tagged.name);
+    } else if (tally.artists.size === 1 || leader.count * 2 > tally.total) {
+      resolved.set(albumKey, leader.name);
+    } else if (COMPILATION_TITLE.test(tally.title) || tally.artists.size >= 3) {
+      resolved.set(albumKey, VARIOUS_ARTISTS);
+    }
+    // No entry: the album name is shared by unrelated releases; each artist keeps its own.
+  }
+  return resolved;
+};
+
+/** Groups songs into albums under the artists `resolveAlbumArtists` picks. */
+export const buildAlbumEntries = (songs: readonly Song[], artworkFor: ArtworkPicker): AlbumEntry[] => {
+  const albumArtists = resolveAlbumArtists(songs);
+  const map = new Map<string, AlbumEntry>();
+  for (const song of songs) {
+    if (isUnknownAlbumName(song.album ?? '')) {
+      continue;
+    }
+    const albumName = song.album.trim();
+    const artist = albumArtists.get(albumName.toLowerCase()) ?? getPrimaryArtistName(song.artist);
+    // Keyed like the album modal looks albums up: by the primary name of the album artist.
+    const key = getAlbumTracklistKey(getPrimaryArtistName(artist), albumName);
+    const existing = map.get(key);
+    if (existing) {
+      existing.songs.push(song);
+      existing.totalPlays += song.playCount;
+      existing.artwork ??= song.albumArt;
+    } else {
+      map.set(key, { album: albumName, artist, artwork: song.albumArt, songs: [song], key, totalPlays: song.playCount });
+    }
+  }
+  return [...map.values()].map((entry) => ({ ...entry, artwork: entry.artwork ?? artworkFor(entry.songs) }));
 };
 
 export type TrackViewItem = { id?: string; title: string; position: number; available: boolean };

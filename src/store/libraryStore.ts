@@ -3,9 +3,10 @@ import { dayKey, isoWeekKey, seedFromKey } from '@/utils/dateSeed';
 import { yieldToIdle } from '@/utils/idle';
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { AppSettings, ListeningActivity, ListeningProfile, Playlist, Song, TasteProfile } from '@/types/music';
 import { deleteSongFile, ensureStorageDirs, isTauri, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
-import { scanMusicFolder } from '@/services/musicScanner';
+import { probeAudioFiles, scanMusicFolder } from '@/services/musicScanner';
 import {
   generateMixesLite,
   mergeLiteMixes,
@@ -24,6 +25,7 @@ import {
   setRecommendationSongResolver,
 } from '@/services/onlineRecommendationService';
 import { hydrateSongsWithCachedGenres, isUnknownGenre, loadSongGenre } from '@/services/songMetadataService';
+import { findMovedSongs, remapSongIdList } from '@/services/songIdentity';
 import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, hasCachedArtistProfiles, loadArtistProfile } from '@/services/artistProfileService';
 import { usePlayerStore } from '@/store/playerStore';
@@ -115,6 +117,8 @@ interface LibraryState {
   regenerateSmartPlaylists: () => Promise<void>;
   initialize: () => Promise<void>;
   scanLibrary: (pathsOverride?: string[]) => Promise<void>;
+  /** Adds songs from outside the library folders (opened or dropped files) and remembers them. */
+  addLooseSongs: (songs: Song[]) => Promise<void>;
   setLibraryPaths: (paths: string[]) => Promise<void>;
   addLibraryPath: (path: string) => Promise<void>;
   removeLibraryPath: (path: string) => Promise<void>;
@@ -143,6 +147,8 @@ const libraryCachePath = 'playlists/library_cache.json';
 const songActivityPath = 'playlists/song_activity.json';
 const customPlaylistsPath = 'playlists/custom_playlists.json';
 const smartOverridesPath = 'playlists/smart_overrides.json';
+/** Files opened or dropped from outside the library folders; rescans keep them. */
+const looseFilesPath = 'library/loose_files.json';
 const smartCachePath = 'playlists/smart_cache.json';
 const smartLiteCachePath = 'playlists/smart_cache_lite.json';
 const playlistUsagePath = 'playlists/playlist_usage.json';
@@ -570,6 +576,7 @@ const scheduleInitialScan = (paths: string[]): void => {
     return;
   }
   initialScanScheduled = true;
+  watchLibraryFolders();
 
   if (typeof window === 'undefined') {
     void useLibraryStore.getState().scanLibrary(paths);
@@ -588,6 +595,40 @@ const scheduleInitialScan = (paths: string[]): void => {
       },
     );
   }, getNonCriticalDelay(10_000));
+};
+
+let libraryWatchStarted = false;
+let libraryRescanQueued = false;
+
+/**
+ * Rescans when the Rust side reports that files changed in a library folder. A rescan during a
+ * running scan is queued once and runs when that scan finishes. Unchanged files come from the scan
+ * index, so these rescans are cheap.
+ */
+const watchLibraryFolders = (): void => {
+  if (libraryWatchStarted || !isTauri()) {
+    return;
+  }
+  libraryWatchStarted = true;
+  void listen('amply://library-changed', () => {
+    const state = useLibraryStore.getState();
+    if (state.isScanning) {
+      libraryRescanQueued = true;
+      return;
+    }
+    recordPerfEvent('library.watch.rescan', {});
+    void state.scanLibrary();
+  }).catch((error: unknown) => {
+    libraryWatchStarted = false;
+    recordPerfEvent('library.watch.listen-error', { error: error instanceof Error ? error.message : String(error) });
+  });
+};
+
+const runQueuedLibraryRescan = (): void => {
+  if (libraryRescanQueued) {
+    libraryRescanQueued = false;
+    void useLibraryStore.getState().scanLibrary();
+  }
 };
 
 const scheduleMetadataResume = (delayMs = 12_000): void => {
@@ -702,6 +743,40 @@ const updateSongActivityPatch = async (
   recordPerfEvent('library.song-activity.patch', { songId });
   void writeStorageJsonDebounced(songActivityPath, cache, 1500);
   return next;
+};
+
+/**
+ * Carries plays, favourites, skips, playlist membership and listening history from the old id of a
+ * moved or renamed file to its new id (see `findMovedSongs`).
+ */
+const moveSongHistory = async (moved: ReadonlyMap<string, string>): Promise<void> => {
+  const activity = await loadSongActivityCache();
+  let activityChanged = false;
+  for (const [oldId, newId] of moved) {
+    const patch = activity[oldId];
+    if (patch) {
+      activity[newId] = { ...patch, ...activity[newId] };
+      delete activity[oldId];
+      activityChanged = true;
+    }
+  }
+  if (activityChanged) {
+    songActivityRevision += 1;
+    void writeStorageJsonDebounced(songActivityPath, activity, 1500);
+  }
+
+  const events = await loadListeningEvents();
+  let eventsChanged = false;
+  for (const event of events) {
+    const newId = moved.get(event.songId);
+    if (newId) {
+      event.songId = newId;
+      eventsChanged = true;
+    }
+  }
+  if (eventsChanged) {
+    void writeStorageJsonDebounced(listeningEventsPath, events, 1500);
+  }
 };
 
 const loadEmbeddedArtworkForSong = async (song: Song): Promise<string | null> => {
@@ -2001,7 +2076,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
               (keepAllUnscanned || unavailablePrefixes.some((prefix) => toPathPrefix(song.path).startsWith(prefix))),
           )
         : [];
-      const flattened = [...scanResults.flatMap((result) => result.songs), ...carriedOver];
+      const rootPrefixes = targetPaths.filter(isAbsoluteLibraryPath).map(toPathPrefix);
+      const loosePaths = (await readStorageJson<string[]>(looseFilesPath, [])).filter(
+        (path) => !rootPrefixes.some((prefix) => toPathPrefix(path).startsWith(prefix)),
+      );
+      const looseSongs = await probeAudioFiles(loosePaths).catch(() => [] as Song[]);
+      const flattened = [...scanResults.flatMap((result) => result.songs), ...looseSongs, ...carriedOver];
       const dedupedById = new Map<string, Song>();
       await yieldToMain();
 
@@ -2017,14 +2097,25 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
       const scannedSongs = [...dedupedById.values()];
       const existingMap = new Map(get().songs.map((song) => [song.id, song]));
+      // A moved or renamed file arrives under a new id while its old id vanishes; pair them up so
+      // its history follows it. Songs on an unavailable drive have not vanished and are not paired.
+      const carriedIds = new Set(carriedOver.map((song) => song.id));
+      const moved = findMovedSongs(
+        get().songs.filter((song) => !scannedIds.has(song.id) && !carriedIds.has(song.id)),
+        scannedSongs.filter((song) => !existingMap.has(song.id)),
+      );
+      const movedFrom = new Map([...moved].map(([oldId, newId]) => [newId, oldId]));
       await yieldToMain();
 
       const mergedSongs: Song[] = [];
       for (let index = 0; index < scannedSongs.length; index += 1) {
         const song = scannedSongs[index];
-        const previous = existingMap.get(song.id);
+        const movedFromId = movedFrom.get(song.id);
+        const previous = existingMap.get(song.id) ?? (movedFromId ? existingMap.get(movedFromId) : undefined);
         mergedSongs.push({
           ...song,
+          // A move keeps the date the song joined the library, so it does not resurface as new.
+          addedAt: movedFromId && previous ? previous.addedAt : song.addedAt,
           playCount: previous?.playCount ?? song.playCount,
           lastPlayed: previous?.lastPlayed ?? song.lastPlayed,
           favorite: previous?.favorite ?? song.favorite,
@@ -2048,7 +2139,17 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       );
       await yieldToMain();
 
-      const customPlaylists = get().customPlaylists;
+      let customPlaylists = get().customPlaylists;
+      if (moved.size) {
+        await moveSongHistory(moved);
+        customPlaylists = customPlaylists.map((playlist) => ({ ...playlist, songIds: remapSongIdList(playlist.songIds, moved) }));
+        const overrides = Object.fromEntries(
+          Object.entries(get().smartPlaylistOverrides).map(([playlistId, ids]) => [playlistId, remapSongIdList(ids, moved)]),
+        );
+        set({ customPlaylists, smartPlaylistOverrides: overrides });
+        void writeStorageJson(smartOverridesPath, overrides);
+        recordPerfEvent('library.scan.moved-songs', { count: moved.size });
+      }
       const weeklySeed = seedFromKey(isoWeekKey());
       const playlists = buildPlaylists(get().smartPlaylists, customPlaylists);
 
@@ -2077,6 +2178,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         runId,
       });
       recordPerfEvent('library.scan.ready', { songs: artHydrated.length, runId });
+      runQueuedLibraryRescan();
       await persistLibrary(artHydrated, customPlaylists);
       scheduleMetadataResume(6_000);
       void scheduleOnlineRecommendationEnrichmentForSongs(artHydrated, 'background');
@@ -2110,11 +2212,35 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         isScanning: false,
         scanError: errorMessage(error, 'Library scan failed.'),
       });
+      runQueuedLibraryRescan();
       recordPerfEvent('library.scan.error', {
         runId,
         message: errorMessage(error, 'Library scan failed.'),
       });
     }
+  },
+
+  addLooseSongs: async (incoming) => {
+    if (!incoming.length) {
+      return;
+    }
+    const known = new Set(get().songs.map((song) => song.id));
+    const added = incoming.filter((song) => !known.has(song.id));
+    const rootPrefixes = get().libraryPaths.filter(isAbsoluteLibraryPath).map(toPathPrefix);
+    const outside = incoming
+      .map((song) => song.path)
+      .filter((path) => !rootPrefixes.some((prefix) => toPathPrefix(path).startsWith(prefix)));
+    if (outside.length) {
+      const stored = await readStorageJson<string[]>(looseFilesPath, []);
+      await writeStorageJson(looseFilesPath, [...new Set([...stored, ...outside])]);
+    }
+    if (!added.length) {
+      return;
+    }
+    const songs = [...get().songs, ...added];
+    set({ songs, libraryVersion: get().libraryVersion + 1 });
+    recordSongArrayReplacement('library-loose-files', { songs: songs.length });
+    await persistLibrary(songs, get().customPlaylists);
   },
 
   setLibraryPaths: async (paths) => {

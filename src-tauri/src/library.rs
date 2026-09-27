@@ -13,7 +13,7 @@ use lofty::{
     picture::{Picture, PictureType},
     prelude::{Accessor, AudioFile, TaggedFileExt},
     probe::Probe,
-    tag::Tag,
+    tag::{ItemKey, Tag},
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,7 @@ use tauri::Manager;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::error::{AmplyError, AmplyResult};
+use crate::scan_index::{self, Stamp};
 use crate::storage;
 
 /// kv key holding the JSON array of canonical library roots.
@@ -146,7 +147,7 @@ pub(crate) fn restore_library_roots(app: &tauri::AppHandle) -> LibraryRoots {
     roots
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScannedSong {
     id: String,
@@ -155,6 +156,9 @@ pub(crate) struct ScannedSong {
     title: String,
     artist: String,
     album: String,
+    /// The album's credited artist ("Various Artists" on a compilation), when tagged.
+    #[serde(default)]
+    album_artist: Option<String>,
     genre: String,
     duration: f64,
     track: u32,
@@ -164,7 +168,18 @@ pub(crate) struct ScannedSong {
     play_count: u32,
     last_played: Option<i64>,
     favorite: bool,
+    /// ReplayGain track gain in dB.
+    #[serde(default)]
     replay_gain: Option<f32>,
+    /// ReplayGain album gain in dB.
+    #[serde(default)]
+    replay_gain_album: Option<f32>,
+    /// ReplayGain track peak (linear, 1.0 = full scale).
+    #[serde(default)]
+    replay_peak: Option<f32>,
+    /// File size in bytes; with the tags it tells a moved file from a different one.
+    #[serde(default)]
+    size: u64,
 }
 
 pub(crate) fn is_supported_audio(path: &Path) -> bool {
@@ -218,10 +233,11 @@ fn sanitize_id(path: &str) -> String {
         .collect()
 }
 
+/// "-7.35 dB", "+1.2dB" or "0.98" -> the number. Out-of-range values are tagging mistakes.
 fn parse_replay_gain(input: Option<&str>) -> Option<f32> {
     let raw = input?.trim();
-    let value = raw.replace("dB", "").trim().parse::<f32>().ok()?;
-    Some(value)
+    let value = raw.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c.is_whitespace()).trim().parse::<f32>().ok()?;
+    (value.is_finite() && value.abs() <= 64.0).then_some(value)
 }
 
 /// First non-blank value of a text field, preferring the primary tag and falling back to the
@@ -236,30 +252,39 @@ fn first_text(tagged_file: &TaggedFile, field: impl Fn(&Tag) -> Option<std::borr
         .find(|value| !value.is_empty())
 }
 
-fn extract_text_metadata(tagged_file: &TaggedFile, filename_fallback: &str) -> (String, String, String, String, u32, Option<u32>, Option<f32>) {
+struct TextMetadata {
+    title: String,
+    artist: String,
+    album: String,
+    album_artist: Option<String>,
+    genre: String,
+    track: u32,
+    year: Option<u32>,
+    replay_gain: Option<f32>,
+    replay_gain_album: Option<f32>,
+    replay_peak: Option<f32>,
+}
+
+fn extract_text_metadata(tagged_file: &TaggedFile, filename_fallback: &str) -> TextMetadata {
     let tag = tagged_file
         .primary_tag()
         .or_else(|| tagged_file.first_tag());
+    // lofty maps each format's spelling (ID3 TXXX, Vorbis comments, MP4 atoms) onto one key.
+    let item = |key: ItemKey| first_text(tagged_file, |tag| tag.get_string(key).map(std::borrow::Cow::Borrowed));
+    let gain = |key: ItemKey| parse_replay_gain(item(key).as_deref());
 
-    let title = first_text(tagged_file, |tag| tag.title()).unwrap_or_else(|| filename_fallback.to_string());
-    let artist = first_text(tagged_file, |tag| tag.artist()).unwrap_or_else(|| "Unknown Artist".to_string());
-    let album = first_text(tagged_file, |tag| tag.album()).unwrap_or_else(|| "Unknown Album".to_string());
-    let genre = first_text(tagged_file, |tag| tag.genre()).unwrap_or_else(|| "Unknown Genre".to_string());
-
-    let track = tag.and_then(|entry| entry.track()).unwrap_or(0);
-    let year = tag.and_then(|entry| entry.date()).map(|date| u32::from(date.year));
-
-    let replay_gain = tag.and_then(|entry| {
-        for item in entry.items() {
-            let key = format!("{:?}", item.key()).to_ascii_lowercase();
-            if key.contains("replaygain") {
-                return parse_replay_gain(item.value().text());
-            }
-        }
-        None
-    });
-
-    (title, artist, album, genre, track, year, replay_gain)
+    TextMetadata {
+        title: first_text(tagged_file, |tag| tag.title()).unwrap_or_else(|| filename_fallback.to_string()),
+        artist: first_text(tagged_file, |tag| tag.artist()).unwrap_or_else(|| "Unknown Artist".to_string()),
+        album: first_text(tagged_file, |tag| tag.album()).unwrap_or_else(|| "Unknown Album".to_string()),
+        album_artist: item(ItemKey::AlbumArtist),
+        genre: first_text(tagged_file, |tag| tag.genre()).unwrap_or_else(|| "Unknown Genre".to_string()),
+        track: tag.and_then(|entry| entry.track()).unwrap_or(0),
+        year: tag.and_then(|entry| entry.date()).map(|date| u32::from(date.year)),
+        replay_gain: gain(ItemKey::ReplayGainTrackGain),
+        replay_gain_album: gain(ItemKey::ReplayGainAlbumGain),
+        replay_peak: gain(ItemKey::ReplayGainTrackPeak).filter(|peak| *peak > 0.0),
+    }
 }
 
 fn pick_cover_picture(tag: &Tag) -> Option<&Picture> {
@@ -471,13 +496,12 @@ fn scan_one(path: &Path, artwork_cache: &ArtworkCache) -> Option<ScannedSong> {
     let filename_no_ext = clean_filename_stem(&raw_stem);
     let filename_no_ext = filename_no_ext.as_str();
 
-    let (mut title, mut artist, mut album, genre, track, year, replay_gain, duration, album_art) =
+    let (text, duration, album_art) =
         match read_tagged_file(path) {
             Some(tagged_file) => {
-                let (title, artist, album, genre, track, year, replay_gain) =
-                    extract_text_metadata(&tagged_file, filename_no_ext);
+                let text = extract_text_metadata(&tagged_file, filename_no_ext);
                 let duration = tagged_file.properties().duration().as_secs_f64();
-                let artwork_key = scan_artwork_cache_key(path, &artist, &album);
+                let artwork_key = scan_artwork_cache_key(path, &text.artist, &text.album);
                 let cell = {
                     let mut cache = artwork_cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     Arc::clone(cache.entry(artwork_key).or_default())
@@ -488,20 +512,26 @@ fn scan_one(path: &Path, artwork_cache: &ArtworkCache) -> Option<ScannedSong> {
                     .get_or_init(|| extract_embedded_artwork(&tagged_file))
                     .clone()
                     .or_else(|| extract_embedded_artwork(&tagged_file));
-                (title, artist, album, genre, track, year, replay_gain, duration, album_art)
+                (text, duration, album_art)
             }
             None => (
-                filename_no_ext.to_string(),
-                "Unknown Artist".to_string(),
-                "Unknown Album".to_string(),
-                "Unknown Genre".to_string(),
-                0,
-                None,
-                None,
+                TextMetadata {
+                    title: filename_no_ext.to_string(),
+                    artist: "Unknown Artist".to_string(),
+                    album: "Unknown Album".to_string(),
+                    album_artist: None,
+                    genre: "Unknown Genre".to_string(),
+                    track: 0,
+                    year: None,
+                    replay_gain: None,
+                    replay_gain_album: None,
+                    replay_peak: None,
+                },
                 0.0,
                 None,
             ),
         };
+    let TextMetadata { mut title, mut artist, mut album, album_artist, genre, track, year, replay_gain, replay_gain_album, replay_peak } = text;
 
     if artist.trim().eq_ignore_ascii_case("unknown artist")
         || is_low_confidence_scan_artist(&artist)
@@ -528,6 +558,7 @@ fn scan_one(path: &Path, artwork_cache: &ArtworkCache) -> Option<ScannedSong> {
         title,
         artist,
         album,
+        album_artist,
         genre,
         duration,
         track,
@@ -538,6 +569,9 @@ fn scan_one(path: &Path, artwork_cache: &ArtworkCache) -> Option<ScannedSong> {
         last_played: None,
         favorite: false,
         replay_gain,
+        replay_gain_album,
+        replay_peak,
+        size: metadata.len(),
     })
 }
 
@@ -559,9 +593,44 @@ fn is_skipped_dir(entry: &DirEntry) -> bool {
 /// Files smaller than this are zero-byte placeholders or truncated downloads, never playable songs.
 const MIN_AUDIO_FILE_BYTES: u64 = 4 * 1024;
 
-fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
+/// How a scan went: how many files came from the index and how many were read from disk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScanStats {
+    pub reused: usize,
+    pub read: usize,
+}
+
+/// The index prefix for files under `root`: the root plus a separator, so "D:\\Music" never claims
+/// "D:\\Music2".
+fn index_prefix(root: &Path) -> String {
+    let mut prefix = root.to_string_lossy().into_owned();
+    if !prefix.ends_with(std::path::MAIN_SEPARATOR) && !prefix.ends_with('/') {
+        prefix.push(std::path::MAIN_SEPARATOR);
+    }
+    prefix
+}
+
+/// A cached song whose artwork file is gone (cache cleared) must be re-read to get it back.
+fn cached_song_is_usable(song: &ScannedSong) -> bool {
+    song.album_art
+        .as_deref()
+        .is_none_or(|url| !url.starts_with("http://amplyart.") && !url.starts_with("amplyart:") || crate::artwork::file_for_url(url).is_some())
+}
+
+/// Scans `scan_root`, reusing index entries for unchanged files when `db` is given.
+fn scan_folder_blocking(scan_root: PathBuf, db: Option<&storage::StorageDb>) -> (Vec<ScannedSong>, ScanStats) {
+    let prefix = index_prefix(&scan_root);
+    let mut index = match db.map(|db| db.with_conn(|conn| scan_index::load_under(conn, &prefix))) {
+        Some(Ok(index)) => index,
+        Some(Err(error)) => {
+            log::warn!("Scan index unavailable, reading every file: {error}");
+            HashMap::new()
+        }
+        None => HashMap::new(),
+    };
+
     let mut walk_errors = 0usize;
-    let mut paths: Vec<PathBuf> = WalkDir::new(&scan_root)
+    let mut found: Vec<(PathBuf, Stamp)> = WalkDir::new(&scan_root)
         .follow_links(true)
         .into_iter()
         .filter_entry(|entry| !is_skipped_dir(entry))
@@ -572,18 +641,35 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
                 None
             }
         })
-        .filter(|entry| {
-            entry.file_type().is_file()
-                && is_supported_audio(entry.path())
-                && entry.metadata().map(|meta| meta.len() >= MIN_AUDIO_FILE_BYTES).unwrap_or(false)
+        .filter(|entry| entry.file_type().is_file() && is_supported_audio(entry.path()))
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            (metadata.len() >= MIN_AUDIO_FILE_BYTES).then(|| (entry.into_path(), Stamp::of(&metadata)))
         })
-        .map(|entry| entry.into_path())
         .collect();
     if walk_errors > 0 {
         log::warn!("Library scan of {} skipped {walk_errors} unreadable entries", scan_root.display());
     }
     // Deterministic order, so id-collision resolution below is stable between scans.
-    paths.sort();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Unchanged files come from the index; only new or modified ones are read below.
+    let mut cached: Vec<Option<ScannedSong>> = Vec::with_capacity(found.len());
+    for (path, stamp) in &found {
+        let key = path.to_string_lossy();
+        let reusable = index
+            .remove(key.as_ref())
+            .filter(|(indexed, _)| indexed == stamp)
+            .and_then(|(_, json)| serde_json::from_str::<ScannedSong>(&json).ok())
+            .filter(cached_song_is_usable);
+        cached.push(reusable);
+    }
+    let paths: Vec<&PathBuf> = found
+        .iter()
+        .zip(&cached)
+        .filter(|(_, cached)| cached.is_none())
+        .map(|((path, _), _)| path)
+        .collect();
 
     let workers = std::thread::available_parallelism()
         .map(|count| count.get())
@@ -593,7 +679,7 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
     let next = AtomicUsize::new(0);
     let artwork_cache: ArtworkCache = Mutex::new(HashMap::new());
 
-    let mut indexed: Vec<(usize, ScannedSong)> = std::thread::scope(|scope| {
+    let indexed: Vec<(usize, ScannedSong)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 let next = &next;
@@ -606,7 +692,7 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
                         if index >= paths.len() {
                             break;
                         }
-                        let path = &paths[index];
+                        let path = paths[index];
                         // A decoder or tag-parser panic on one malformed file must not take down
                         // the worker and every song it had already read.
                         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan_one(path, artwork_cache))) {
@@ -625,14 +711,42 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
             .collect()
     });
 
+    let stats = ScanStats { reused: found.len() - paths.len(), read: indexed.len() };
+    let fresh: HashMap<&Path, ScannedSong> = indexed
+        .into_iter()
+        .map(|(index, song)| (paths[index].as_path(), song))
+        .collect();
+
+    // Persist what was read, and forget files that are gone. Songs are stored before the id
+    // disambiguation below, which depends on their neighbours and is redone every scan.
+    if let Some(db) = db {
+        let upserts: Vec<(String, Stamp, String)> = found
+            .iter()
+            .filter_map(|(path, stamp)| {
+                let song = fresh.get(path.as_path())?;
+                Some((path.to_string_lossy().into_owned(), *stamp, serde_json::to_string(song).ok()?))
+            })
+            .collect();
+        let present: HashSet<String> = found.iter().map(|(path, _)| path.to_string_lossy().into_owned()).collect();
+        if let Err(error) = db.with_conn(|conn| scan_index::apply(conn, &prefix, &upserts, &present)) {
+            log::warn!("Failed to update the scan index: {error}");
+        }
+    }
+
+    let mut fresh = fresh;
+    let ordered: Vec<ScannedSong> = found
+        .iter()
+        .zip(cached)
+        .filter_map(|((path, _), cached)| cached.or_else(|| fresh.remove(path.as_path())))
+        .collect();
+
     // Path-derived ids fold every non-ASCII character to '_', so "காதல்.mp3" and "प्यार.mp3" in the
     // same folder collide. Keep the first (by path order) and give later ones a path-hash suffix,
     // so existing ids stay stable and a colliding song is no longer silently dropped.
-    indexed.sort_by_key(|(index, _)| *index);
-    let mut seen_ids: HashSet<String> = HashSet::with_capacity(indexed.len());
-    let mut songs: Vec<ScannedSong> = indexed
+    let mut seen_ids: HashSet<String> = HashSet::with_capacity(ordered.len());
+    let mut songs: Vec<ScannedSong> = ordered
         .into_iter()
-        .map(|(_, mut song)| {
+        .map(|mut song| {
             if !seen_ids.insert(song.id.clone()) {
                 song.id = format!("{}_{:08x}", song.id, path_hash(&song.path));
                 seen_ids.insert(song.id.clone());
@@ -650,7 +764,7 @@ fn scan_folder_blocking(scan_root: PathBuf) -> Vec<ScannedSong> {
         )
     });
 
-    songs
+    (songs, stats)
 }
 
 /// FNV-1a of the path, for disambiguating ids that sanitize to the same string.
@@ -682,15 +796,24 @@ pub async fn scan_music(
         }
     }
 
+    if let Some(watcher) = app.try_state::<crate::library_watch::LibraryWatcher>() {
+        watcher.watch(&scan_root);
+    }
+
     // An unplugged drive or an offline cloud folder must not read as "this folder is now empty":
     // the frontend would replace the library with nothing and drop every song's history.
     if !scan_root.is_dir() {
         return Err(AmplyError::Unavailable(format!("Folder not available: {}", scan_root.display())));
     }
 
-    let songs = tauri::async_runtime::spawn_blocking(move || scan_folder_blocking(scan_root))
-        .await
-        .map_err(|err| err.to_string())?;
+    let handle = app.clone();
+    let (songs, stats) = tauri::async_runtime::spawn_blocking(move || {
+        let db = storage::storage_db(&handle).ok();
+        scan_folder_blocking(scan_root, db.as_deref())
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    log::info!("Library scan: {} unchanged, {} read", stats.reused, stats.read);
     Ok(songs)
 }
 
@@ -727,6 +850,72 @@ pub async fn delete_song_file(path: String, roots: tauri::State<'_, LibraryRoots
     tauri::async_runtime::spawn_blocking(move || delete_song_file_blocking(&path, &roots))
         .await
         .map_err(|err| err.to_string())?
+}
+
+/// Files handed to Amply at launch ("Open with", a double-click on an associated file), held until
+/// the frontend has loaded the library and asks for them.
+#[derive(Default)]
+pub(crate) struct PendingOpenFiles(pub Mutex<Vec<String>>);
+
+/// The existing files and folders among command-line arguments; flags and junk are dropped.
+pub(crate) fn open_file_args(args: impl IntoIterator<Item = String>) -> Vec<String> {
+    args.into_iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .filter(|arg| {
+            let path = Path::new(arg);
+            path.is_dir() || (path.is_file() && is_supported_audio(path))
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn take_open_files(pending: tauri::State<'_, PendingOpenFiles>) -> Vec<String> {
+    std::mem::take(&mut *pending.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+}
+
+/// Most files one open or drop may add: a whole drive dropped by mistake must not freeze the app.
+const MAX_OPENED_FILES: usize = 5000;
+
+/// Reads the audio files at `paths`, descending into folders. Used for files opened from Explorer
+/// or dropped on the window, which may live outside every library folder.
+fn probe_audio_files_blocking(paths: &[String]) -> Vec<ScannedSong> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    for raw in paths {
+        let path = PathBuf::from(raw);
+        if path.is_dir() {
+            files.extend(
+                WalkDir::new(&path)
+                    .follow_links(true)
+                    .into_iter()
+                    .filter_entry(|entry| !is_skipped_dir(entry))
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_file() && is_supported_audio(entry.path()))
+                    .map(|entry| entry.into_path()),
+            );
+        } else if path.is_file() && is_supported_audio(&path) {
+            files.push(path);
+        }
+        if files.len() >= MAX_OPENED_FILES {
+            files.truncate(MAX_OPENED_FILES);
+            break;
+        }
+    }
+    let artwork_cache: ArtworkCache = Mutex::new(HashMap::new());
+    let mut seen = HashSet::new();
+    files
+        .iter()
+        .filter(|path| seen.insert(path.to_path_buf()))
+        .filter_map(|path| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan_one(path, &artwork_cache))).ok().flatten()
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn probe_audio_files(paths: Vec<String>) -> AmplyResult<Vec<ScannedSong>> {
+    Ok(tauri::async_runtime::spawn_blocking(move || probe_audio_files_blocking(&paths))
+        .await
+        .map_err(|err| err.to_string())?)
 }
 
 #[tauri::command]
@@ -830,10 +1019,83 @@ mod tests {
         fs::write(dotted.join("cached.mp3"), vec![0u8; 8192]).unwrap();
         fs::write(root.join("stub.mp3"), b"x").unwrap();
         fs::write(root.join("song.mp3"), vec![0u8; 8192]).unwrap();
-        let songs = scan_folder_blocking(root.clone());
+        let (songs, _) = scan_folder_blocking(root.clone(), None);
         let names: Vec<_> = songs.iter().map(|song| song.filename.clone()).collect();
         assert_eq!(names, vec!["song.mp3".to_string()]);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rescans_reuse_unchanged_files_and_reread_changed_ones() {
+        let music = temp_dir("index-music");
+        let storage_root = temp_dir("index-storage");
+        let db = storage::StorageDb::open(storage_root.clone()).unwrap();
+        fs::write(music.join("a.mp3"), vec![0u8; 8192]).unwrap();
+        fs::write(music.join("b.mp3"), vec![0u8; 8192]).unwrap();
+
+        let (first, stats) = scan_folder_blocking(music.clone(), Some(&db));
+        assert_eq!(first.len(), 2);
+        assert_eq!(stats, ScanStats { reused: 0, read: 2 });
+
+        let (second, stats) = scan_folder_blocking(music.clone(), Some(&db));
+        assert_eq!(stats, ScanStats { reused: 2, read: 0 });
+        assert_eq!(
+            first.iter().map(|song| &song.id).collect::<Vec<_>>(),
+            second.iter().map(|song| &song.id).collect::<Vec<_>>()
+        );
+
+        // A changed size is a changed file; a deleted file drops out of the index.
+        fs::write(music.join("a.mp3"), vec![0u8; 9000]).unwrap();
+        fs::remove_file(music.join("b.mp3")).unwrap();
+        let (third, stats) = scan_folder_blocking(music.clone(), Some(&db));
+        assert_eq!(third.len(), 1);
+        assert_eq!(stats, ScanStats { reused: 0, read: 1 });
+        assert_eq!(third[0].size, 9000);
+        let indexed = db.with_conn(|conn| scan_index::load_under(conn, &index_prefix(&music))).unwrap();
+        assert_eq!(indexed.len(), 1);
+
+        drop(db);
+        fs::remove_dir_all(&music).unwrap();
+        let _ = fs::remove_dir_all(&storage_root);
+    }
+
+    /// Times a cold scan against an indexed rescan of the real library, with a throwaway database:
+    /// `AMPLY_TEST_SONGS="D:/Songs i like" cargo test -- --ignored scan_index_real_library --nocapture`.
+    #[test]
+    #[ignore]
+    fn scan_index_real_library() {
+        let folder = std::env::var("AMPLY_TEST_SONGS").expect("set AMPLY_TEST_SONGS");
+        let storage_root = temp_dir("index-real");
+        let db = storage::StorageDb::open(storage_root.clone()).unwrap();
+        crate::artwork::init(&storage_root).unwrap();
+        let root = PathBuf::from(folder);
+
+        let started = std::time::Instant::now();
+        let (cold, cold_stats) = scan_folder_blocking(root.clone(), Some(&db));
+        let cold_time = started.elapsed();
+        let started = std::time::Instant::now();
+        let (warm, warm_stats) = scan_folder_blocking(root, Some(&db));
+        let warm_time = started.elapsed();
+
+        let with_album_artist = warm.iter().filter(|song| song.album_artist.is_some()).count();
+        let with_gain = warm.iter().filter(|song| song.replay_gain.is_some()).count();
+        eprintln!("cold: {} songs in {cold_time:?} ({cold_stats:?})", cold.len());
+        eprintln!("warm: {} songs in {warm_time:?} ({warm_stats:?})", warm.len());
+        eprintln!("{with_album_artist} with album artist, {with_gain} with ReplayGain");
+        assert_eq!(cold.len(), warm.len());
+        assert_eq!(warm_stats.read, 0);
+        assert!(cold.iter().zip(&warm).all(|(a, b)| a.id == b.id && a.title == b.title && a.album_art == b.album_art));
+        drop(db);
+        let _ = fs::remove_dir_all(&storage_root);
+    }
+
+    #[test]
+    fn replay_gain_values_parse_with_or_without_units() {
+        assert_eq!(parse_replay_gain(Some("-7.35 dB")), Some(-7.35));
+        assert_eq!(parse_replay_gain(Some("+1.20dB")), Some(1.2));
+        assert_eq!(parse_replay_gain(Some("0.988")), Some(0.988));
+        assert_eq!(parse_replay_gain(Some("loud")), None);
+        assert_eq!(parse_replay_gain(Some("-900 dB")), None);
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -935,7 +1197,7 @@ mod tests {
                 .and_then(|probe| probe.read())
                 .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
             let stem = path.file_stem().and_then(|name| name.to_str()).unwrap_or("?");
-            let (title, artist, _album, _genre, _track, year, _gain) = extract_text_metadata(&tagged, stem);
+            let TextMetadata { title, artist, year, .. } = extract_text_metadata(&tagged, stem);
             let duration = tagged.properties().duration().as_secs_f64();
             assert!(duration > 0.0, "{}: zero duration", path.display());
             if title != stem {

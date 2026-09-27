@@ -97,6 +97,23 @@ $manifest = @"
         <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png" ShortName="Amply" />
       </uap:VisualElements>
       <Extensions>
+        <!-- "Open with Amply" for audio files; the path arrives as a command-line argument. -->
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="amplyaudio">
+            <uap:DisplayName>Audio file</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.mp3</uap:FileType>
+              <uap:FileType>.flac</uap:FileType>
+              <uap:FileType>.wav</uap:FileType>
+              <uap:FileType>.ogg</uap:FileType>
+              <uap:FileType>.oga</uap:FileType>
+              <uap:FileType>.m4a</uap:FileType>
+              <uap:FileType>.aac</uap:FileType>
+              <uap:FileType>.aif</uap:FileType>
+              <uap:FileType>.aiff</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
         <desktop:Extension Category="windows.startupTask" Executable="amply.exe" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="AmplyStartup" Enabled="false" DisplayName="$DisplayName" />
         </desktop:Extension>

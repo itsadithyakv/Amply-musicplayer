@@ -11,8 +11,10 @@ mod artwork;
 mod audio;
 mod error;
 mod library;
+mod library_watch;
 mod metadata;
 mod platform;
+mod scan_index;
 mod storage;
 
 use audio::engine::{AudioCommand, AudioState};
@@ -24,7 +26,15 @@ fn main() {
         // Must be the first plugin: a second launch (autostart plus a manual start, a double-click on
         // the shortcut) hands off to the running player instead of opening a rival that fights it
         // for the audio device, the media keys and the mini player.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A file opened while Amply runs arrives as the second instance's arguments.
+            let files = library::open_file_args(argv.into_iter().skip(1));
+            if !files.is_empty() {
+                use tauri::Emitter;
+                if let Err(error) = app.emit("amply://open-files", files) {
+                    log::warn!("Failed to forward opened files: {error}");
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -71,12 +81,15 @@ fn main() {
             tauri::async_runtime::spawn_blocking(move || responder.respond(artwork::handle_request(&request)));
         })
         .manage(AudioState::new(audio_tx.clone()))
+        .manage(library::PendingOpenFiles(std::sync::Mutex::new(library::open_file_args(std::env::args().skip(1)))))
         .setup(|app| {
             let storage_root = storage::storage_root_path(app.handle())?;
             artwork::init(&storage_root)?;
             app.manage(storage::StorageDb::open(storage_root)?);
             // Asset-protocol access to every known library folder must exist before the webview loads.
-            app.manage(library::restore_library_roots(app.handle()));
+            let roots = library::restore_library_roots(app.handle());
+            app.manage(library_watch::LibraryWatcher::start(app.handle().clone(), &roots.snapshot()));
+            app.manage(roots);
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -153,6 +166,8 @@ fn main() {
             metadata::lyrics::lyrics_load_rust,
             metadata::http::fetch_recommendation_json_rust,
             library::build_album_art_frequency_rust,
+            library::take_open_files,
+            library::probe_audio_files,
             platform::store_review::is_store_install_rust,
             platform::store_review::request_store_review_rust,
             platform::media_controls::media_controls_update,

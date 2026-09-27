@@ -51,7 +51,8 @@ pub(crate) fn init_storage_db(conn: &Connection) -> Result<(), String> {
             updated_at INTEGER NOT NULL
          );",
     )
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string())?;
+    crate::scan_index::init(conn)
 }
 
 fn now_unix() -> i64 {
@@ -276,7 +277,10 @@ pub async fn open_storage_dir(app: tauri::AppHandle) -> AmplyResult<()> {
 pub async fn clear_storage_cache(app: tauri::AppHandle) -> AmplyResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let db = storage_db(&app)?;
-        db.with_conn(|conn| conn.execute_batch("DELETE FROM kv; VACUUM;").map_err(|err| err.to_string()))?;
+        db.with_conn(|conn| {
+            crate::scan_index::clear(conn)?;
+            conn.execute_batch("DELETE FROM kv; VACUUM;").map_err(|err| err.to_string())
+        })?;
         for folder in STORAGE_SUBFOLDERS {
             let target = db.root().join(folder);
             if target.exists() {

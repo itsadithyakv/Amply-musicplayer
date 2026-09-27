@@ -72,6 +72,18 @@ const normalizeSong = (song: ScannedSong): Song => {
   };
 };
 
+/**
+ * Reads audio files and folders from outside the library (opened from Explorer or dropped on the
+ * window). Folders are searched recursively; anything that is not playable audio is skipped.
+ */
+export const probeAudioFiles = async (paths: string[]): Promise<Song[]> => {
+  if (!isTauri() || !paths.length) {
+    return [];
+  }
+  const probed = await invoke<ScannedSong[]>('probe_audio_files', { paths });
+  return probed.map(normalizeSong);
+};
+
 export const scanMusicFolder = async (folder?: string): Promise<Song[]> => {
   if (!isTauri()) {
     return demoSongs;

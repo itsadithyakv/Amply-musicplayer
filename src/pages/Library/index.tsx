@@ -26,6 +26,7 @@ import { AlbumDetailModal, type ActiveAlbum } from './AlbumDetailModal';
 import {
   albumSortOptions,
   artistSortOptions,
+  buildAlbumEntries,
   buildAlbumTrackMatches,
   buildArtistGroups,
   buildGenreGroups,
@@ -114,43 +115,10 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
     };
   }, [deferredSongs.length]);
 
-  const albums = useMemo<AlbumEntry[]>(() => {
-    if (!shouldBuildAlbums) {
-      return [];
-    }
-    const map = new Map<string, AlbumEntry>();
-    for (const song of deferredSongs) {
-      const albumName = song.album?.trim() ?? '';
-      const normalizedAlbum = albumName.toLowerCase();
-      const isUnknownAlbum = !albumName || normalizedAlbum === 'unknown album' || normalizedAlbum === 'unknown';
-      if (isUnknownAlbum) {
-        continue;
-      }
-      const primaryArtist = getPrimaryArtistName(song.artist);
-      const albumKey = getAlbumTracklistKey(primaryArtist, albumName);
-      const existing = map.get(albumKey);
-      if (!existing) {
-        map.set(albumKey, {
-          album: albumName,
-          artist: song.artist,
-          artwork: song.albumArt,
-          songs: [song],
-          key: albumKey,
-          totalPlays: song.playCount,
-        });
-        continue;
-      }
-      existing.songs.push(song);
-      existing.totalPlays += song.playCount;
-      if (!existing.artwork && song.albumArt) {
-        existing.artwork = song.albumArt;
-      }
-    }
-    return [...map.values()].map((entry) => ({
-      ...entry,
-      artwork: entry.artwork ?? pickArtwork(entry.songs),
-    }));
-  }, [deferredSongs, shouldBuildAlbums, pickArtwork]);
+  const albums = useMemo<AlbumEntry[]>(
+    () => (shouldBuildAlbums ? buildAlbumEntries(deferredSongs, pickArtwork) : []),
+    [deferredSongs, shouldBuildAlbums, pickArtwork],
+  );
 
   const albumsByKey = useMemo(() => new Map(albums.map((album) => [album.key, album])), [albums]);
 

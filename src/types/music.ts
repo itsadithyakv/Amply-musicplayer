@@ -8,6 +8,8 @@ export interface Song {
   title: string;
   artist: string;
   album: string;
+  /** The album's credited artist ("Various Artists" on a compilation), when the file is tagged. */
+  albumArtist?: string;
   genre: string;
   duration: number;
   track: number;
@@ -27,6 +29,12 @@ export interface Song {
   lastCompleted?: number;
   manualQueueAdds?: number;
   lastManualQueueAdd?: number;
+  /** ReplayGain track gain (dB), album gain (dB) and track peak (linear), when tagged. */
+  replayGain?: number;
+  replayGainAlbum?: number;
+  replayPeak?: number;
+  /** File size in bytes; with the tags it recognises a file that was moved or renamed. */
+  size?: number;
 }
 
 export type SongSnapshot = Song;
