@@ -104,7 +104,12 @@ fn main() {
             }
 
             platform::start_windows_audio_focus_watcher(app.handle().clone());
-            platform::start_windows_media_key_listener(app.handle().clone());
+            platform::taskbar_init(app.handle());
+            // Windows routes media keys to the active media session. The global keyboard hook is
+            // only a fallback for when the system media controls cannot be created.
+            if !platform::media_controls::init(app.handle()) {
+                platform::start_windows_media_key_listener(app.handle().clone());
+            }
 
             let app_handle = app.handle().clone();
             audio::spawn_audio_thread(app_handle, audio_rx);
@@ -149,7 +154,10 @@ fn main() {
             metadata::http::fetch_recommendation_json_rust,
             library::build_album_art_frequency_rust,
             platform::store_review::is_store_install_rust,
-            platform::store_review::request_store_review_rust
+            platform::store_review::request_store_review_rust,
+            platform::media_controls::media_controls_update,
+            platform::startup::startup_get_state,
+            platform::startup::startup_set_enabled
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {

@@ -506,15 +506,17 @@ const persistSettings = (settings: AppSettings): Promise<void> => {
   return settingsWriteChain;
 };
 
-const readPluginLaunchOnStartup = async (): Promise<boolean | null> => {
+/** Mirrors `StartupState` in src-tauri/src/platform/startup.rs. */
+type StartupState = 'enabled' | 'disabled' | 'disabled-by-user' | 'managed';
+
+const readStartupState = async (): Promise<StartupState | null> => {
   if (!isTauri()) {
     return null;
   }
   try {
-    const autostart = await import('@tauri-apps/plugin-autostart');
-    return await autostart.isEnabled();
+    return await invoke<StartupState>('startup_get_state');
   } catch (error) {
-    recordPerfEvent('settings.launch-startup.plugin-read-failed', {
+    recordPerfEvent('settings.launch-startup.read-failed', {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
@@ -522,31 +524,22 @@ const readPluginLaunchOnStartup = async (): Promise<boolean | null> => {
 };
 
 const readLaunchOnStartupEnabled = async (fallback: boolean): Promise<boolean> => {
-  if (!isTauri()) {
-    return fallback;
-  }
-  const enabled = await readPluginLaunchOnStartup();
-  return typeof enabled === 'boolean' ? enabled : fallback;
+  const state = await readStartupState();
+  return state === null ? fallback : state === 'enabled';
 };
 
-const setSystemLaunchOnStartup = async (enabled: boolean): Promise<boolean> => {
+/**
+ * Asks Windows to turn launch-on-startup on or off and returns where it ended up. Store installs
+ * use a startup task that the user can veto in Windows Settings; that veto is reported, not thrown.
+ */
+const setSystemLaunchOnStartup = async (enabled: boolean): Promise<StartupState> => {
   if (!isTauri()) {
-    return enabled;
+    return enabled ? 'enabled' : 'disabled';
   }
   try {
-    const autostart = await import('@tauri-apps/plugin-autostart');
-    if (enabled) {
-      await autostart.enable();
-    } else {
-      await autostart.disable();
-    }
-    const actualEnabled = await autostart.isEnabled();
-    if (actualEnabled !== enabled) {
-      throw new Error(enabled ? 'Failed to enable launch on startup' : 'Failed to disable launch on startup');
-    }
-    return actualEnabled;
+    return await invoke<StartupState>('startup_set_enabled', { enabled });
   } catch (error) {
-    recordPerfEvent('settings.launch-startup.plugin-write-failed', {
+    recordPerfEvent('settings.launch-startup.write-failed', {
       enabled,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -1377,14 +1370,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     try {
-      const actualEnabled = await setSystemLaunchOnStartup(enabled);
+      const state = await setSystemLaunchOnStartup(enabled);
+      const actualEnabled = state === 'enabled';
       const verifiedSettings = {
         ...get().settings,
         launchOnStartup: actualEnabled,
       };
       set({ settings: verifiedSettings });
       await persistSettings(verifiedSettings);
-      get().showToast(actualEnabled ? 'Amply will launch on startup' : 'Startup launch disabled');
+      if (state === 'disabled-by-user') {
+        get().showToast('Turn Amply on in Windows Settings > Apps > Startup');
+      } else if (state === 'managed') {
+        get().showToast('Startup launch is managed by your organisation');
+      } else {
+        get().showToast(actualEnabled ? 'Amply will launch on startup' : 'Startup launch disabled');
+      }
     } catch (error) {
       const actualEnabled = await readLaunchOnStartupEnabled(previous.launchOnStartup);
       const revertedSettings = {

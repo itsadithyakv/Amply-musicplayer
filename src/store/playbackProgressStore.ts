@@ -27,7 +27,7 @@ export const setPlaybackProgress = (positionSec: number, durationSec: number): v
   }
 };
 
-const subscribePlaybackProgress = (listener: Listener): (() => void) => {
+export const subscribePlaybackProgress = (listener: Listener): (() => void) => {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

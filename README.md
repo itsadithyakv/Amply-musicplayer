@@ -106,7 +106,8 @@ Up to ~30 playlists are generated locally from your listening history. See
 | Game Mode | A single low-cost page with no artwork grids; disables the FPS monitor and collapses every shadow to a hairline. For playing while something else needs the GPU. |
 | Now Playing | Full-page view with artwork, queue, lyrics and the artist panel; a condensed version of the same lives in the right-hand sidebar. |
 | Keyboard shortcuts | Space play/pause, ←/→ seek 5 s, Shift+←/→ previous/next track, ↑/↓ volume ±5 %, M mute (`useGlobalShortcuts.ts`; ignored while typing or on a focused slider). |
-| Media keys | A low-level Windows keyboard hook forwards play/pause/next/previous as `amply://media-key`. |
+| Media keys and Windows media controls | `platform/media_controls.rs` registers with Windows' system media controls (SMTC) for the main window: the volume-key flyout and lock screen show the song, cover and a seekable timeline, and Windows routes media keys to Amply only when it is the active session. The old low-level keyboard hook remains as a fallback if SMTC cannot be created. |
+| Taskbar thumbnail buttons | `platform/taskbar.rs` subclasses the main window for `TaskbarButtonCreated` and `THBN_CLICKED`; previous / play-pause / next glyphs are rasterised at the window's DPI and recoloured when Windows switches light/dark. |
 | System media session | `useMediaSession.ts` publishes title, artist and artwork to the OS. |
 | Toasts, modals, confirmations | `src/components/ui/` — every modal traps focus, closes on Escape and restores focus on close (`useDialog.ts`). |
 | Error boundaries | Each route and the player bar are wrapped; a crash shows a fallback card and arms safe mode for the next start instead of taking down the window. |
@@ -116,7 +117,7 @@ Up to ~30 playlists are generated locally from your listening history. See
 | Feature | How it is built |
 |---|---|
 | Pause when another app plays audio | A WASAPI session watcher (`src-tauri/src/platform/windows.rs`) polls active render sessions and emits `amply://audio-focus`. Configurable: ignore list by process name, and an option to ignore fullscreen apps. |
-| Launch on startup | `tauri-plugin-autostart` (a single `HKCU\...\Run` entry). |
+| Launch on startup | `platform/startup.rs`: Store installs toggle the manifest's `AmplyStartup` startup task (a Run key is invisible to Windows inside an MSIX); other installs use `tauri-plugin-autostart`. A user veto in Windows Settings is reported instead of failing. |
 | Branded installer | NSIS with Amply header and sidebar bitmaps generated from the logo, the app icon, and a per-user install. |
 
 ---

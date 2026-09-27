@@ -45,6 +45,20 @@ pub(crate) fn artwork_url(key: &str) -> String {
     }
 }
 
+/// The file behind an artwork URL from `artwork_url`, for consumers outside the webview (Windows'
+/// media flyout) that cannot fetch the custom scheme. None for any other URL.
+pub(crate) fn file_for_url(url: &str) -> Option<PathBuf> {
+    let name = url
+        .strip_prefix(&format!("http://{SCHEME}.localhost/"))
+        .or_else(|| url.strip_prefix(&format!("{SCHEME}://localhost/")))?;
+    let key = name.strip_suffix(".jpg")?;
+    if !is_key(key) {
+        return None;
+    }
+    let path = dir()?.join(format!("{key}.jpg"));
+    path.is_file().then_some(path)
+}
+
 /// FNV-1a over the bytes plus the length — stable, dependency-free, and collisions are
 /// irrelevant at library scale (a collision would only swap two covers).
 fn content_key(bytes: &[u8]) -> String {

@@ -3,7 +3,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod media_controls;
+pub mod startup;
 pub mod store_review;
+mod taskbar;
+
+pub(crate) use self::taskbar::init as taskbar_init;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
