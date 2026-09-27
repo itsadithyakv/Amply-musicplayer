@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod dsp;
 pub mod engine;
+pub mod loudness;
 
 use std::{
     fs,

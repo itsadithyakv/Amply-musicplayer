@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   crossfadeEnabled: false,
   crossfadeDurationSec: 6,
   gaplessEnabled: true,
+  volumeNormalization: 'track',
   playbackSpeed: 1,
   outputDeviceName: undefined,
   eqPreset: 'flat',
@@ -71,6 +72,10 @@ export const normalizeSettings = (input: unknown): AppSettings => {
     crossfadeEnabled: bool(raw.crossfadeEnabled, d.crossfadeEnabled),
     crossfadeDurationSec: num(raw.crossfadeDurationSec, d.crossfadeDurationSec, 1, 20),
     gaplessEnabled: bool(raw.gaplessEnabled, d.gaplessEnabled),
+    volumeNormalization:
+      raw.volumeNormalization === 'off' || raw.volumeNormalization === 'album' || raw.volumeNormalization === 'track'
+        ? raw.volumeNormalization
+        : d.volumeNormalization,
     playbackSpeed: num(raw.playbackSpeed, d.playbackSpeed, 0.5, 2),
     outputDeviceName,
     eqPreset: EQ_PRESETS.has(eqPreset) ? eqPreset : d.eqPreset,

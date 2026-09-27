@@ -52,7 +52,8 @@ pub(crate) fn init_storage_db(conn: &Connection) -> Result<(), String> {
          );",
     )
     .map_err(|err| err.to_string())?;
-    crate::scan_index::init(conn)
+    crate::scan_index::init(conn)?;
+    crate::audio::loudness::init(conn)
 }
 
 fn now_unix() -> i64 {

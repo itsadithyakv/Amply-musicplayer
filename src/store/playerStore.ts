@@ -169,6 +169,7 @@ interface PlayerState {
   setCrossfadeEnabled: (enabled: boolean) => Promise<void>;
   setCrossfadeDuration: (durationSec: number) => Promise<void>;
   setGaplessEnabled: (enabled: boolean) => Promise<void>;
+  setVolumeNormalization: (mode: AppSettings['volumeNormalization']) => Promise<void>;
   setAppTheme: (theme: AppSettings['appTheme']) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   /** Merges settings from a backup over the current ones and saves them (applied on next load). */
@@ -1342,6 +1343,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       gaplessEnabled: enabled,
       crossfadeEnabled: enabled ? false : get().settings.crossfadeEnabled,
     };
+    audioEngine.applySettings(settings);
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setVolumeNormalization: async (mode) => {
+    const settings = { ...get().settings, volumeNormalization: mode };
     audioEngine.applySettings(settings);
     set({ settings });
     await persistSettings(settings);

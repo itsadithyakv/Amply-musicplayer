@@ -152,6 +152,7 @@ fn main() {
             audio::commands::audio_set_visualizer_enabled,
             audio::commands::audio_set_output_device,
             audio::commands::audio_list_output_devices,
+            audio::loudness::audio_track_loudness,
             library::load_embedded_artwork,
             metadata::artist::has_cached_artist_profile_rust,
             metadata::artist::has_cached_artist_profiles_rust,

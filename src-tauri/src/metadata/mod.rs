@@ -76,6 +76,9 @@ pub struct AlbumTracklist {
 #[serde(rename_all = "camelCase")]
 pub struct SongInput {
     pub id: Option<String>,
+    /// The audio file, for lyrics saved next to it ("Song.lrc" beside "Song.mp3").
+    #[serde(default)]
+    pub path: Option<String>,
     pub title: String,
     pub artist: String,
     pub album: Option<String>,

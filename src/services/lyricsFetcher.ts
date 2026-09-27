@@ -81,6 +81,7 @@ const validateLyricsQuality = (lyrics: LyricsResult): boolean => {
 
 const toRustSong = (song: Song) => ({
   id: song.id ?? null,
+  path: song.path || null,
   title: song.title,
   artist: song.artist,
   album: song.album ?? null,

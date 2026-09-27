@@ -668,11 +668,40 @@ pub async fn lyrics_save_selection_rust(
 
 /// Cached lyrics, else a remembered miss, else a lookup. Statuses: "ready", "missing",
 /// "instrumental" (the service says the track has no vocals), "offline" (try again later).
+/// Lyric files larger than this are not lyrics.
+const MAX_SIDECAR_BYTES: u64 = 512 * 1024;
+
+/// Lyrics the user keeps next to the song: "Song.lrc" (timed) or "Song.txt" (plain) beside
+/// "Song.mp3". Returns the file's path and text when one exists and reads as real lyrics.
+fn read_sidecar_lyrics(audio_path: &str) -> Option<(String, String)> {
+    let audio = std::path::Path::new(audio_path);
+    ["lrc", "txt"].iter().find_map(|extension| {
+        let candidate = audio.with_extension(extension);
+        let metadata = std::fs::metadata(&candidate).ok()?;
+        if !metadata.is_file() || metadata.len() > MAX_SIDECAR_BYTES {
+            return None;
+        }
+        let bytes = std::fs::read(&candidate).ok()?;
+        let text = String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_string();
+        validate_lyrics_quality(&text).then(|| (candidate.to_string_lossy().into_owned(), text))
+    })
+}
+
 #[tauri::command]
 pub async fn lyrics_load_rust(
     app: tauri::AppHandle,
     song: SongInput,
 ) -> AmplyResult<LyricsLoadResult> {
+    // A lyrics file next to the song is the user's own choice and beats anything downloaded.
+    if let Some(path) = song.path.clone() {
+        let sidecar = tauri::async_runtime::spawn_blocking(move || read_sidecar_lyrics(&path))
+            .await
+            .map_err(|err| err.to_string())?;
+        if let Some((sidecar_path, text)) = sidecar {
+            return Ok(build_lyrics_result(&text, &sidecar_path, true));
+        }
+    }
+
     let key = cache_key_for_song(&song);
     if let Some((cache_key, text)) = read_cached_lyrics_text(&app, &song).await? {
         if validate_lyrics_quality(&text) {
@@ -747,6 +776,7 @@ mod tests {
     #[test]
     fn lyrics_cache_key_uses_cleaned_upload_title() {
         let song = SongInput {
+            path: None,
             id: Some("never-see-me-again".to_string()),
             title: "Kanye West - Never See Me Again - High Quality Vocals + Orchestral Intro".to_string(),
             artist: "Kanye West".to_string(),
@@ -764,6 +794,7 @@ mod tests {
     #[test]
     fn lyrics_legacy_keys_include_raw_upload_title() {
         let song = SongInput {
+            path: None,
             id: Some("never-see-me-again".to_string()),
             title: "Kanye West - Never See Me Again - High Quality Vocals + Orchestral Intro".to_string(),
             artist: "Kanye West".to_string(),
@@ -782,6 +813,7 @@ mod tests {
     #[test]
     fn lyrics_candidate_score_prefers_cleaned_title_match() {
         let song = SongInput {
+            path: None,
             id: Some("never-see-me-again".to_string()),
             title: "Kanye West - Never See Me Again - High Quality Vocals + Orchestral Intro".to_string(),
             artist: "Kanye West".to_string(),
@@ -834,6 +866,7 @@ mod tests {
     #[test]
     fn acceptance_needs_title_plus_artist_or_duration() {
         let song = SongInput {
+            path: None,
             id: Some("war-pigs".to_string()),
             title: "War Pigs - 2009 Remaster".to_string(),
             artist: "Black Sabbath".to_string(),
@@ -865,6 +898,7 @@ mod tests {
     #[test]
     fn lookups_are_capped_deduplicated_and_exact_first() {
         let song = SongInput {
+            path: None,
             id: None,
             title: "War Pigs - 2009 Remaster".to_string(),
             artist: "Black Sabbath".to_string(),
@@ -879,6 +913,25 @@ mod tests {
         let lookups = plan_lyrics_lookups(&unknown);
         assert_eq!(lookups.len(), 1);
         assert_eq!(lookups[0].params[0].0, "q");
+    }
+
+    #[test]
+    fn lyrics_files_beside_the_song_win_and_junk_is_ignored() {
+        let dir = std::env::temp_dir().join(format!("amply-sidecar-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let song = dir.join("Song.mp3");
+        let lrc = "[00:01.00]First line of the song\n[00:04.00]Second line goes here\n[00:08.00]Third line keeps going\n[00:12.00]Fourth line is different\n[00:16.00]Fifth line to be sure\n[00:20.00]Sixth and final line\n";
+        std::fs::write(dir.join("Song.txt"), "plain\nwords\n").unwrap();
+        std::fs::write(dir.join("Song.lrc"), format!("\u{feff}{lrc}")).unwrap();
+        let (path, text) = read_sidecar_lyrics(&song.to_string_lossy()).expect("the .lrc file");
+        assert!(path.ends_with("Song.lrc"));
+        assert!(text.starts_with("[00:01.00]"), "BOM stripped");
+
+        // Metadata only, no lyric lines: not lyrics, so the online lookup still runs.
+        std::fs::write(dir.join("Song.lrc"), "[ar:Someone]\n[ti:Song]\n").unwrap();
+        std::fs::remove_file(dir.join("Song.txt")).unwrap();
+        assert!(read_sidecar_lyrics(&song.to_string_lossy()).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -918,6 +971,7 @@ mod live_probe {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         for (artist, title, album, duration) in cases {
             let song = SongInput {
+                path: None,
                 id: None,
                 title: title.to_string(),
                 artist: artist.to_string(),

@@ -17,6 +17,8 @@ export const PlaybackSection = () => {
   const setCrossfadeEnabled = usePlayerStore((state) => state.setCrossfadeEnabled);
   const setCrossfadeDuration = usePlayerStore((state) => state.setCrossfadeDuration);
   const setGaplessEnabled = usePlayerStore((state) => state.setGaplessEnabled);
+  const volumeNormalization = usePlayerStore((state) => state.settings.volumeNormalization);
+  const setVolumeNormalization = usePlayerStore((state) => state.setVolumeNormalization);
 
   const [outputDevices, setOutputDevices] = useState<OutputDeviceInfo[]>([]);
 
@@ -96,6 +98,26 @@ export const PlaybackSection = () => {
             void setGaplessEnabled(next);
           }}
         />
+
+        <SettingField
+          label="Volume Normalization"
+          description="Play every song at the same loudness. Uses ReplayGain tags, or measures songs without them."
+        >
+          <Select
+            label="Level"
+            value={volumeNormalization}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (next === 'off' || next === 'track' || next === 'album') {
+                void setVolumeNormalization(next);
+              }
+            }}
+          >
+            <option value="track">Per song</option>
+            <option value="album">Per album (keeps album dynamics)</option>
+            <option value="off">Off</option>
+          </Select>
+        </SettingField>
 
         <SettingField label="Playback Speed" trailing={`${playbackSpeed.toFixed(2)}x`}>
           <Slider

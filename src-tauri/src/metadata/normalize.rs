@@ -754,6 +754,7 @@ mod tests {
 
     fn song(artist: &str, title: &str) -> SongInput {
         SongInput {
+            path: None,
             id: Some("1".to_string()),
             title: title.to_string(),
             artist: artist.to_string(),

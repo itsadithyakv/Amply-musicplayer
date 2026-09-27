@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isTauri } from '@/services/storageService';
 import { DEFAULT_SETTINGS } from '@/store/defaultSettings';
 import type { AppSettings, Song } from '@/types/music';
+import { computeGainDb, dbToFactor, type MeasuredLoudness } from '@/services/loudnessGain';
 
 export interface LoadOptions {
   autoplay?: boolean;
@@ -42,6 +43,8 @@ type AudioProgressEvent = {
 };
 
 const CROSSFADE_MIN_DURATION_SEC = 20;
+/** A song measured this early in playback may still take its gain without an audible jump. */
+const LATE_GAIN_WINDOW_SEC = 4;
 const SILENCE_TRIM_START_SEC = 0.08;
 
 const resolveStartOffset = (song: Song, startAtSec: number): number =>
@@ -61,6 +64,9 @@ class NativeAudioEngine implements AudioEngine {
   private onEnded: AudioEngineCallbacks['onEnded'] | null = null;
   private settings: AppSettings = DEFAULT_SETTINGS;
   private masterVolume = 0.85;
+  /** Measured loudness by file path; null once a file proved unmeasurable. */
+  private loudness = new Map<string, MeasuredLoudness | null>();
+  private loudnessPending = new Set<string>();
   private unlisten: UnlistenFn[] = [];
   private bindPromise: Promise<void>;
 
@@ -160,6 +166,7 @@ class NativeAudioEngine implements AudioEngine {
     });
 
     this.currentSong = song;
+    this.measureLoudness([song]);
     this.currentDuration = song.duration;
     this.currentPosition = startOffset;
     this.lastProgressAt = performance.now();
@@ -168,6 +175,8 @@ class NativeAudioEngine implements AudioEngine {
   }
 
   preloadSongs(songs: Song[]): void {
+    // Measure what comes next while this song plays, so its gain is known before it starts.
+    this.measureLoudness(songs.slice(0, 3));
     if (!this.settings.gaplessEnabled) {
       void invoke('audio_preload', { paths: [] });
       return;
@@ -240,8 +249,37 @@ class NativeAudioEngine implements AudioEngine {
     this.onEnded = null;
   }
 
-  private resolveTrackVolume(_song: Song): number {
-    return this.masterVolume;
+  /**
+   * Measures songs that have no ReplayGain tags and no cached measurement. A result for the song
+   * already playing is applied only in its first seconds, so the level never jumps mid-song.
+   */
+  private measureLoudness(songs: Song[]): void {
+    if (this.settings.volumeNormalization === 'off') {
+      return;
+    }
+    const paths = songs
+      .filter((song) => song?.path && typeof song.replayGain !== 'number')
+      .map((song) => song.path)
+      .filter((path) => !this.loudness.has(path) && !this.loudnessPending.has(path));
+    if (!paths.length) {
+      return;
+    }
+    paths.forEach((path) => this.loudnessPending.add(path));
+    void invoke<Array<MeasuredLoudness | null>>('audio_track_loudness', { paths })
+      .then((results) => {
+        paths.forEach((path, index) => this.loudness.set(path, results[index] ?? null));
+        const current = this.currentSong;
+        if (current && paths.includes(current.path) && this.getPosition() <= LATE_GAIN_WINDOW_SEC) {
+          this.refreshTrackVolume();
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => paths.forEach((path) => this.loudnessPending.delete(path)));
+  }
+
+  private resolveTrackVolume(song: Song): number {
+    const gainDb = computeGainDb(this.settings.volumeNormalization, song, this.loudness.get(song.path));
+    return this.masterVolume * dbToFactor(gainDb);
   }
 
   private refreshTrackVolume(): void {

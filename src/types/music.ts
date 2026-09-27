@@ -90,6 +90,8 @@ export interface AppSettings {
   crossfadeEnabled: boolean;
   crossfadeDurationSec: number;
   gaplessEnabled: boolean;
+  /** Levels loudness between songs: ReplayGain tags when present, otherwise measured loudness. */
+  volumeNormalization: 'off' | 'track' | 'album';
   playbackSpeed: number;
   outputDeviceName?: string;
   eqPreset: EqPreset;

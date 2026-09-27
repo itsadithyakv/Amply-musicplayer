@@ -59,6 +59,7 @@ Nothing about your library leaves the machine except the metadata lookups you ca
 | Gapless / preloading | `audio_preload` reads whole files into `Arc<[u8]>` and every decoder built from one shares that buffer, so queueing the next track costs no copy. |
 | Crossfade | Two sinks with a linear volume ramp (`fade_in` / `fade_out` in `NativeAudio`), duration configurable 1–20 s. Mutually exclusive with gapless. |
 | 5-band EQ | Biquad peaking filters at 60 Hz, 250 Hz, 1 kHz, 4 kHz, 12 kHz (`src-tauri/src/audio/dsp.rs`), ±12 dB. Gains live in atomics, so dragging a band re-computes coefficients in place without rebuilding the sink. Presets: flat, warm, bass, treble, vocal, club, custom. |
+| Volume normalization | Settings → Playback: per song (default), per album, or off. ReplayGain tags are used when present (shifted from -18 to the -14 LUFS target); untagged files are measured once with EBU R128 (`audio/loudness.rs`, `ebur128`) in the background while the previous song plays and cached per file. Boosts never exceed +6 dB or the file's peak, and a gain only lands in a song's first 4 s, so the level never jumps mid-song (`loudnessGain.ts`). |
 | Playback speed | `SharedSpeed`, a rate-aware wrapper that reads an atomic factor. Changing speed folds the current position first, so the progress bar stays truthful at 0.5×–2×. |
 | Seeking | `Sink::try_seek` through the whole DSP chain (each stage implements `try_seek` and resets its filter state), with a decode-and-discard fallback if a container refuses. |
 | Output device selection | `audio_list_output_devices` enumerates cpal devices; switching rebuilds the stream and resumes at the same position. |
@@ -86,6 +87,7 @@ Up to ~30 playlists are generated locally from your listening history. See
 | Feature | How it is built |
 |---|---|
 | Time-synced lyrics | LRCLIB search and fetch in `src-tauri/src/metadata/lyrics.rs`; `.lrc` parsing in `src/utils/lrc.ts`; the viewer auto-scrolls to the active line and offers a "Back to current line" button when you scroll away. |
+| Local lyric files | A `Song.lrc` (timed) or `Song.txt` next to `Song.mp3` wins over any downloaded lyrics. |
 | Manual lyric correction | If the automatic match is wrong, the viewer lists other candidates and remembers the one you pick. |
 | Artist biographies and photos | Wikipedia REST summary plus a search fallback, filtered so a disambiguation or discography page is never accepted as an artist. |
 | Album tracklists | MusicBrainz, throttled to one request every 1.1 s process-wide. |
