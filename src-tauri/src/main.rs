@@ -10,6 +10,7 @@ use tauri_plugin_log::{Target, TargetKind};
 mod artwork;
 mod audio;
 mod error;
+mod files;
 mod library;
 mod library_watch;
 mod metadata;
@@ -168,6 +169,9 @@ fn main() {
             library::build_album_art_frequency_rust,
             library::take_open_files,
             library::probe_audio_files,
+            library::write_song_tags,
+            files::save_text_file,
+            files::open_text_file,
             platform::store_review::is_store_install_rust,
             platform::store_review::request_store_review_rust,
             platform::media_controls::media_controls_update,

@@ -14,6 +14,7 @@ import { useExternalFiles } from '@/hooks/useExternalFiles';
 import { useFpsMonitor } from '@/hooks/useFpsMonitor';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { StoreReviewPrompt } from '@/components/StoreReviewPrompt/StoreReviewPrompt';
+import { SongEditor } from '@/components/SongEditor/SongEditor';
 const Sidebar = lazy(() => import('@/components/Sidebar/Sidebar'));
 const PlayerBar = lazy(() => import('@/components/Player/PlayerBar'));
 const NowPlayingPanel = lazy(() => import('@/components/NowPlayingPanel/NowPlayingPanel'));
@@ -634,6 +635,7 @@ const AppShell = () => {
         </div>
       ) : null}
       {libraryInitialized ? <StoreReviewPrompt /> : null}
+      <SongEditor />
       {toastMessage ? (
         <Toast>{toastMessage}</Toast>
       ) : null}

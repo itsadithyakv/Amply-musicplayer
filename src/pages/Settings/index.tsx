@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/ui';
 import { LibrarySection } from '@/pages/Settings/LibrarySection';
 import { LibraryDataSection } from '@/pages/Settings/LibraryDataSection';
+import { LibraryToolsSection } from '@/pages/Settings/LibraryToolsSection';
 import { PlaybackSection } from '@/pages/Settings/PlaybackSection';
 import { EqualizerSection } from '@/pages/Settings/EqualizerSection';
 import { AppVersionSection } from '@/pages/Settings/AppVersionSection';
@@ -22,6 +23,7 @@ const SettingsPage = () => (
       <div className="anim-stagger grid gap-4">
         <LibrarySection />
         <LibraryDataSection />
+        <LibraryToolsSection />
         <PlaybackSection />
         <EqualizerSection />
         <AppVersionSection />

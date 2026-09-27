@@ -46,6 +46,10 @@ Nothing about your library leaves the machine except the metadata lookups you ca
 | Search | `filterAndRankSongs` in `src/utils/search.ts`, debounced 120 ms over a structural snapshot of the library so a play or a favourite does not re-run it. Empty query browses the whole library. |
 | Favourites, play counts, skip tracking | Stored per song in `playlists/song_activity.json` and merged into the in-memory library. |
 | Delete from disk | `delete_song_file` canonicalises the path and refuses anything outside a registered library root. |
+| Tag editing | "Edit song info" on any song row opens `SongEditor`; `write_song_tags` writes title, artist, album, album artist, genre, year and track into the file with lofty. Refused outside the library folders, like delete. |
+| Duplicate finder | Settings → Library Tools. `findDuplicateGroups` groups the same recording stored twice (title with upload junk ignored but versions kept apart, primary artist, length within 2 s) and offers to delete the extra copies, keeping the most played. |
+| Playlist import / export | Extended M3U (`.m3u8`, UTF-8, absolute paths) from any playlist's page; import resolves relative entries and `file://` URLs, matches library paths and adds files found elsewhere as loose files. |
+| Backup and restore | Settings → Library Tools. A JSON file with play counts, favourites, skips, listening time, custom playlists and settings (no API key or device-specific settings). Restore matches by path or by fingerprint (a new drive letter still restores) and merges rather than overwrites. |
 
 ### Playback
 

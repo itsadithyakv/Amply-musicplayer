@@ -26,6 +26,7 @@ import {
 } from '@/services/onlineRecommendationService';
 import { hydrateSongsWithCachedGenres, isUnknownGenre, loadSongGenre } from '@/services/songMetadataService';
 import { findMovedSongs, remapSongIdList } from '@/services/songIdentity';
+import type { RestorePlan } from '@/services/backup';
 import { findLyricsCandidates, loadLyrics, type LyricsCandidate } from '@/services/lyricsFetcher';
 import { hasCachedArtistProfile, hasCachedArtistProfiles, loadArtistProfile } from '@/services/artistProfileService';
 import { usePlayerStore } from '@/store/playerStore';
@@ -126,6 +127,10 @@ interface LibraryState {
   getSongById: (songId: string) => Song | undefined;
   getSongsById: () => Map<string, Song>;
   updateSongGenre: (songId: string, genre: string) => Promise<void>;
+  /** Applies tags just written to a song's file (see SongEditor), keeping its id and history. */
+  applyEditedSong: (songId: string, updated: Partial<Song>) => Promise<void>;
+  /** Applies a planned backup restore: merged history and created or extended playlists. */
+  applyRestorePlan: (plan: RestorePlan) => Promise<void>;
   toggleFavorite: (songId: string) => Promise<void>;
   deleteSongFromDisk: (songId: string) => Promise<boolean>;
   addSongToCustomPlaylist: (playlistId: string, songId: string) => Promise<void>;
@@ -2319,6 +2324,66 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set((state) => ({ activityVersion: state.activityVersion + 1 }));
     scheduleSmartPlaylistRefresh(get().songs, 8000, { includeHeavy: false });
     void scheduleOnlineRecommendationEnrichmentForSongs([song], 'idle');
+  },
+
+  applyEditedSong: async (songId, updated) => {
+    // The file's genre is now the truth: drop any older in-app genre override so it cannot win.
+    await updateSongActivityPatch(songId, (current) => {
+      const { genre: _overridden, ...rest } = current;
+      return rest;
+    });
+    const songs = get().songs.map((song) =>
+      song.id === songId
+        ? {
+            ...song,
+            title: updated.title ?? song.title,
+            artist: updated.artist ?? song.artist,
+            album: updated.album ?? song.album,
+            genre: updated.genre ?? song.genre,
+            albumArtist: updated.albumArtist ?? undefined,
+            year: updated.year ?? undefined,
+            track: updated.track ?? 0,
+          }
+        : song,
+    );
+    set((state) => ({ songs, libraryVersion: state.libraryVersion + 1, activityVersion: state.activityVersion + 1 }));
+    recordSongArrayReplacement('library-tag-edit', { songs: songs.length });
+    await persistLibrary(songs, get().customPlaylists);
+    scheduleSmartPlaylistRefresh(songs, 8000, { includeHeavy: false });
+  },
+
+  applyRestorePlan: async (plan) => {
+    for (const [songId, restored] of plan.activity) {
+      await updateSongActivityPatch(songId, (current) => ({ ...current, ...restored }));
+    }
+    const songs = get().songs.map((song) => {
+      const restored = plan.activity.get(song.id);
+      return restored ? { ...song, ...restored } : song;
+    });
+    let customPlaylists = [...get().customPlaylists];
+    const now = Date.now();
+    plan.playlists.forEach((entry, index) => {
+      const existing = entry.existingId ? customPlaylists.findIndex((playlist) => playlist.id === entry.existingId) : -1;
+      if (existing >= 0) {
+        customPlaylists[existing] = { ...customPlaylists[existing], songIds: entry.songIds, updatedAt: now };
+      } else {
+        customPlaylists = [
+          ...customPlaylists,
+          { id: `custom_${now}_${index}`, name: entry.name, type: 'custom', description: entry.description, songIds: entry.songIds, updatedAt: now },
+        ];
+      }
+    });
+    set((state) => ({
+      songs,
+      customPlaylists,
+      playlists: buildPlaylists(state.smartPlaylists, customPlaylists),
+      libraryVersion: state.libraryVersion + 1,
+      activityVersion: state.activityVersion + 1,
+      playlistVersion: state.playlistVersion + 1,
+    }));
+    recordSongArrayReplacement('library-restore', { songs: songs.length });
+    await persistLibrary(songs, customPlaylists);
+    scheduleSmartPlaylistRefresh(songs, 2000, { includeHeavy: true });
   },
 
   toggleFavorite: async (songId) => {

@@ -819,7 +819,9 @@ pub async fn scan_music(
 
 /// Deletes `path` only when it lives under one of the registered library roots.
 /// Returns `Ok(false)` when the file is already gone.
-fn delete_song_file_blocking(path: &str, roots: &[PathBuf]) -> AmplyResult<bool> {
+/// `path` canonicalised, when it lies under a registered library root. Anything that changes files
+/// on disk (delete, tag edits) goes through here, so the webview can never touch other files.
+fn resolve_library_file(path: &str, roots: &[PathBuf]) -> AmplyResult<PathBuf> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(AmplyError::InvalidInput("Song path missing".to_string()));
@@ -834,6 +836,11 @@ fn delete_song_file_blocking(path: &str, roots: &[PathBuf]) -> AmplyResult<bool>
             "Path is outside the configured library folders".to_string(),
         ));
     }
+    Ok(target)
+}
+
+fn delete_song_file_blocking(path: &str, roots: &[PathBuf]) -> AmplyResult<bool> {
+    let target = resolve_library_file(path, roots)?;
     if !target.exists() {
         return Ok(false);
     }
@@ -848,6 +855,87 @@ fn delete_song_file_blocking(path: &str, roots: &[PathBuf]) -> AmplyResult<bool>
 pub async fn delete_song_file(path: String, roots: tauri::State<'_, LibraryRoots>) -> AmplyResult<bool> {
     let roots = roots.snapshot();
     tauri::async_runtime::spawn_blocking(move || delete_song_file_blocking(&path, &roots))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+/// New tag values from the edit dialog. Empty text (or None) removes the field; the title is required.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagEdit {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    #[serde(default)]
+    pub album_artist: String,
+    #[serde(default)]
+    pub genre: String,
+    pub year: Option<u16>,
+    pub track: Option<u32>,
+}
+
+fn write_song_tags_blocking(path: &str, edit: &TagEdit, roots: &[PathBuf]) -> AmplyResult<ScannedSong> {
+    let target = resolve_library_file(path, roots)?;
+    let title = edit.title.trim();
+    if title.is_empty() {
+        return Err(AmplyError::InvalidInput("A song needs a title".to_string()));
+    }
+    let unreadable = |err: &dyn std::fmt::Display| AmplyError::Other(format!("Cannot read tags: {err}"));
+    let mut tagged = Probe::open(&target)
+        .map_err(|err| unreadable(&err))?
+        .guess_file_type()
+        .map_err(|err| unreadable(&err))?
+        .read()
+        .map_err(|err| unreadable(&err))?;
+    if tagged.primary_tag_mut().is_none() {
+        tagged.insert_tag(Tag::new(tagged.primary_tag_type()));
+    }
+    let tag = tagged
+        .primary_tag_mut()
+        .ok_or_else(|| AmplyError::Other("This file type cannot hold tags".to_string()))?;
+
+    tag.set_title(title.to_string());
+    let text = |value: &str| Some(value.trim()).filter(|value| !value.is_empty()).map(str::to_string);
+    match text(&edit.artist) {
+        Some(value) => tag.set_artist(value),
+        None => tag.remove_artist(),
+    }
+    match text(&edit.album) {
+        Some(value) => tag.set_album(value),
+        None => tag.remove_album(),
+    }
+    match text(&edit.genre) {
+        Some(value) => tag.set_genre(value),
+        None => tag.remove_genre(),
+    }
+    match text(&edit.album_artist) {
+        Some(value) => {
+            tag.insert_text(ItemKey::AlbumArtist, value);
+        }
+        None => tag.remove_key(ItemKey::AlbumArtist),
+    }
+    match edit.year.filter(|year| (1..=9999).contains(year)) {
+        Some(year) => tag.set_date(lofty::tag::items::Timestamp { year, ..Default::default() }),
+        None => tag.remove_date(),
+    }
+    match edit.track.filter(|track| *track > 0) {
+        Some(track) => tag.set_track(track),
+        None => tag.remove_track(),
+    }
+    tagged
+        .save_to_path(&target, lofty::config::WriteOptions::default())
+        .map_err(|err| AmplyError::Other(format!("Cannot save tags: {err}")))?;
+
+    let artwork_cache: ArtworkCache = Mutex::new(HashMap::new());
+    scan_one(&target, &artwork_cache).ok_or_else(|| AmplyError::Other("The file could not be read back".to_string()))
+}
+
+/// Writes new tags into a library file and returns the song as it now reads. The scan index sees
+/// the new modification time and re-reads the file on the next scan.
+#[tauri::command]
+pub async fn write_song_tags(path: String, edit: TagEdit, roots: tauri::State<'_, LibraryRoots>) -> AmplyResult<ScannedSong> {
+    let roots = roots.snapshot();
+    tauri::async_runtime::spawn_blocking(move || write_song_tags_blocking(&path, &edit, &roots))
         .await
         .map_err(|err| err.to_string())?
 }
@@ -1087,6 +1175,70 @@ mod tests {
         assert!(cold.iter().zip(&warm).all(|(a, b)| a.id == b.id && a.title == b.title && a.album_art == b.album_art));
         drop(db);
         let _ = fs::remove_dir_all(&storage_root);
+    }
+
+    fn edit(title: &str) -> TagEdit {
+        TagEdit {
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            album_artist: String::new(),
+            genre: String::new(),
+            year: None,
+            track: None,
+        }
+    }
+
+    #[test]
+    fn tag_edits_are_refused_outside_library_roots() {
+        let root = temp_dir("tags-root");
+        let outside = temp_dir("tags-outside");
+        let file = outside.join("song.mp3");
+        fs::write(&file, vec![0u8; 8192]).unwrap();
+        let result = write_song_tags_blocking(&file.to_string_lossy(), &edit("New"), std::slice::from_ref(&root));
+        assert!(matches!(result, Err(AmplyError::Forbidden(_))));
+        let empty_title = write_song_tags_blocking(&root.join("x.mp3").to_string_lossy(), &edit("  "), std::slice::from_ref(&root));
+        assert!(matches!(empty_title, Err(AmplyError::InvalidInput(_))));
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    /// Round-trips tags on a copy of one real library file (the original is never written):
+    /// `AMPLY_TEST_SONGS="D:/Songs i like" cargo test -- --ignored tag_edit_round_trip --nocapture`.
+    #[test]
+    #[ignore]
+    fn tag_edit_round_trip() {
+        let folder = std::env::var("AMPLY_TEST_SONGS").expect("set AMPLY_TEST_SONGS");
+        let source = fs::read_dir(&folder)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| is_supported_audio(path))
+            .expect("an audio file");
+        let root = temp_dir("tags-real");
+        let copy = root.join(format!("copy.{}", source.extension().unwrap().to_string_lossy()));
+        fs::copy(&source, &copy).unwrap();
+
+        let mut change = edit("Edited Title");
+        change.album_artist = "Various Artists".to_string();
+        change.genre = "Test Genre".to_string();
+        change.year = Some(1999);
+        change.track = Some(7);
+        let song = write_song_tags_blocking(&copy.to_string_lossy(), &change, std::slice::from_ref(&root)).unwrap();
+        assert_eq!(song.title, "Edited Title");
+        assert_eq!(song.artist, "Artist");
+        assert_eq!(song.album_artist.as_deref(), Some("Various Artists"));
+        assert_eq!(song.genre, "Test Genre");
+        assert_eq!(song.year, Some(1999));
+        assert_eq!(song.track, 7);
+        assert!(song.duration > 0.0, "audio still decodes after the rewrite");
+
+        // Clearing fields removes them.
+        let cleared = write_song_tags_blocking(&copy.to_string_lossy(), &edit("Edited Title"), std::slice::from_ref(&root)).unwrap();
+        assert_eq!(cleared.album_artist, None);
+        assert_eq!(cleared.year, None);
+        eprintln!("round-tripped tags on a copy of {}", source.display());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -171,6 +171,8 @@ interface PlayerState {
   setGaplessEnabled: (enabled: boolean) => Promise<void>;
   setAppTheme: (theme: AppSettings['appTheme']) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
+  /** Merges settings from a backup over the current ones and saves them (applied on next load). */
+  restoreSettings: (restored: Partial<AppSettings>) => Promise<void>;
   setGameMode: (enabled: boolean) => Promise<void>;
   setMiniNowPlayingOverlay: (enabled: boolean) => Promise<void>;
   setOverlaySpinningArtwork: (enabled: boolean) => Promise<void>;
@@ -1353,6 +1355,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     };
     set({ settings });
     await persistSettings(settings);
+  },
+
+  restoreSettings: async (restored) => {
+    const current = get().settings;
+    const merged = normalizeSettings({
+      ...current,
+      ...restored,
+      // Machine-specific and secret settings always stay as they are here.
+      libraryPath: current.libraryPath,
+      outputDeviceName: current.outputDeviceName,
+      launchOnStartup: current.launchOnStartup,
+      lastFmApiKey: current.lastFmApiKey,
+    });
+    set({ settings: merged });
+    await persistSettings(merged);
   },
 
   setLaunchOnStartup: async (enabled) => {

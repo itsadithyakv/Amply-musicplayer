@@ -3,6 +3,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Button, ConfirmDialog, IconButton, Modal, PageHeader, Surface } from '@/components/ui';
+import { importPlaylistFile } from '@/services/playlistImport';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
@@ -130,7 +131,25 @@ const PlaylistsPage = () => {
       <PageHeader
         title="Playlists"
         description="Smart mixes from Amply and playlists arranged by you."
-        action={<Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>New playlist</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <Button
+              icon="folder"
+              onClick={() => {
+                void importPlaylistFile().then((result) => {
+                  if (!result) {
+                    return;
+                  }
+                  usePlayerStore.getState().showToast(`Imported ${result.found} of ${result.total} songs`);
+                  navigate(`/playlist/${result.playlistId}`);
+                });
+              }}
+            >
+              Import
+            </Button>
+            <Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>New playlist</Button>
+          </div>
+        }
       />
 
       {playlistCards.length ? (

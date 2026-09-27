@@ -23,6 +23,7 @@ import { usePlayerStore } from "@/store/playerStore";
 import { libraryActions, useLibraryStore } from "@/store/libraryStore";
 import { useStructuralSongsSnapshot } from "@/hooks/useLibraryViews";
 import { isUnknownGenre } from "@/services/songMetadataService";
+import { useSongEditor } from "@/components/SongEditor/SongEditor";
 
 interface SongListProps {
   songs: Song[];
@@ -62,7 +63,7 @@ const sortOptions: Array<{ label: string; value: SongSort }> = [
 
 /** Shared column template for the header row and every song row: # / title / album / genre / time / fav / playlist / queue. */
 const ROW_GRID =
-  "grid grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(56px,0.5fr)_48px_150px_48px] items-center";
+  "grid grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(56px,0.5fr)_48px_150px_80px] items-center";
 
 const baseGenreOptions = [
   "Pop",
@@ -387,16 +388,28 @@ const SongRow = memo(
             </Select>
           </div>
 
-          <IconButton
-            name="queue"
-            label="Add to queue"
-            size="sm"
-            variant="ghost"
-            onClick={(event) => {
-              event.stopPropagation();
-              enqueueSong(song.id);
-            }}
-          />
+          <div className="flex items-center">
+            <IconButton
+              name="queue"
+              label="Add to queue"
+              size="sm"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                enqueueSong(song.id);
+              }}
+            />
+            <IconButton
+              name="more"
+              label="Edit song info"
+              size="sm"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                useSongEditor.getState().open(song.id);
+              }}
+            />
+          </div>
         </Surface>
       </div>
     );
@@ -527,7 +540,7 @@ const SongList = ({
         <span className="justify-self-start">Time</span>
         <span>Fav</span>
         <span>Playlist</span>
-        <span>Queue</span>
+        <span>Queue · Info</span>
       </div>
       <Divider />
 

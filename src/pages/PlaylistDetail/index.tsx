@@ -3,6 +3,7 @@ import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
 import { Badge, Button, Card, ConfirmDialog, IconButton, Kicker, Meta, Modal } from '@/components/ui';
+import { exportPlaylistFile } from '@/services/playlistImport';
 import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCollage';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
@@ -94,6 +95,18 @@ const PlaylistDetailPage = () => {
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <Button variant="primary" icon="play" onClick={handlePlayPlaylist} disabled={!playlistSongs.length}>Play</Button>
               <Button icon="shuffle" onClick={handleShufflePlaylist} disabled={!playlistIds.length}>Shuffle</Button>
+              <IconButton
+                name="download"
+                label="Export playlist"
+                disabled={!playlistIds.length}
+                onClick={() => {
+                  void exportPlaylistFile({ name: playlist.name, songIds: playlistIds }).then((saved) => {
+                    if (saved) {
+                      usePlayerStore.getState().showToast('Playlist exported');
+                    }
+                  });
+                }}
+              />
               {isCustom ? (
                 <>
                   <IconButton name="edit" label="Edit playlist" onClick={() => setEditing(true)} />
