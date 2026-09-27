@@ -11,6 +11,7 @@ import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { useMediaSession } from '@/hooks/useMediaSession';
 import { useFpsMonitor } from '@/hooks/useFpsMonitor';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
+import { StoreReviewPrompt } from '@/components/StoreReviewPrompt/StoreReviewPrompt';
 const Sidebar = lazy(() => import('@/components/Sidebar/Sidebar'));
 const PlayerBar = lazy(() => import('@/components/Player/PlayerBar'));
 const NowPlayingPanel = lazy(() => import('@/components/NowPlayingPanel/NowPlayingPanel'));
@@ -621,6 +622,7 @@ const AppShell = () => {
           </div>
         </div>
       ) : null}
+      {libraryInitialized ? <StoreReviewPrompt /> : null}
       {toastMessage ? (
         <Toast>{toastMessage}</Toast>
       ) : null}

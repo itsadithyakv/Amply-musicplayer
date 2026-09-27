@@ -135,7 +135,9 @@ fn main() {
             metadata::lyrics::lyrics_save_selection_rust,
             metadata::lyrics::lyrics_load_rust,
             metadata::http::fetch_recommendation_json_rust,
-            library::build_album_art_frequency_rust
+            library::build_album_art_frequency_rust,
+            platform::store_review::is_store_install_rust,
+            platform::store_review::request_store_review_rust
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {

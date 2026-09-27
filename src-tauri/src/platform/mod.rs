@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod store_review;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
