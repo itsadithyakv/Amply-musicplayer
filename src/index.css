@@ -29,6 +29,8 @@
   --amply-accent: 235 126 35;
   --amply-accent-hover: 222 115 28;
   --amply-on-accent: 28 22 16;
+  /* Chart marks: the accent stepped to clear 3:1 on the surface (validated with the dataviz palette checks). */
+  --amply-chart: 200 100 28;
 
   --amply-danger: 196 66 58;
   --amply-on-danger: 255 250 246;
@@ -83,6 +85,8 @@
   --amply-accent: 240 138 52;
   --amply-accent-hover: 247 150 68;
   --amply-on-accent: 28 22 16;
+  /* Chart marks: the accent stepped into the dark lightness band (validated with the dataviz palette checks). */
+  --amply-chart: 212 117 39;
 
   --amply-danger: 226 96 86;
   --amply-on-danger: 255 250 246;

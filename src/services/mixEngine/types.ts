@@ -15,6 +15,8 @@ export interface ListeningEvent {
   at: number;
   /** 0..1 share of the track that was actually heard. */
   listenedRatio: number;
+  /** Seconds actually heard (recorded since 1.7.3; older events only have the ratio). */
+  listenedSec?: number;
   skipped: boolean;
   source?: string;
 }

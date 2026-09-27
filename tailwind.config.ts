@@ -18,6 +18,7 @@ export default {
           accent: rgb('accent'),
           accentHover: rgb('accent-hover'),
           onAccent: rgb('on-accent'),
+          chart: rgb('chart'),
           danger: rgb('danger'),
           onDanger: rgb('on-danger'),
           success: rgb('success'),

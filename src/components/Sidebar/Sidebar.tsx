@@ -19,6 +19,7 @@ const primaryNav: NavItem[] = [
   { label: 'Search', path: '/search', icon: 'search' },
   { label: 'Library', path: '/library', icon: 'library' },
   { label: 'Playlists', path: '/playlists', icon: 'playlists' },
+  { label: 'Stats', path: '/stats', icon: 'stats' },
 ];
 
 const secondaryNav: NavItem[] = [{ label: 'Settings', path: '/settings', icon: 'settings' }];

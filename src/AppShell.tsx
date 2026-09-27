@@ -25,6 +25,7 @@ const PlaylistDetailPage = lazy(() => import('@/pages/PlaylistDetail'));
 const NowPlayingPage = lazy(() => import('@/pages/NowPlaying'));
 const SearchPage = lazy(() => import('@/pages/Search'));
 const SettingsPage = lazy(() => import('@/pages/Settings'));
+const StatsPage = lazy(() => import('@/pages/Stats'));
 import GameModePage from '@/pages/GameMode';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
@@ -60,7 +61,7 @@ import {
 import { pauseBackground, resumeBackground } from '@/services/playbackScheduler';
 import { getLibraryVersions } from '@/store/libraryDataStore';
 
-const shellRouteSet = new Set<string>(['/home', '/search', '/library', '/playlists', '/now-playing', '/settings']);
+const shellRouteSet = new Set<string>(['/home', '/search', '/library', '/playlists', '/stats', '/now-playing', '/settings']);
 
 const ShellFallback = ({ label }: { label: string }) => (
   <div className="flex h-full min-h-[120px] items-center justify-center p-4 text-center text-[12px] text-amply-textSecondary">{label}</div>
@@ -578,6 +579,7 @@ const AppShell = () => {
                   <Route path="/playlists" element={<PlaylistsPage />} />
                   <Route path="/playlist/:playlistId" element={<PlaylistDetailPage />} />
                   <Route path="/now-playing" element={<NowPlayingPage />} />
+                  <Route path="/stats" element={<StatsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   </Routes>
                 </div>

@@ -553,6 +553,9 @@ const appendListeningEvent = async (event: ListeningEvent): Promise<void> => {
 /** Listening events recorded so far (oldest first); empty until the library has initialised. */
 export const getListeningEvents = (): readonly ListeningEvent[] => listeningEventsCache ?? [];
 
+/** Loads the listening log from storage if it is not in memory yet, and returns it. */
+export const loadListeningHistory = (): Promise<readonly ListeningEvent[]> => loadListeningEvents();
+
 const buildMixEngineInput = async (songs: Song[]): Promise<MixEngineInput> => {
   const state = useLibraryStore.getState();
   const [{ discoveryIntensity, randomnessIntensity }, history, events] = await Promise.all([
@@ -2591,6 +2594,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       songId,
       at: Date.now(),
       listenedRatio,
+      listenedSec: listened,
       skipped,
       ...(source ? { source } : {}),
     });
