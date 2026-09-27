@@ -4,23 +4,24 @@ import { usePlayerStore } from '@/store/playerStore';
 import { Badge, Button, Select } from '@/components/ui';
 import type { AppSettings } from '@/types/music';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
+import { useT, type MessageKey } from '@/i18n';
 
 const EQ_BANDS = [
-  { freq: '60Hz', short: 'Sub' },
-  { freq: '250Hz', short: 'Bass' },
-  { freq: '1kHz', short: 'Mid' },
-  { freq: '4kHz', short: 'Presence' },
-  { freq: '12kHz', short: 'Air' },
-] as const;
+  { freq: '60Hz', short: 'settings.equalizer.band.sub' },
+  { freq: '250Hz', short: 'settings.equalizer.band.bass' },
+  { freq: '1kHz', short: 'settings.equalizer.band.mid' },
+  { freq: '4kHz', short: 'settings.equalizer.band.presence' },
+  { freq: '12kHz', short: 'settings.equalizer.band.air' },
+] as const satisfies ReadonlyArray<{ freq: string; short: MessageKey }>;
 
-const EQ_PRESET_LABELS: Record<AppSettings['eqPreset'], string> = {
-  flat: 'Flat',
-  warm: 'Warm',
-  bass: 'Bass Boost',
-  treble: 'Treble Lift',
-  vocal: 'Vocal Focus',
-  club: 'Club',
-  custom: 'Custom',
+const EQ_PRESET_LABELS: Record<AppSettings['eqPreset'], MessageKey> = {
+  flat: 'settings.equalizer.preset.flat',
+  warm: 'settings.equalizer.preset.warm',
+  bass: 'settings.equalizer.preset.bass',
+  treble: 'settings.equalizer.preset.treble',
+  vocal: 'settings.equalizer.preset.vocal',
+  club: 'settings.equalizer.preset.club',
+  custom: 'settings.equalizer.preset.custom',
 };
 
 // SVG user units. The plot area is inset so the outer nodes and their labels never clip.
@@ -83,6 +84,7 @@ const buildAreaPath = (points: Point[]): string => {
 };
 
 const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands: number[]) => void }) => {
+  const { t } = useT();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -138,7 +140,7 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
           className="w-full touch-none"
           style={{ aspectRatio: `${VIEW_W} / ${VIEW_H}` }}
           role="img"
-          aria-label="Equalizer curve"
+          aria-label={t('settings.equalizer.curveAria')}
         >
           <defs>
             <linearGradient id="eqCurveFill" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -191,7 +193,7 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
         </svg>
       </div>
 
-      <div role="tablist" aria-label="Equalizer band" className="neu-pressed-sm mt-3 grid grid-cols-5 gap-1 rounded-full p-1">
+      <div role="tablist" aria-label={t('settings.equalizer.bandAria')} className="neu-pressed-sm mt-3 grid grid-cols-5 gap-1 rounded-full p-1">
         {EQ_BANDS.map((band, index) => {
           const selected = selectedIndex === index;
           return (
@@ -215,7 +217,7 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
                 selected ? 'neu-raised-sm text-amply-textPrimary' : 'text-amply-textSecondary hover:text-amply-textPrimary',
               )}
             >
-              <span>{band.short}</span>
+              <span>{t(band.short)}</span>
               <span className={clsx('text-[10px]', selected ? 'text-amply-accent' : 'text-amply-textMuted')}>{formatGain(bands[index] ?? 0)}</span>
             </button>
           );
@@ -226,6 +228,7 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
 };
 
 export const EqualizerSection = () => {
+  const { t } = useT();
   const eqBands = usePlayerStore((state) => state.settings.eqBands);
   const eqPreset = usePlayerStore((state) => state.settings.eqPreset);
   const setEqPreset = usePlayerStore((state) => state.setEqPreset);
@@ -241,14 +244,14 @@ export const EqualizerSection = () => {
   return (
     <SettingsSection
       icon="eq"
-      title="Equalizer"
-      description="Presets and custom tone shaping."
-      action={<Badge tone="accent">{EQ_PRESET_LABELS[eqPreset]}</Badge>}
+      title={t('settings.equalizer.title')}
+      description={t('settings.equalizer.description')}
+      action={<Badge tone="accent">{t(EQ_PRESET_LABELS[eqPreset])}</Badge>}
     >
       <div className="grid gap-1">
-        <SettingField label="EQ Preset" description="Presets are templates. Drag the graph nodes below to fine-tune your own curve.">
+        <SettingField label={t('settings.equalizer.presetField.label')} description={t('settings.equalizer.presetField.description')}>
           <Select
-            label="Preset"
+            label={t('settings.equalizer.presetField.select')}
             value={eqPreset}
             onChange={(event) => {
               void setEqPreset(event.target.value as AppSettings['eqPreset']);
@@ -256,15 +259,15 @@ export const EqualizerSection = () => {
           >
             {(Object.keys(EQ_PRESET_LABELS) as Array<AppSettings['eqPreset']>).map((preset) => (
               <option key={preset} value={preset}>
-                {EQ_PRESET_LABELS[preset]}
+                {t(EQ_PRESET_LABELS[preset])}
               </option>
             ))}
           </Select>
         </SettingField>
 
         <SettingField
-          label="EQ Curve"
-          description="Drag a node, or select a band and use the arrow keys."
+          label={t('settings.equalizer.curve.label')}
+          description={t('settings.equalizer.curve.description')}
           trailing={
             <Button
               size="sm"
@@ -273,7 +276,7 @@ export const EqualizerSection = () => {
                 void setEqPreset('flat');
               }}
             >
-              Reset
+              {t('settings.equalizer.reset')}
             </Button>
           }
         >
@@ -282,7 +285,7 @@ export const EqualizerSection = () => {
           <div className="mt-3 grid grid-cols-5 gap-2">
             {EQ_BANDS.map((band, index) => (
               <div key={band.freq} className="neu-flat flex flex-col items-center gap-1.5 rounded-sm px-2 py-2.5 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amply-textSecondary">{band.short}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amply-textSecondary">{t(band.short)}</p>
                 <p className="text-[12px] text-amply-textMuted">{band.freq}</p>
                 <Badge tone="accent" uppercase={false}>
                   {formatGain(eqBands[index] ?? 0)} dB

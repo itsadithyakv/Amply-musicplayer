@@ -10,8 +10,10 @@ import { useSearchRouteView, useStructuralSongsSnapshot } from '@/hooks/useLibra
 import { useSearchRecommendations } from '@/hooks/useSearchRecommendations';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Song } from '@/types/music';
+import { useT } from '@/i18n';
 
 const SearchPage = () => {
+  const { t } = useT();
   const query = useLibraryStore((state) => state.searchQuery);
   const setSearchQuery = useLibraryStore((state) => state.setSearchQuery);
   const searchView = useSearchRouteView();
@@ -32,10 +34,10 @@ const SearchPage = () => {
 
   return (
     <div className="anim-stagger space-y-5 pb-8">
-      <PageHeader title="Search" />
+      <PageHeader title={t('library.search.title')} />
 
       <Card padding="md">
-        <SearchInput value={query} onValueChange={setSearchQuery} placeholder="Search songs, artists, albums, playlists…" />
+        <SearchInput value={query} onValueChange={setSearchQuery} placeholder={t('library.search.placeholder')} />
 
         {suggestions.length ? (
           <div className="mt-3 flex flex-wrap gap-2">
@@ -52,7 +54,7 @@ const SearchPage = () => {
         <section className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <SectionTitle description={recommendations.caption}>{recommendations.title}</SectionTitle>
-            {recommendations.usedOnlineSignals ? <Badge tone="success">Online signals</Badge> : null}
+            {recommendations.usedOnlineSignals ? <Badge tone="success">{t('library.search.onlineSignals')}</Badge> : null}
           </div>
           <div className="flex gap-3 overflow-x-auto px-1.5 py-1.5 pr-3">
             {recommendations.items.map((item) => (
@@ -74,7 +76,7 @@ const SearchPage = () => {
         <SongList songs={filteredSongs} persistKey="search" hideSort />
       ) : searchView.query.trim().length >= 2 ? (
         <Card padding="lg" className="text-[13px] text-amply-textSecondary">
-          No results found. Try a different search term.
+          {t('library.search.noResults')}
         </Card>
       ) : (
         <SongList songs={librarySongs} persistKey="search-browse" initialSort="recently_added" />

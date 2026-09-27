@@ -39,6 +39,7 @@ import {
 } from '@/services/appScheduler';
 import { useCurrentSongSnapshot } from '@/hooks/useLibraryViews';
 import { recordPerfEvent } from '@/services/perfDiagnostics';
+import { useT } from '@/i18n';
 
 const reportArtistProfileError = (stage: string, error: unknown): void => {
   recordPerfEvent('now-playing.artist-profile.error', {
@@ -71,6 +72,7 @@ const scheduleDeferredIdle = (task: () => void, delayMs = 1200, idleTimeoutMs = 
 };
 
 const NowPlayingPanel = () => {
+  const { t } = useT();
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
   const fetchMissingMetadataForSong = useLibraryStore((state) => state.fetchMissingMetadataForSong);
@@ -499,11 +501,11 @@ const NowPlayingPanel = () => {
     <aside className="flex h-full min-h-0 flex-col bg-amply-bg px-4 py-5 shadow-[inset_1px_0_0_rgb(var(--amply-edge)/var(--edge-a))]">
       <div className="flex items-end justify-between px-1">
         <div>
-          <p className="text-[15px] font-semibold tracking-[-0.02em] text-amply-textPrimary">Now playing</p>
+          <p className="text-[15px] font-semibold tracking-[-0.02em] text-amply-textPrimary">{t('player.panel.title')}</p>
         </div>
         {song ? (
           <Button variant="ghost" size="sm" iconRight="chevron-right" onClick={() => navigate('/now-playing')}>
-            Open view
+            {t('player.panel.openView')}
           </Button>
         ) : null}
       </div>
@@ -512,8 +514,8 @@ const NowPlayingPanel = () => {
       {!song ? (
         <div className="neu-well mt-4 flex flex-1 flex-col items-center justify-center rounded-md px-6 text-center">
           <div className="neu-raised-sm mb-4 flex h-12 w-12 items-center justify-center rounded-full text-[18px] text-amply-textMuted" aria-hidden="true">♪</div>
-          <p className="text-[13px] font-medium text-amply-textPrimary">Nothing playing</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-amply-textMuted">Choose a track to see its artwork and artist details.</p>
+          <p className="text-[13px] font-medium text-amply-textPrimary">{t('player.panel.nothingPlaying')}</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-amply-textMuted">{t('player.panel.emptyHint')}</p>
         </div>
       ) : (
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-1 pb-20 pr-2">
@@ -549,7 +551,7 @@ const NowPlayingPanel = () => {
               </div>
               <div className="flex items-center gap-2 text-[12px] text-amply-textMuted">
                 {isUnknownGenre(resolvedGenre) ? (
-                  <span>{resolvedGenre}</span>
+                  <span>{t('player.panel.unknownGenre')}</span>
                 ) : (
                   <button
                     type="button"
@@ -565,23 +567,23 @@ const NowPlayingPanel = () => {
                 <span>{formatDuration(song.duration)}</span>
               </div>
               {isUnknownGenre(resolvedGenre) ? (
-                <p className="text-[12px] text-amply-textMuted">Genre not cached yet.</p>
+                <p className="text-[12px] text-amply-textMuted">{t('player.panel.genreNotCached')}</p>
               ) : null}
             </div>
           </div>
           <Divider />
 
           <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
-            <Kicker>About artist</Kicker>
+            <Kicker>{t('player.artist.about')}</Kicker>
 
             {!idleReady ? (
-              <p className="text-[12px] text-amply-textMuted">Warming up artist profile...</p>
+              <p className="text-[12px] text-amply-textMuted">{t('player.artist.warmingUp')}</p>
             ) : null}
 
             {artistLoading ? (
               <div className="flex items-center gap-2 text-[12px] text-amply-textSecondary">
-                <Spinner size={16} label="Loading artist info" />
-                <span>{artistRefreshing ? 'Looking the artist up again...' : 'Loading artist info...'}</span>
+                <Spinner size={16} label={t('player.artist.loadingLabel')} />
+                <span>{artistRefreshing ? t('player.artist.lookingAgain') : t('player.artist.loading')}</span>
               </div>
             ) : null}
 
@@ -596,7 +598,7 @@ const NowPlayingPanel = () => {
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center px-4 text-center text-[12px] text-amply-textMuted">
-                      Artist image not cached yet.
+                      {t('player.artist.imageNotCached')}
                     </div>
                   )}
                 </div>
@@ -604,8 +606,8 @@ const NowPlayingPanel = () => {
                   <p className={summaryExpanded ? 'text-[12px] leading-relaxed text-amply-textSecondary' : 'line-clamp-4 text-[12px] leading-relaxed text-amply-textSecondary'}>{artistProfile.summary}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-[12px] text-amply-textMuted">
-                  <button type="button" onClick={() => setSummaryExpanded((current) => !current)} className="font-medium text-amply-textPrimary">{summaryExpanded ? 'Show less' : 'Read more'}</button>
-                  {isOffline ? <span>· Offline</span> : null}
+                  <button type="button" onClick={() => setSummaryExpanded((current) => !current)} className="font-medium text-amply-textPrimary">{summaryExpanded ? t('player.artist.showLess') : t('player.artist.readMore')}</button>
+                  {isOffline ? <span>· {t('player.artist.offline')}</span> : null}
                 </div>
                 {artistProfile.sourceUrl ? (
                   <Button
@@ -617,24 +619,24 @@ const NowPlayingPanel = () => {
                       void openArtistSource(artistProfile.sourceUrl);
                     }}
                   >
-                    Source
+                    {t('player.artist.source')}
                   </Button>
                 ) : null}
               </div>
             ) : null}
 
             {!artistLoading && artistStatus === 'no-internet' ? (
-              <p className="text-[12px] text-amply-textMuted">No internet connection to load artist details.</p>
+              <p className="text-[12px] text-amply-textMuted">{t('player.artist.noInternet')}</p>
             ) : null}
 
             {!artistLoading && artistChecked && artistStatus === 'missing' ? (
-              <p className="text-[12px] text-amply-textMuted">Artist details not available for this track.</p>
+              <p className="text-[12px] text-amply-textMuted">{t('player.artist.missing')}</p>
             ) : null}
 
             {artistChecked && !artistLoading && artistStatus !== 'ready' ? (
               <div className="pt-2">
                 <Button variant="secondary" size="sm" icon="refresh" disabled={!song} onClick={() => void retryArtistProfile()}>
-                  Try again
+                  {t('player.artist.tryAgain')}
                 </Button>
               </div>
             ) : null}

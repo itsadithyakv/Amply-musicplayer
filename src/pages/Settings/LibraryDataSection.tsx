@@ -7,8 +7,10 @@ import { clearStorageCache, openStorageDir } from '@/services/storageService';
 import { resetMetadataCacheIndex } from '@/services/metadataCacheIndex';
 import { resetMetadataAttempts } from '@/services/metadataAttemptService';
 import { SettingsNote, SettingsSection } from '@/pages/Settings/SettingsSection';
+import { useT } from '@/i18n';
 
 export const LibraryDataSection = () => {
+  const { t, language } = useT();
   const metadataFetch = useLibraryStore((state) => state.metadataFetch);
   const startMetadataFetch = useLibraryStore((state) => state.startMetadataFetch);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
@@ -33,14 +35,15 @@ export const LibraryDataSection = () => {
       }
     }
     return [
-      { label: 'Tracks', count: songs.length },
-      { label: 'Artists', count: artists.size },
-      { label: 'Genres', count: genres.size },
-    ];
+      { id: 'tracks', labelKey: 'settings.libraryData.tracks', count: songs.length },
+      { id: 'artists', labelKey: 'settings.libraryData.artists', count: artists.size },
+      { id: 'genres', labelKey: 'settings.libraryData.genres', count: genres.size },
+    ] as const;
   }, [songs]);
+  const numberFormat = useMemo(() => new Intl.NumberFormat(language), [language]);
 
   return (
-    <SettingsSection icon="download" title="Library Data" description="Cache refresh and metadata controls.">
+    <SettingsSection icon="download" title={t('settings.libraryData.title')} description={t('settings.libraryData.description')}>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         <Button
           block
@@ -51,12 +54,12 @@ export const LibraryDataSection = () => {
             setBulkMessage(null);
             if (metadataFetchPaused) {
               await setMetadataFetchPaused(false);
-              setBulkMessage('Metadata fetching resumed. Starting bulk fetch...');
+              setBulkMessage(t('settings.libraryData.fetchResumed'));
             }
             startMetadataFetch({ allowWhenActive: true });
           }}
         >
-          {metadataFetch.running ? 'Fetching...' : 'Fetch Missing'}
+          {metadataFetch.running ? t('settings.libraryData.fetching') : t('settings.libraryData.fetchMissing')}
         </Button>
 
         <Button
@@ -66,7 +69,7 @@ export const LibraryDataSection = () => {
             void openStorageDir();
           }}
         >
-          Storage
+          {t('settings.libraryData.storage')}
         </Button>
 
         <Button
@@ -84,20 +87,20 @@ export const LibraryDataSection = () => {
               await clearStorageCache();
               resetMetadataCacheIndex();
               resetMetadataAttempts();
-              setBulkMessage('Cache cleared. Restart the app to rescan library data.');
+              setBulkMessage(t('settings.libraryData.cacheCleared'));
             } finally {
               setClearingCache(false);
             }
           }}
         >
-          {clearingCache ? 'Clearing...' : 'Clear Cache'}
+          {clearingCache ? t('settings.libraryData.clearing') : t('settings.libraryData.clearCache')}
         </Button>
       </div>
 
       <div className="mt-3 grid gap-1">
         <Toggle
-          label="Pause Metadata Lookups"
-          description="Pause background metadata work."
+          label={t('settings.libraryData.pauseLookups.label')}
+          description={t('settings.libraryData.pauseLookups.description')}
           checked={metadataFetchPaused}
           onChange={(next) => {
             void setMetadataFetchPaused(next);
@@ -108,8 +111,12 @@ export const LibraryDataSection = () => {
       {metadataFetch.running && metadataFetch.total > 0 ? (
         <div className="mt-3">
           <SettingsNote>
-            Processed {metadataFetch.done}/{metadataFetch.total} metadata tasks. Artists {metadataFetch.artists}. Genres{' '}
-            {metadataFetch.genres}.
+            {t('settings.libraryData.progress', {
+              done: numberFormat.format(metadataFetch.done),
+              total: numberFormat.format(metadataFetch.total),
+              artists: numberFormat.format(metadataFetch.artists),
+              genres: numberFormat.format(metadataFetch.genres),
+            })}
           </SettingsNote>
         </div>
       ) : null}
@@ -121,12 +128,12 @@ export const LibraryDataSection = () => {
       ) : null}
 
       <div className="mt-4">
-        <Kicker>Library Summary</Kicker>
+        <Kicker>{t('settings.libraryData.summary')}</Kicker>
         <div className="mt-2 grid grid-cols-3 gap-2">
           {librarySummary.map((item) => (
-            <Surface key={item.label} variant="raised-sm" radius="sm" className="px-3 py-3 text-center">
-              <p className="text-[18px] font-semibold tabular-nums text-amply-textPrimary">{item.count.toLocaleString()}</p>
-              <p className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-amply-textSecondary">{item.label}</p>
+            <Surface key={item.id} variant="raised-sm" radius="sm" className="px-3 py-3 text-center">
+              <p className="text-[18px] font-semibold tabular-nums text-amply-textPrimary">{numberFormat.format(item.count)}</p>
+              <p className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-amply-textSecondary">{t(item.labelKey)}</p>
             </Surface>
           ))}
         </div>

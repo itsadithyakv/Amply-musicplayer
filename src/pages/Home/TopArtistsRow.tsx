@@ -1,6 +1,7 @@
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { Meta, SectionTitle } from '@/components/ui';
 import type { Song } from '@/types/music';
+import { useT } from '@/i18n';
 
 export interface TopArtistEntry {
   artistName: string;
@@ -15,13 +16,14 @@ interface TopArtistsRowProps {
 }
 
 export const TopArtistsRow = ({ artists, images, onPick }: TopArtistsRowProps) => {
+  const { t, tp } = useT();
   if (!artists.length) {
     return null;
   }
 
   return (
     <section className="space-y-3">
-      <SectionTitle>Top Artists</SectionTitle>
+      <SectionTitle>{t('library.home.topArtists')}</SectionTitle>
       <div className="flex gap-3 overflow-x-auto px-1 pb-3 pt-1">
         {artists.map((entry) => {
           const initial = entry.artistName.trim().charAt(0).toUpperCase();
@@ -30,7 +32,7 @@ export const TopArtistsRow = ({ artists, images, onPick }: TopArtistsRowProps) =
               key={entry.artistName}
               type="button"
               onClick={() => onPick(entry)}
-              title={`Play ${entry.artistName}`}
+              title={t('library.home.playItem', { name: entry.artistName })}
               className="group flex w-[132px] shrink-0 flex-col items-center gap-2 rounded-md p-2 text-center"
             >
               <span className="neu-raised-sm neu-interactive block h-24 w-24 rounded-full p-1 transition-transform duration-150 ease-smooth group-hover:-translate-y-px">
@@ -46,7 +48,7 @@ export const TopArtistsRow = ({ artists, images, onPick }: TopArtistsRowProps) =
                 </span>
               </span>
               <span className="w-full truncate text-[14px] font-semibold text-amply-textPrimary">{entry.artistName}</span>
-              <Meta className="w-full truncate">{entry.songIds.length} songs</Meta>
+              <Meta className="w-full truncate">{tp('library.songCount', entry.songIds.length)}</Meta>
             </button>
           );
         })}

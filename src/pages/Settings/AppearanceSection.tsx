@@ -17,13 +17,13 @@ export const AppearanceSection = () => {
   return (
     <SettingsSection
       icon={isDark ? 'moon' : 'sun'}
-      title="Appearance"
-      description="Light by default, dark when you want denser contrast."
+      title={t('settings.appearance.title')}
+      description={t('settings.appearance.description')}
     >
       <div className="grid gap-1">
         <Toggle
-          label="Use Dark Mode"
-          description="Switch between the two visual themes."
+          label={t('settings.appearance.darkMode.label')}
+          description={t('settings.appearance.darkMode.description')}
           checked={isDark}
           onChange={(next) => {
             void setAppTheme(next ? 'dark' : 'light');

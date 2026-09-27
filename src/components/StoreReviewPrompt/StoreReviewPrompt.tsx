@@ -9,6 +9,7 @@ import {
 } from '@/services/storeReview';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { useT } from '@/i18n';
 
 /** How long into a session before the prompt may appear: never at launch, never mid-setup. */
 const PROMPT_DELAY_MS = 3 * 60_000;
@@ -18,6 +19,7 @@ const PROMPT_DELAY_MS = 3 * 60_000;
  * installs, and only when `shouldPromptForReview` allows (a week of use, 30 plays, not snoozed).
  */
 export const StoreReviewPrompt = () => {
+  const { t } = useT();
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const showToast = usePlayerStore((state) => state.showToast);
   const [visible, setVisible] = useState(false);
@@ -63,35 +65,35 @@ export const StoreReviewPrompt = () => {
     setBusy(false);
     setVisible(false);
     if (outcome === 'rated') {
-      showToast('Thanks for rating Amply!');
+      showToast(t('common.review.thanks'));
     } else if (outcome === 'failed') {
-      showToast("Couldn't open the Microsoft Store");
+      showToast(t('common.review.storeFailed'));
     }
   };
 
   return (
-    <div className="anim-toast-in absolute bottom-24 right-6 z-toast w-[300px]" role="region" aria-label="Rate Amply">
+    <div className="anim-toast-in absolute bottom-24 right-6 z-toast w-[300px]" role="region" aria-label={t('common.review.region')}>
       <Card padding="md">
         <div className="flex items-start gap-3">
           <span className="neu-pressed-sm inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-amply-accent">
             <Icon name="heart" size={16} />
           </span>
           <div className="min-w-0">
-            <p className="text-[13px] font-bold text-amply-textPrimary">Enjoying Amply?</p>
+            <p className="text-[13px] font-bold text-amply-textPrimary">{t('common.review.title')}</p>
             <p className="mt-1 text-[12px] leading-snug text-amply-textSecondary">
-              A quick rating on the Microsoft Store helps other people find it.
+              {t('common.review.body')}
             </p>
           </div>
         </div>
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={() => answer('never')} disabled={busy}>
-            Don't ask again
+            {t('common.review.never')}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => answer('later')} disabled={busy}>
-            Not now
+            {t('common.review.later')}
           </Button>
           <Button variant="primary" size="sm" onClick={() => void rate()} loading={busy}>
-            Rate
+            {t('common.review.rate')}
           </Button>
         </div>
       </Card>

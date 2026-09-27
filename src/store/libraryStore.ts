@@ -1,4 +1,5 @@
 import { getFlag } from '@/services/runtimeFlags';
+import { t } from '@/i18n';
 import { dayKey, isoWeekKey, seedFromKey } from '@/utils/dateSeed';
 import { yieldToIdle } from '@/utils/idle';
 import { create } from 'zustand';
@@ -1187,6 +1188,13 @@ const isAbsoluteLibraryPath = (path: string): boolean => /^([a-z]:[\\/]|\\\\|\/)
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : typeof error === 'string' && error.trim() ? error : fallback;
 
+/** Every library folder is offline. The UI message is translated where it is shown; this English one is logged. */
+class LibraryFoldersUnavailableError extends Error {
+  constructor(readonly paths: string[]) {
+    super(`Library folder not available: ${paths.join(', ')}. Your library was kept as it was.`);
+  }
+}
+
 const normalizeLibraryPaths = (paths: string[]): string[] => {
   const cleaned = paths.map((path) => path.trim()).filter(Boolean);
   const unique = Array.from(new Set(cleaned));
@@ -1278,10 +1286,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             genres: 0,
             pending: !metadataPaused,
             message: metadataPaused
-              ? 'Paused by user. Resume from Settings when ready.'
+              ? t('messages.metadata.pausedByUser')
               : gameMode
-                ? 'Game Mode pauses bulk metadata fetching.'
-                : 'Paused during playback. Current song metadata still updates.',
+                ? t('messages.metadata.pausedForGameMode')
+                : t('messages.metadata.pausedForPlayback'),
           },
         });
         return;
@@ -1298,7 +1306,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             lyrics: 0,
             genres: 0,
             pending: false,
-            message: 'No songs available to scan.',
+            message: t('messages.metadata.noSongs'),
           },
         });
         return;
@@ -1313,7 +1321,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           lyrics: 0,
           genres: 0,
           pending: true,
-          message: 'Checking cache...',
+          message: t('messages.metadata.checkingCache'),
         },
       });
 
@@ -1443,7 +1451,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             lyrics: 0,
             genres: 0,
             pending: false,
-            message: 'All metadata already cached.',
+            message: t('messages.metadata.allCached'),
           },
         });
         return;
@@ -1671,7 +1679,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             lyrics: lyricCount,
             genres: genreCount,
             pending: true,
-            message: 'Paused for playback, Game Mode, or user setting. Current song metadata still updates.',
+            message: t('messages.metadata.pausedMidway'),
           },
         });
         return;
@@ -1690,7 +1698,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             lyrics: lyricCount,
             genres: genreCount,
             pending: false,
-            message: 'Bulk fetch completed.',
+            message: t('messages.metadata.completed'),
           },
         });
         return;
@@ -1705,7 +1713,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           lyrics: lyricCount,
           genres: genreCount,
           pending: true,
-          message: 'Paused for performance. Resuming shortly.',
+          message: t('messages.metadata.pausedForPerformance'),
         },
       });
       scheduleMetadataResume();
@@ -2072,7 +2080,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       // know from it (with their play counts, favourites and playlist membership) until it is back.
       const unavailablePaths = scanResults.filter((result) => !result.available).map((result) => result.path);
       if (unavailablePaths.length === targetPaths.length) {
-        throw new Error(`Library folder not available: ${unavailablePaths.join(', ')}. Your library was kept as it was.`);
+        throw new LibraryFoldersUnavailableError(unavailablePaths);
       }
       const unavailablePrefixes = unavailablePaths.filter(isAbsoluteLibraryPath).map(toPathPrefix);
       const keepAllUnscanned = unavailablePaths.some((path) => !isAbsoluteLibraryPath(path));
@@ -2171,7 +2179,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         playlists,
         isScanning: false,
         scanError: unavailablePaths.length
-          ? `Not available right now: ${unavailablePaths.join(', ')}. Songs from there were kept.`
+          ? t('messages.scan.someFoldersUnavailable', { paths: unavailablePaths.join(', ') })
           : null,
         smartPlaylistSeed: weeklySeed,
         libraryVersion: get().libraryVersion + 1,
@@ -2218,7 +2226,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     } catch (error) {
       set({
         isScanning: false,
-        scanError: errorMessage(error, 'Library scan failed.'),
+        scanError:
+          error instanceof LibraryFoldersUnavailableError
+            ? t('messages.scan.allFoldersUnavailable', { paths: error.paths.join(', ') })
+            : errorMessage(error, t('messages.scan.failed')),
       });
       runQueuedLibraryRescan();
       recordPerfEvent('library.scan.error', {

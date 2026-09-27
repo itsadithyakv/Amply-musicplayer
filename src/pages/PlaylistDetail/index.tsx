@@ -8,20 +8,23 @@ import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCo
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { usePlaylistDetailView } from '@/hooks/useLibraryViews';
+import { t as translate, useT } from '@/i18n';
+import { localizedPlaylistDescription, localizedPlaylistName } from '@/i18n/playlistNames';
 
 const PlaylistComposer = lazy(() => import('@/components/Playlists/PlaylistComposer'));
 
 const formatPlaylistLength = (totalSeconds: number): string => {
   const minutes = Math.max(0, Math.round(totalSeconds / 60));
   if (minutes < 60) {
-    return `${minutes} min`;
+    return translate('playlists.length.minutes', { minutes });
   }
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
+  return rest ? translate('playlists.length.hoursMinutes', { hours, minutes: rest }) : translate('playlists.length.hours', { hours });
 };
 
 const PlaylistDetailPage = () => {
+  const { t, tp } = useT();
   const { playlistId } = useParams();
   const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const songs = useLibraryStore((state) => state.songs);
@@ -34,21 +37,24 @@ const PlaylistDetailPage = () => {
   const { playlist, playlistSongs, playlistIds, artworkSet } = usePlaylistDetailView(playlistId);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const totalLength = useMemo(
-    () => formatPlaylistLength(playlistSongs.reduce((total, song) => total + (Number.isFinite(song.duration) ? song.duration : 0), 0)),
+  const totalSeconds = useMemo(
+    () => playlistSongs.reduce((total, song) => total + (Number.isFinite(song.duration) ? song.duration : 0), 0),
     [playlistSongs],
   );
 
   if (!playlist) {
     return (
       <div className="space-y-4 pb-8">
-        <IconButton name="chevron-left" label="Back to playlists" variant="flat" onClick={() => navigate('/playlists')} />
-        <Card padding="lg" className="text-[13px] text-amply-textSecondary">Playlist not found.</Card>
+        <IconButton name="chevron-left" label={t('playlists.detail.back')} variant="flat" onClick={() => navigate('/playlists')} />
+        <Card padding="lg" className="text-[13px] text-amply-textSecondary">{t('playlists.detail.notFound')}</Card>
       </div>
     );
   }
 
   const isCustom = playlist.type === 'custom';
+  const name = localizedPlaylistName(playlist);
+  const description = localizedPlaylistDescription(playlist);
+  const totalLength = formatPlaylistLength(totalSeconds);
 
   const handlePlayPlaylist = () => {
     if (!playlistSongs.length) {
@@ -83,34 +89,34 @@ const PlaylistDetailPage = () => {
 
           <div className="flex min-w-[220px] flex-1 flex-col gap-3">
             <div className="flex items-center gap-3">
-              <IconButton name="chevron-left" label="Back" size="sm" variant="flat" onClick={() => navigate('/playlists')} />
-              <Kicker>{isCustom ? 'Your playlist' : 'Smart mix'}</Kicker>
+              <IconButton name="chevron-left" label={t('playlists.detail.backShort')} size="sm" variant="flat" onClick={() => navigate('/playlists')} />
+              <Kicker>{isCustom ? t('playlists.badge.custom') : t('playlists.badge.smart')}</Kicker>
             </div>
-            <h1 className="text-[30px] font-bold tracking-[-0.025em] text-amply-textPrimary">{playlist.name}</h1>
-            <Meta className="max-w-xl">{playlist.description || 'Curated playlist'}</Meta>
+            <h1 className="text-[30px] font-bold tracking-[-0.025em] text-amply-textPrimary">{name}</h1>
+            <Meta className="max-w-xl">{description || t('playlists.detail.defaultDescription')}</Meta>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge icon="list">{playlistSongs.length} tracks</Badge>
+              <Badge icon="list">{tp('playlists.tracks', playlistSongs.length)}</Badge>
               <Badge icon="clock">{totalLength}</Badge>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <Button variant="primary" icon="play" onClick={handlePlayPlaylist} disabled={!playlistSongs.length}>Play</Button>
-              <Button icon="shuffle" onClick={handleShufflePlaylist} disabled={!playlistIds.length}>Shuffle</Button>
+              <Button variant="primary" icon="play" onClick={handlePlayPlaylist} disabled={!playlistSongs.length}>{t('common.play')}</Button>
+              <Button icon="shuffle" onClick={handleShufflePlaylist} disabled={!playlistIds.length}>{t('playlists.detail.shuffle')}</Button>
               <IconButton
                 name="download"
-                label="Export playlist"
+                label={t('playlists.detail.export')}
                 disabled={!playlistIds.length}
                 onClick={() => {
-                  void exportPlaylistFile({ name: playlist.name, songIds: playlistIds }).then((saved) => {
+                  void exportPlaylistFile({ name, songIds: playlistIds }).then((saved) => {
                     if (saved) {
-                      usePlayerStore.getState().showToast('Playlist exported');
+                      usePlayerStore.getState().showToast(t('playlists.detail.exported'));
                     }
                   });
                 }}
               />
               {isCustom ? (
                 <>
-                  <IconButton name="edit" label="Edit playlist" onClick={() => setEditing(true)} />
-                  <IconButton name="trash" label="Delete playlist" variant="danger" onClick={() => setConfirmDelete(true)} />
+                  <IconButton name="edit" label={t('playlists.composer.editTitle')} onClick={() => setEditing(true)} />
+                  <IconButton name="trash" label={t('playlists.detail.delete')} variant="danger" onClick={() => setConfirmDelete(true)} />
                 </>
               ) : null}
             </div>
@@ -127,8 +133,8 @@ const PlaylistDetailPage = () => {
         />
       </div>
 
-      <Modal open={editing} onClose={() => setEditing(false)} size="xl" title="Edit playlist" description="Details, tracks, and playback order.">
-        <Suspense fallback={<div className="p-10 text-center text-[12px] text-amply-textSecondary">Preparing your library…</div>}>
+      <Modal open={editing} onClose={() => setEditing(false)} size="xl" title={t('playlists.composer.editTitle')} description={t('playlists.composer.modalDescription')}>
+        <Suspense fallback={<div className="p-10 text-center text-[12px] text-amply-textSecondary">{t('playlists.composer.preparing')}</div>}>
           <PlaylistComposer
             songs={songs}
             initialPlaylist={playlist}
@@ -142,9 +148,9 @@ const PlaylistDetailPage = () => {
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
         onConfirm={() => { void deleteCustomPlaylist(playlist.id).then(() => navigate('/playlists')); }}
-        title={`Remove “${playlist.name}”?`}
-        body="Your music files will stay in the library."
-        confirmLabel="Delete"
+        title={t('playlists.delete.title', { name })}
+        body={t('playlists.delete.detailBody')}
+        confirmLabel={t('playlists.delete.confirm')}
         danger
       />
     </div>

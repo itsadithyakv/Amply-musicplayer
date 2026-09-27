@@ -3,6 +3,7 @@ import { getPrimaryArtistName, normalizeArtistLookupText, splitArtistNames } fro
 import { isUnknownGenre } from '@/services/songMetadataService';
 import { getAlbumTracklistKey, normalizeTrackTitle, type AlbumTracklist } from '@/services/albumTracklistService';
 import { oneOf } from '@/services/preferences';
+import { t } from '@/i18n';
 
 export interface SongGroup {
   label: string;
@@ -129,26 +130,27 @@ export const isAlbumSort = oneOf<AlbumSort>(['title_asc', 'title_desc', 'artist_
 export const isArtistSort = oneOf<ArtistSort>(['name_asc', 'name_desc', 'most_played', 'most_songs']);
 export const isGenreSort = oneOf<GenreSort>(['name_asc', 'name_desc', 'most_played', 'most_songs']);
 
-export const albumSortOptions: Array<{ label: string; value: AlbumSort }> = [
-  { label: 'Album (A-Z)', value: 'title_asc' },
-  { label: 'Album (Z-A)', value: 'title_desc' },
-  { label: 'Artist (A-Z)', value: 'artist_asc' },
-  { label: 'Most Played', value: 'most_played' },
-  { label: 'Most Songs', value: 'most_songs' },
+/** Sort options with labels in the current language; call at render so a language switch shows. */
+export const albumSortOptions = (): Array<{ label: string; value: AlbumSort }> => [
+  { label: t('library.sort.albumAsc'), value: 'title_asc' },
+  { label: t('library.sort.albumDesc'), value: 'title_desc' },
+  { label: t('library.sort.artistAsc'), value: 'artist_asc' },
+  { label: t('library.sort.mostPlayed'), value: 'most_played' },
+  { label: t('library.sort.mostSongs'), value: 'most_songs' },
 ];
 
-export const artistSortOptions: Array<{ label: string; value: ArtistSort }> = [
-  { label: 'Artist (A-Z)', value: 'name_asc' },
-  { label: 'Artist (Z-A)', value: 'name_desc' },
-  { label: 'Most Played', value: 'most_played' },
-  { label: 'Most Songs', value: 'most_songs' },
+export const artistSortOptions = (): Array<{ label: string; value: ArtistSort }> => [
+  { label: t('library.sort.artistAsc'), value: 'name_asc' },
+  { label: t('library.sort.artistDesc'), value: 'name_desc' },
+  { label: t('library.sort.mostPlayed'), value: 'most_played' },
+  { label: t('library.sort.mostSongs'), value: 'most_songs' },
 ];
 
-export const genreSortOptions: Array<{ label: string; value: GenreSort }> = [
-  { label: 'Genre (A-Z)', value: 'name_asc' },
-  { label: 'Genre (Z-A)', value: 'name_desc' },
-  { label: 'Most Played', value: 'most_played' },
-  { label: 'Most Songs', value: 'most_songs' },
+export const genreSortOptions = (): Array<{ label: string; value: GenreSort }> => [
+  { label: t('library.sort.genreAsc'), value: 'name_asc' },
+  { label: t('library.sort.genreDesc'), value: 'name_desc' },
+  { label: t('library.sort.mostPlayed'), value: 'most_played' },
+  { label: t('library.sort.mostSongs'), value: 'most_songs' },
 ];
 
 type ArtworkPicker = (songs: Song[]) => string | undefined;

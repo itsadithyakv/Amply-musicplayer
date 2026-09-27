@@ -1,4 +1,5 @@
 import type { Song } from '@/types/music';
+import { t } from '@/i18n';
 
 /**
  * Extended M3U (UTF-8, "#EXTM3U"): the playlist format every desktop player reads. Paths are
@@ -81,4 +82,4 @@ export const pathKey = (path: string): string => normalizePath(path).toLowerCase
 
 /** The playlist's name from its file name: "D:\\Lists\\Road Trip.m3u8" -> "Road Trip". */
 export const playlistNameFromPath = (path: string): string =>
-  path.replace(/^.*[\\/]/, '').replace(/\.m3u8?$/i, '').trim() || 'Imported playlist';
+  path.replace(/^.*[\\/]/, '').replace(/\.m3u8?$/i, '').trim() || t('messages.playlistFile.defaultName');

@@ -61,6 +61,7 @@ import {
 } from '@/services/safeModeService';
 import { pauseBackground, resumeBackground } from '@/services/playbackScheduler';
 import { getLibraryVersions } from '@/store/libraryDataStore';
+import { t as translate, useT } from '@/i18n';
 
 const shellRouteSet = new Set<string>(['/home', '/search', '/library', '/playlists', '/stats', '/now-playing', '/settings']);
 
@@ -68,11 +69,14 @@ const ShellFallback = ({ label }: { label: string }) => (
   <div className="flex h-full min-h-[120px] items-center justify-center p-4 text-center text-[12px] text-amply-textSecondary">{label}</div>
 );
 
-const RouteFallback = () => (
-  <Card padding="lg" className="text-[13px] text-amply-textSecondary">
-    This view could not be rendered. Switch routes and come back, or restart Amply if it keeps happening.
-  </Card>
-);
+const RouteFallback = () => {
+  const { t } = useT();
+  return (
+    <Card padding="lg" className="text-[13px] text-amply-textSecondary">
+      {t('common.shell.routeError')}
+    </Card>
+  );
+};
 
 const recordUiError = (surface: string, error: Error): void => {
   recordPerfEvent('app.ui-error', {
@@ -83,6 +87,7 @@ const recordUiError = (surface: string, error: Error): void => {
 };
 
 const AppShell = () => {
+  const { t } = useT();
   const initializeLibrary = useLibraryStore((state) => state.initialize);
   const libraryInitialized = useLibraryStore((state) => state.initialized);
   const libraryScanning = useLibraryStore((state) => state.isScanning);
@@ -232,7 +237,7 @@ const AppShell = () => {
     const endFeedback = beginInteractionFeedback({
       delayMs: 0,
       minVisibleMs: 140,
-      message: 'Loading view...',
+      message: translate('common.shell.loadingView'),
     });
     let cancelled = false;
     let second = 0;
@@ -517,7 +522,7 @@ const AppShell = () => {
         <div className="flex flex-col items-center gap-3 text-center">
           <Spinner size={24} />
           <p className="text-[12px] text-amply-textSecondary">
-            {libraryScanning ? 'Scanning library...' : 'Starting...'}
+            {libraryScanning ? t('common.shell.scanningLibrary') : t('common.shell.starting')}
           </p>
         </div>
       </div>
@@ -535,7 +540,7 @@ const AppShell = () => {
       >
         {gameMode ? null : (
           <ErrorBoundary
-            fallback={<ShellFallback label="Sidebar unavailable." />}
+            fallback={<ShellFallback label={t('common.shell.sidebarUnavailable')} />}
             onError={(error) => recordUiError('sidebar', error)}
           >
               <Suspense fallback={<div className="bg-amply-bg" />}>
@@ -568,7 +573,7 @@ const AppShell = () => {
               <Suspense
                 fallback={
                   <Card padding="md" className="text-[12px] text-amply-textSecondary">
-                    Loading view…
+                    {t('common.shell.loadingView')}
                   </Card>
                 }
               >
@@ -591,7 +596,7 @@ const AppShell = () => {
         </main>
         {gameMode ? null : (
           <ErrorBoundary
-            fallback={<ShellFallback label="Track details unavailable." />}
+            fallback={<ShellFallback label={t('common.shell.trackDetailsUnavailable')} />}
             onError={(error) => recordUiError('now-playing-panel', error)}
           >
             <Suspense fallback={<div className="hidden bg-amply-bg xl:block" />}>
@@ -607,7 +612,7 @@ const AppShell = () => {
         )}
       </div>
       <ErrorBoundary
-        fallback={<ShellFallback label="Player controls unavailable." />}
+        fallback={<ShellFallback label={t('common.shell.playerControlsUnavailable')} />}
         onError={(error) => recordUiError('player-bar', error)}
       >
         <Suspense fallback={<div className="neu-raised-top" />}>
@@ -618,7 +623,7 @@ const AppShell = () => {
         <div className="pointer-events-none absolute inset-0 z-shell flex items-center justify-center bg-amply-bg/70">
           <div className="neu-raised flex items-center gap-3 rounded-lg px-5 py-4 text-[12px] text-amply-textSecondary">
             <Spinner size={16} />
-            <span>Loading library…</span>
+            <span>{t('common.shell.loadingLibrary')}</span>
           </div>
         </div>
       ) : null}
@@ -626,7 +631,7 @@ const AppShell = () => {
         <div className="pointer-events-none absolute inset-0 z-feedback flex items-center justify-center bg-amply-bg/40">
           <div className="neu-raised flex items-center gap-2 rounded-full px-4 py-2 text-[12px] text-amply-textPrimary">
             <Spinner size={14} />
-            <span>{interactionFeedback.message ?? 'Loading…'}</span>
+            <span>{interactionFeedback.message ?? t('common.loadingEllipsis')}</span>
           </div>
         </div>
       ) : null}
@@ -634,7 +639,7 @@ const AppShell = () => {
         <div className="pointer-events-none absolute inset-0 z-feedback flex items-center justify-center bg-amply-bg/60">
           <div className="neu-raised flex items-center gap-3 rounded-lg px-6 py-4 text-[14px] font-semibold text-amply-textPrimary">
             <Icon name="play" size={18} className="text-amply-accent" />
-            <span>Drop to play</span>
+            <span>{t('common.shell.dropToPlay')}</span>
           </div>
         </div>
       ) : null}

@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { Icon, type IconName } from '@/components/ui/Icon';
+import { useT } from '@/i18n';
 
 const shellClass = (size: 'sm' | 'md', className?: string) =>
   clsx(
@@ -24,6 +25,7 @@ export interface TextInputProps extends Omit<InputHTMLAttributes<HTMLInputElemen
 
 export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
   ({ value, onValueChange, label, icon, size = 'md', className, inputClassName, clearable = false, trailing, id, ...rest }, ref) => {
+    const { t } = useT();
     const autoId = useId();
     const inputId = id ?? autoId;
     return (
@@ -41,7 +43,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
         {clearable && value ? (
           <button
             type="button"
-            aria-label="Clear"
+            aria-label={t('common.clear')}
             onClick={() => onValueChange('')}
             className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-amply-textMuted hover:text-amply-textPrimary"
           >

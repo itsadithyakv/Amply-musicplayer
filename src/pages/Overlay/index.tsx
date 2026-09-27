@@ -4,12 +4,13 @@ import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition, type W
 import { isTauri } from '@/services/storageService';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { IconButton } from '@/components/ui';
-import { isLanguageCode, setLanguage } from '@/i18n';
+import { isLanguageCode, setLanguage, useT } from '@/i18n';
 
 type OverlayTheme = 'light' | 'dark';
 
 type OverlayState = {
-  title: string;
+  /** Null until the main window sends a title; shown as the translated "Nothing Playing". */
+  title: string | null;
   artist: string;
   albumArt: string | null;
   isPlaying: boolean;
@@ -18,10 +19,10 @@ type OverlayState = {
   theme: OverlayTheme | null;
 };
 
-type OverlayPayload = Partial<Omit<OverlayState, 'theme'>> & { theme?: unknown; language?: unknown };
+type OverlayPayload = Partial<Omit<OverlayState, 'theme' | 'title'>> & { title?: unknown; theme?: unknown; language?: unknown };
 
 const initialState: OverlayState = {
-  title: 'Nothing Playing',
+  title: null,
   artist: 'Amply',
   albumArt: null,
   isPlaying: false,
@@ -71,6 +72,7 @@ const revealClass =
   'invisible w-0 shrink-0 overflow-hidden opacity-0 transition-[width,margin,opacity] duration-150 group-data-[state=expanded]:visible group-data-[state=expanded]:w-7 group-data-[state=expanded]:opacity-100';
 
 const OverlayPage = () => {
+  const { t } = useT();
   const [state, setState] = useState<OverlayState>(initialState);
   const [expanded, setExpanded] = useState(false);
   const desiredExpandedRef = useRef(false);
@@ -249,7 +251,7 @@ const OverlayPage = () => {
         <div className={`${revealClass} group-data-[state=expanded]:mr-1`}>
           <IconButton
             name="drag"
-            label="Move overlay"
+            label={t('player.overlay.move')}
             size="xs"
             variant="flat"
             className="cursor-grab active:cursor-grabbing"
@@ -287,25 +289,25 @@ const OverlayPage = () => {
           aria-hidden={!expanded}
           className="invisible ml-0 min-w-0 max-w-0 flex-1 overflow-hidden px-0 opacity-0 transition-[max-width,margin,opacity] duration-150 group-data-[state=expanded]:visible group-data-[state=expanded]:ml-2 group-data-[state=expanded]:max-w-[140px] group-data-[state=expanded]:opacity-100"
         >
-          <p className="truncate text-[12px] font-semibold tracking-[-0.01em] text-amply-textPrimary">{state.title}</p>
+          <p className="truncate text-[12px] font-semibold tracking-[-0.01em] text-amply-textPrimary">{state.title ?? t('player.overlay.nothingPlaying')}</p>
           <p className="mt-0.5 truncate text-[11px] text-amply-textSecondary">{state.artist}</p>
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5">
           <div className={revealClass}>
-            <IconButton name="prev" label="Previous track" size="xs" variant="ghost" onClick={() => void emitMainCommand('amply://overlay-prev')} />
+            <IconButton name="prev" label={t('player.overlay.previous')} size="xs" variant="ghost" onClick={() => void emitMainCommand('amply://overlay-prev')} />
           </div>
           <div className="opacity-70 transition-opacity duration-150 group-data-[state=expanded]:opacity-100">
             <IconButton
               name={state.isPlaying ? 'pause' : 'play'}
-              label={state.isPlaying ? 'Pause' : 'Play'}
+              label={state.isPlaying ? t('common.pause') : t('common.play')}
               size="sm"
               variant="accent"
               onClick={togglePlayback}
             />
           </div>
           <div className={revealClass}>
-            <IconButton name="next" label="Next track" size="xs" variant="ghost" onClick={() => void emitMainCommand('amply://overlay-next')} />
+            <IconButton name="next" label={t('player.overlay.next')} size="xs" variant="ghost" onClick={() => void emitMainCommand('amply://overlay-next')} />
           </div>
         </div>
       </div>

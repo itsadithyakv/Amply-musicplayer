@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui';
+import { useT } from '@/i18n';
 
 export interface Column {
   /** Category shown under the axis and in the tooltip ("Mon 21", "14:00"). */
@@ -30,6 +31,7 @@ const columnPath = (x: number, width: number, top: number, bottom: number) => {
  * holds every value without hovering.
  */
 export const ColumnChart = ({ title, columns }: { title: string; columns: Column[] }) => {
+  const { t } = useT();
   const frameRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
   const [active, setActive] = useState<number | null>(null);
@@ -58,7 +60,7 @@ export const ColumnChart = ({ title, columns }: { title: string; columns: Column
       <div className="mb-2 flex items-center justify-between gap-3">
         <h3 className="text-[13px] font-semibold text-amply-textPrimary">{title}</h3>
         <Button size="sm" variant="ghost" onClick={() => setShowTable((current) => !current)} aria-pressed={showTable}>
-          {showTable ? 'Chart' : 'Table'}
+          {showTable ? t('stats.charts.showChart') : t('stats.charts.showTable')}
         </Button>
       </div>
       {showTable ? (

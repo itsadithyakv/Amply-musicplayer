@@ -1,5 +1,6 @@
 import type { OnlineRecommendationSignal, OnlineRecommendationSignalsBySong } from '@/services/recommendationIndex';
 import type { Song } from '@/types/music';
+import { getLanguage, t } from '@/i18n';
 import { getPrimaryArtistName } from '@/utils/artists';
 import { normalizeToken } from '@/utils/text';
 
@@ -144,7 +145,7 @@ export const buildRecommendations = (
       score += part;
       if (part > best) {
         best = part;
-        reason = `More from ${sameArtist.name}`;
+        reason = t('messages.recommendations.moreFromArtist', { artist: sameArtist.name });
       }
     }
 
@@ -155,7 +156,7 @@ export const buildRecommendations = (
       usedOnlineSignals = true;
       if (part > best) {
         best = part;
-        reason = `Similar to ${similarArtist.via}`;
+        reason = t('messages.recommendations.similarToArtist', { artist: similarArtist.via });
       }
     }
 
@@ -166,7 +167,7 @@ export const buildRecommendations = (
       usedOnlineSignals = true;
       if (part > best) {
         best = part;
-        reason = `Fans of ${similarTrack.via} also play this`;
+        reason = t('messages.recommendations.fansAlsoPlay', { title: similarTrack.via });
       }
     }
 
@@ -182,7 +183,7 @@ export const buildRecommendations = (
     score += genrePart;
     if (genrePart > best) {
       best = genrePart;
-      reason = `More ${genreName}`;
+      reason = t('messages.recommendations.moreGenre', { genre: genreName });
     }
 
     const ownTags = signalTags(signals[song.id]);
@@ -197,7 +198,7 @@ export const buildRecommendations = (
         usedOnlineSignals = true;
         if (part > best) {
           best = part;
-          reason = 'Shares a vibe with your favourites';
+          reason = t('messages.recommendations.sharesVibe');
         }
       }
     }
@@ -242,7 +243,7 @@ const listNames = (names: string[]): string => {
   if (unique.length <= 1) {
     return unique[0] ?? '';
   }
-  return `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}`;
+  return new Intl.ListFormat(getLanguage(), { style: 'long', type: 'conjunction' }).format(unique);
 };
 
 /** "Recommended for you" (empty query) or "More like these" (seeded by the current results). */
@@ -268,8 +269,8 @@ export const getSearchRecommendations = (
       return null;
     }
     return {
-      title: 'More like these',
-      caption: `Close to ${listNames(seeds.map((song) => getPrimaryArtistName(song.artist)))}`,
+      title: t('messages.recommendations.moreLikeThese'),
+      caption: t('messages.recommendations.closeTo', { names: listNames(seeds.map((song) => getPrimaryArtistName(song.artist))) }),
       items,
       usedOnlineSignals,
     };
@@ -284,8 +285,8 @@ export const getSearchRecommendations = (
     return null;
   }
   return {
-    title: 'Recommended for you',
-    caption: `Because you listen to ${listNames(seeds.map((song) => getPrimaryArtistName(song.artist)))}`,
+    title: t('messages.recommendations.forYou'),
+    caption: t('messages.recommendations.becauseYouListen', { names: listNames(seeds.map((song) => getPrimaryArtistName(song.artist))) }),
     items,
     usedOnlineSignals,
   };

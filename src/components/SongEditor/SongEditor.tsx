@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, Modal, TextInput } from '@/components/ui';
+import { useT } from '@/i18n';
 import { isTauri } from '@/services/storageService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
@@ -44,6 +45,7 @@ const toNumber = (value: string): number | null => {
 
 /** Edits a song's tags in the file itself, so every player sees the change. */
 export const SongEditor = () => {
+  const { t } = useT();
   const songId = useSongEditor((state) => state.songId);
   const close = useSongEditor((state) => state.close);
   const song = useLibraryStore((state) => (songId ? state.getSongById(songId) : undefined));
@@ -77,7 +79,7 @@ export const SongEditor = () => {
 
   const save = async () => {
     if (!draft.title.trim()) {
-      setError('A song needs a title.');
+      setError(t('common.songEditor.titleRequired'));
       return;
     }
     if (!isTauri()) {
@@ -100,14 +102,14 @@ export const SongEditor = () => {
         },
       });
       await applyEditedSong(song.id, updated);
-      showToast('Song info saved');
+      showToast(t('common.songEditor.saved'));
       close();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(
         message.includes('outside the configured library folders')
-          ? 'Only songs inside your library folders can be edited.'
-          : `Could not save: ${message}`,
+          ? t('common.songEditor.outsideLibrary')
+          : t('common.songEditor.saveFailed', { message }),
       );
     } finally {
       setSaving(false);
@@ -119,16 +121,16 @@ export const SongEditor = () => {
       open
       onClose={close}
       size="md"
-      title="Edit song info"
+      title={t('common.songEditor.title')}
       description={song.filename}
       initialFocusRef={titleRef}
       footer={
         <>
           <Button variant="ghost" onClick={close} disabled={saving}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button variant="primary" onClick={() => void save()} loading={saving}>
-            Save
+            {t('common.save')}
           </Button>
         </>
       }
@@ -140,16 +142,16 @@ export const SongEditor = () => {
           void save();
         }}
       >
-        {field('title', 'Title')}
+        {field('title', t('common.field.title'))}
         <div className="grid gap-3 sm:grid-cols-2">
-          {field('artist', 'Artist')}
-          {field('albumArtist', 'Album artist')}
+          {field('artist', t('common.field.artist'))}
+          {field('albumArtist', t('common.field.albumArtist'))}
         </div>
-        {field('album', 'Album')}
+        {field('album', t('common.field.album'))}
         <div className="grid gap-3 sm:grid-cols-3">
-          {field('genre', 'Genre')}
-          {field('year', 'Year', { inputMode: 'numeric' })}
-          {field('track', 'Track', { inputMode: 'numeric' })}
+          {field('genre', t('common.field.genre'))}
+          {field('year', t('common.field.year'), { inputMode: 'numeric' })}
+          {field('track', t('common.field.track'), { inputMode: 'numeric' })}
         </div>
         {error ? (
           <p role="alert" className="text-[12px] text-amply-danger">

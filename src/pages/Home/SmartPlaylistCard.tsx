@@ -3,6 +3,7 @@ import type { KeyboardEvent, MouseEvent } from 'react';
 import { IconButton, Surface } from '@/components/ui';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { ArtworkWell } from '@/pages/Home/ArtworkWell';
+import { useT } from '@/i18n';
 
 export type SmartPlaylistCardItem = {
   id: string;
@@ -34,6 +35,7 @@ interface SmartPlaylistCardProps {
  * with light text on top (the same in both themes).
  */
 export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: SmartPlaylistCardProps) => {
+  const { t, tp } = useT();
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget) {
       return;
@@ -49,7 +51,7 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
     onPlay();
   };
 
-  const count = `${item.songIds.length} songs`;
+  const count = tp('library.songCount', item.songIds.length);
   const showCount = layout !== 'compact' && item.subtitle !== count;
   const cover = item.backgroundArtwork ?? item.artwork ?? item.artworks[0];
 
@@ -63,14 +65,14 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
         tabIndex={0}
         onClick={onSelect}
         onKeyDown={handleKeyDown}
-        title="Click to play. Double-click to open playlist."
+        title={t('library.home.cardHint')}
         className="group flex h-full min-w-0 items-center gap-3 p-3 text-left"
       >
         <div className="relative w-16 shrink-0">
           <ArtworkWell artworks={[cover]} alt={item.title} />
           <IconButton
             name="play"
-            label={`Play ${item.title}`}
+            label={t('library.home.playItem', { name: item.title })}
             variant="accent"
             size="sm"
             onClick={handlePlay}
@@ -96,7 +98,7 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={handleKeyDown}
-      title="Click to play. Double-click to open playlist."
+      title={t('library.home.cardHint')}
       className={clsx(
         'group relative flex h-full min-w-0 overflow-hidden text-left',
         featured ? 'min-h-[300px] items-center' : 'min-h-[260px] items-end',
@@ -105,7 +107,7 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
       <CoverBackdrop src={cover} fade={featured ? 'right' : 'bottom'} />
 
       <div className={clsx('relative z-10 flex min-w-0 flex-col gap-1.5', featured ? 'ml-auto w-[58%] p-6' : 'w-full p-4 pt-16')}>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-amply-onCoverMuted">{featured ? 'Featured mix' : 'Smart playlist'}</p>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-amply-onCoverMuted">{featured ? t('library.home.featuredMix') : t('library.home.smartPlaylist')}</p>
         <p className={clsx('truncate font-bold tracking-[-0.02em] text-amply-onCover', featured ? 'text-[28px]' : 'text-[20px]')}>{item.title}</p>
         <p className="line-clamp-2 text-[13px] text-amply-onCoverMuted">{item.subtitle}</p>
         {showCount ? <p className="text-[12px] text-amply-onCoverMuted">{count}</p> : null}
@@ -113,7 +115,7 @@ export const SmartPlaylistCard = ({ item, layout = 'grid', onSelect, onPlay }: S
 
       <IconButton
         name="play"
-        label={`Play ${item.title}`}
+        label={t('library.home.playItem', { name: item.title })}
         variant="accent"
         size={featured ? 'lg' : 'md'}
         onClick={handlePlay}

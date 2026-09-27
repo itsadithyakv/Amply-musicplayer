@@ -1,6 +1,7 @@
 import type { ListeningEvent } from '@/services/mixEngine/types';
 import type { Song } from '@/types/music';
 import { getPrimaryArtistName } from '@/utils/artists';
+import { formatNumber, t } from '@/i18n';
 
 export type StatsRange = '7d' | '30d' | 'all';
 
@@ -146,9 +147,11 @@ export const computeListeningStats = (
   };
 };
 
-/** "3 h 25 min", "42 min", "0 min". */
+/** "3 h 25 min", "42 min", "0 min" in English; worded and numbered in the current UI language. */
 export const formatListeningTime = (seconds: number): string => {
   const minutes = Math.round(seconds / 60);
   const hours = Math.floor(minutes / 60);
-  return hours ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
+  return hours
+    ? t('stats.time.hoursMinutes', { hours: formatNumber(hours), minutes: formatNumber(minutes % 60) })
+    : t('stats.time.minutes', { minutes: formatNumber(minutes) });
 };

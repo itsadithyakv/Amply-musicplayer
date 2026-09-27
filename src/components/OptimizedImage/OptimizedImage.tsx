@@ -1,12 +1,19 @@
 import { fnv1a36 as hashString } from '@/utils/hash';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
+import { useT } from '@/i18n';
 
 const MAX_LOADED_SRC_KEYS = 1200;
 const loadedSrcKeys = new Set<string>();
 
 /** Artwork placeholder: a sunken well in the deep background tone. */
 const placeholderClass = 'neu-well flex items-center justify-center text-amply-textMuted';
+
+/** Its own component so only the rare missing-image placeholder subscribes to the language. */
+const NoImageLabel = () => {
+  const { t } = useT();
+  return <span className="text-xs">{t('common.noImage')}</span>;
+};
 
 const getSrcCacheKey = (src: string): string => {
   if (src.length <= 512) {
@@ -137,7 +144,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
         role="img"
         aria-label={alt}
       >
-        <span className="text-xs">No image</span>
+        <NoImageLabel />
       </div>
     );
   }

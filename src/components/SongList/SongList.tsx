@@ -24,6 +24,7 @@ import { libraryActions, useLibraryStore } from "@/store/libraryStore";
 import { useStructuralSongsSnapshot } from "@/hooks/useLibraryViews";
 import { isUnknownGenre } from "@/services/songMetadataService";
 import { useSongEditor } from "@/components/SongEditor/SongEditor";
+import { useT, type MessageKey } from "@/i18n";
 
 interface SongListProps {
   songs: Song[];
@@ -51,20 +52,21 @@ const isSongSort = oneOf<SongSort>([
   "most_played",
 ]);
 
-const sortOptions: Array<{ label: string; value: SongSort }> = [
-  { label: "Recently Added", value: "recently_added" },
-  { label: "Title (A-Z)", value: "title_asc" },
-  { label: "Title (Z-A)", value: "title_desc" },
-  { label: "Artist (A-Z)", value: "artist_asc" },
-  { label: "Album (A-Z)", value: "album_asc" },
-  { label: "Longest First", value: "duration_desc" },
-  { label: "Most Played", value: "most_played" },
+const sortOptions: Array<{ labelKey: MessageKey; value: SongSort }> = [
+  { labelKey: "common.songList.sortBy.recentlyAdded", value: "recently_added" },
+  { labelKey: "common.songList.sortBy.titleAsc", value: "title_asc" },
+  { labelKey: "common.songList.sortBy.titleDesc", value: "title_desc" },
+  { labelKey: "common.songList.sortBy.artistAsc", value: "artist_asc" },
+  { labelKey: "common.songList.sortBy.albumAsc", value: "album_asc" },
+  { labelKey: "common.songList.sortBy.longestFirst", value: "duration_desc" },
+  { labelKey: "common.songList.sortBy.mostPlayed", value: "most_played" },
 ];
 
 /** Shared column template for the header row and every song row: # / title / album / genre / time / fav / playlist / queue. */
 const ROW_GRID =
   "grid grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(56px,0.5fr)_48px_150px_80px] items-center";
 
+/** Genre suggestions offered for untagged songs. These are written into the file's tags, so they stay in English. */
 const baseGenreOptions = [
   "Pop",
   "Rock",
@@ -160,6 +162,7 @@ const SongRow = memo(
       editingSongId,
       setEditingSongId,
     } = data;
+    const { t } = useT();
     const song = songs[index];
     const isCurrent = song?.id === currentSongId;
     const [favoritePulse, setFavoritePulse] = useState(false);
@@ -280,13 +283,13 @@ const SongRow = memo(
                     }
                   }}
                   onBlur={commitGenreDraft}
-                  placeholder="Set genre..."
+                  placeholder={t("common.songList.setGenre")}
                 />
               </div>
             ) : isUnknown ? (
               <div className="w-full" onClick={stopRowClick}>
                 <Select
-                  label="Genre"
+                  label={t("common.field.genre")}
                   size="sm"
                   defaultValue=""
                   onChange={(event) => {
@@ -305,13 +308,13 @@ const SongRow = memo(
                   }}
                   className="w-full"
                 >
-                  <option value="">Set genre...</option>
+                  <option value="">{t("common.songList.setGenre")}</option>
                   {genreOptions.map((genre) => (
                     <option key={genre} value={genre}>
                       {genre}
                     </option>
                   ))}
-                  <option value="__edit__">Custom...</option>
+                  <option value="__edit__">{t("common.songList.customGenre")}</option>
                 </Select>
               </div>
             ) : (
@@ -321,7 +324,7 @@ const SongRow = memo(
                 </p>
                 <IconButton
                   name="edit"
-                  label="Edit genre"
+                  label={t("common.songList.editGenre")}
                   size="xs"
                   variant="ghost"
                   onClick={(event) => {
@@ -339,7 +342,11 @@ const SongRow = memo(
 
           <IconButton
             name={song.favorite ? "heart-filled" : "heart"}
-            label={song.favorite ? "Remove from favorites" : "Add to favorites"}
+            label={
+              song.favorite
+                ? t("common.songList.removeFromFavorites")
+                : t("common.songList.addToFavorites")
+            }
             size="sm"
             variant="ghost"
             accentIcon={song.favorite}
@@ -362,7 +369,7 @@ const SongRow = memo(
 
           <div className="mr-2 min-w-0" onClick={stopRowClick}>
             <Select
-              label="Add"
+              label={t("common.songList.add")}
               size="sm"
               defaultValue=""
               onChange={(event) => {
@@ -378,7 +385,9 @@ const SongRow = memo(
               selectClassName="disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">
-                {customPlaylists.length ? "Add to..." : "No playlists"}
+                {customPlaylists.length
+                  ? t("common.songList.addTo")
+                  : t("common.songList.noPlaylists")}
               </option>
               {customPlaylists.map((playlist) => (
                 <option key={playlist.id} value={playlist.id}>
@@ -391,7 +400,7 @@ const SongRow = memo(
           <div className="flex items-center">
             <IconButton
               name="queue"
-              label="Add to queue"
+              label={t("common.songList.addToQueue")}
               size="sm"
               variant="ghost"
               onClick={(event) => {
@@ -401,7 +410,7 @@ const SongRow = memo(
             />
             <IconButton
               name="more"
-              label="Edit song info"
+              label={t("common.songEditor.title")}
               size="sm"
               variant="ghost"
               onClick={(event) => {
@@ -422,6 +431,7 @@ const SongList = ({
   initialSort = "recently_added",
   hideSort = false,
 }: SongListProps) => {
+  const { t } = useT();
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
@@ -511,10 +521,10 @@ const SongList = ({
       className="render-contained overflow-hidden"
     >
       <div className="flex items-center justify-between px-4 py-3">
-        <Kicker>Songs</Kicker>
+        <Kicker>{t("common.songList.songs")}</Kicker>
         {!hideSort ? (
           <Select
-            label="Sort"
+            label={t("common.songList.sortLabel")}
             size="sm"
             value={sortBy}
             onChange={(event) => setSortBy(event.target.value as SongSort)}
@@ -522,7 +532,7 @@ const SongList = ({
           >
             {sortOptions.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {t(option.labelKey)}
               </option>
             ))}
           </Select>
@@ -534,13 +544,15 @@ const SongList = ({
         className={`${ROW_GRID} h-12 px-4 text-[12px] uppercase tracking-wide text-amply-textMuted`}
       >
         <span>#</span>
-        <span>Title</span>
-        <span>Album</span>
-        <span>Genre</span>
-        <span className="justify-self-start">Time</span>
-        <span>Fav</span>
-        <span>Playlist</span>
-        <span>Queue · Info</span>
+        <span>{t("common.field.title")}</span>
+        <span>{t("common.field.album")}</span>
+        <span>{t("common.field.genre")}</span>
+        <span className="justify-self-start">
+          {t("common.songList.column.time")}
+        </span>
+        <span>{t("common.songList.column.fav")}</span>
+        <span>{t("common.songList.column.playlist")}</span>
+        <span>{t("common.songList.column.queueInfo")}</span>
       </div>
       <Divider />
 

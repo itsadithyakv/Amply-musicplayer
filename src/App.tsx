@@ -3,14 +3,20 @@ import { useLocation } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { recordPerfEvent } from '@/services/perfDiagnostics';
 import { requestSafeModeNextStart } from '@/services/safeModeService';
+import { useT } from '@/i18n';
 
 // Both branches are lazy so the tiny always-on-top overlay window never evaluates the main shell.
 const OverlayPage = lazy(() => import('@/pages/Overlay'));
 const AppShell = lazy(() => import('@/AppShell'));
 
-const OverlayFallback = () => (
-  <div className="flex h-full min-h-[64px] items-center justify-center text-[12px] text-amply-textSecondary">Overlay unavailable.</div>
-);
+const OverlayFallback = () => {
+  const { t } = useT();
+  return (
+    <div className="flex h-full min-h-[64px] items-center justify-center text-[12px] text-amply-textSecondary">
+      {t('common.app.overlayUnavailable')}
+    </div>
+  );
+};
 
 const App = () => {
   const location = useLocation();

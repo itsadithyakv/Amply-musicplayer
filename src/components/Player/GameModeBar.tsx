@@ -8,9 +8,11 @@ import { ProgressSection } from '@/components/Player/ProgressSection';
 import { usePlayerStore } from '@/store/playerStore';
 import { usePlayerBarView } from '@/hooks/useLibraryViews';
 import { artworkThumb } from '@/utils/artwork';
+import { useT } from '@/i18n';
 
 /** Lean player bar shown while game mode is on. */
 export const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: MutableRefObject<boolean> }) => {
+  const { t } = useT();
   const { song, volume } = usePlayerBarView();
   const setVolume = usePlayerStore((state) => state.setVolume);
 
@@ -23,14 +25,14 @@ export const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: MutableRefO
         >
           <ArtworkImage
             src={artworkThumb(song?.albumArt, 64)}
-            alt={song?.album ?? 'Unknown Album'}
+            alt={song?.album ?? t('player.unknownAlbum')}
             className="neu-well h-12 w-12 shrink-0 overflow-hidden rounded-sm"
             loading="eager"
             forceReady
           />
           <div className="min-w-0">
-            <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? 'Select a playlist'}</p>
-            <p className="truncate text-[12px] text-amply-textSecondary">{song ? song.artist : 'Lean playback mode'}</p>
+            <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? t('player.gameMode.selectPlaylist')}</p>
+            <p className="truncate text-[12px] text-amply-textSecondary">{song ? song.artist : t('player.gameMode.leanMode')}</p>
           </div>
         </Link>
 
@@ -49,7 +51,7 @@ export const GameModeBar = memo(({ actionBusyRef }: { actionBusyRef: MutableRefO
             max={1}
             step={0.01}
             onChange={setVolume}
-            ariaLabel="Volume"
+            ariaLabel={t('player.volume')}
             formatValue={(value) => `${Math.round(value * 100)}%`}
           />
         </div>

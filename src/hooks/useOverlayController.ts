@@ -51,10 +51,10 @@ export const useOverlayController = (enabled: boolean): void => {
   const overlaySpinningArtwork = usePlayerStore((state) => state.settings.overlaySpinningArtwork);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const appTheme = usePlayerStore((state) => state.settings.appTheme);
-  const { language } = useT();
+  const { t, language } = useT();
   const { song } = useCurrentSongSnapshot();
   const payloadRef = useRef<OverlayPayload>({
-    title: 'Nothing Playing',
+    title: t('player.overlay.nothingPlaying'),
     artist: 'Amply',
     albumArt: null,
     isPlaying: false,
@@ -67,7 +67,7 @@ export const useOverlayController = (enabled: boolean): void => {
   // Refreshed before the effects below run, so `emitOverlayState` always reads the current payload.
   useLayoutEffect(() => {
     payloadRef.current = {
-      title: song?.title?.trim() || 'Nothing Playing',
+      title: song?.title?.trim() || t('player.overlay.nothingPlaying'),
       artist: song?.artist?.trim() || 'Amply',
       albumArt: song?.albumArt?.trim() || null,
       isPlaying,
@@ -75,7 +75,7 @@ export const useOverlayController = (enabled: boolean): void => {
       theme: appTheme,
       language,
     };
-  }, [song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork, appTheme, language]);
+  }, [song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork, appTheme, language, t]);
 
   const emitOverlayState = async (force = false): Promise<void> => {
     const payload = payloadRef.current;

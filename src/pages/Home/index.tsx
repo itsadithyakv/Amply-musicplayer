@@ -28,6 +28,8 @@ import {
   pickUniqueAlbumSongs,
   scheduleIdleTask,
 } from '@/pages/Home/homeMixes';
+import { useT } from '@/i18n';
+import { localizedPlaylistDescription, localizedPlaylistName } from '@/i18n/playlistNames';
 
 /** Cover chosen for a playlist under a given render seed, so it survives artwork arriving later. */
 const smartPlaylistCoverCache = new Map<string, string>();
@@ -40,6 +42,7 @@ const EmptyNote = ({ children }: { children: string }) => (
 );
 
 const HomePage = () => {
+  const { t, tp } = useT();
   const homeView = useHomeView();
   const deferredSongs = homeView.songs;
   const playlists = homeView.playlists;
@@ -256,19 +259,19 @@ const HomePage = () => {
         return {
           id: playlist.id,
           baseId: playlist.id,
-          title: playlist.name,
-          subtitle: playlist.description || `${playlist.songIds.length} songs`,
+          title: localizedPlaylistName(playlist),
+          subtitle: localizedPlaylistDescription(playlist) || tp('library.songCount', playlist.songIds.length),
           artwork,
           artworks,
           backgroundArtwork,
-          description: playlist.description,
+          description: localizedPlaylistDescription(playlist),
           songIds: playlist.songIds,
           kind: 'smart' as const,
           isMoreMix: isMoreMixPlaylistId(playlist.id),
         };
       })
       .filter((entry) => entry.songIds.length);
-  }, [frozenPlaylists, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed]);
+  }, [frozenPlaylists, getPlaylistArtwork, getPlaylistArtworkSet, smartPlaylistRenderSeed, tp]);
 
   // Featured card plus six grid cards, ordered by the render seed only: usage no longer reorders
   // them under the pointer, so the section is stable until a manual regenerate.
@@ -325,9 +328,9 @@ const HomePage = () => {
     setRegenMessage(null);
     try {
       await regenerateSmartPlaylists();
-      setRegenMessage('Smart playlists regenerated.');
+      setRegenMessage(t('library.home.regenerated'));
     } catch (error) {
-      setRegenMessage(error instanceof Error ? error.message : 'Failed to regenerate playlists.');
+      setRegenMessage(error instanceof Error ? error.message : t('library.home.regenerateFailed'));
     } finally {
       window.setTimeout(() => setRegenMessage(null), 2500);
     }
@@ -351,12 +354,12 @@ const HomePage = () => {
   return (
     <div className="anim-stagger space-y-8 pb-8">
       <PageHeader
-        title="Discover"
+        title={t('library.home.title')}
         description={regenMessage ?? undefined}
         action={
           <IconButton
             name={regeneratingSmartPlaylists ? 'loader' : 'refresh'}
-            label="Refresh mixes"
+            label={t('library.home.refreshMixes')}
             onClick={() => void handleRegenerate()}
             disabled={regeneratingSmartPlaylists}
             className={regeneratingSmartPlaylists ? '[&>svg]:animate-spin' : undefined}
@@ -366,7 +369,7 @@ const HomePage = () => {
 
       <section className="max-w-none space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <SectionTitle>Smart Playlists</SectionTitle>
+          <SectionTitle>{t('library.home.smartPlaylists')}</SectionTitle>
           {regeneratingSmartPlaylists ? (
             <Surface
               variant="raised-sm"
@@ -375,7 +378,7 @@ const HomePage = () => {
               className="flex items-center gap-2 px-3 py-2 text-[12px] text-amply-textSecondary"
             >
               <Icon name="loader" size={14} className="animate-spin" />
-              Refreshing playlists...
+              {t('library.home.refreshing')}
             </Surface>
           ) : null}
         </div>
@@ -406,12 +409,12 @@ const HomePage = () => {
         </div>
 
         {!smartHighlightCards.length ? (
-          <EmptyNote>No smart playlists yet. Add more music or refresh your library to generate mixes.</EmptyNote>
+          <EmptyNote>{t('library.home.noSmartPlaylists')}</EmptyNote>
         ) : null}
 
         {showMoreMixes ? (
           <div id="home-all-mixes" className="space-y-3">
-            <Kicker>All Mixes</Kicker>
+            <Kicker>{t('library.home.allMixes')}</Kicker>
             {smartMixesAll.length ? (
               <div className="flex gap-4 overflow-x-auto px-2 py-2 pr-3">
                 {smartMixesAll.map((item) => (
@@ -421,17 +424,17 @@ const HomePage = () => {
                 ))}
               </div>
             ) : (
-              <EmptyNote>No mixes available yet. Add more music to expand smart mixes.</EmptyNote>
+              <EmptyNote>{t('library.home.noMixes')}</EmptyNote>
             )}
           </div>
         ) : null}
       </section>
 
-      <SectionRow title="Recently Played" songs={recentlyPlayed} onPick={pickSong} scrollable />
-      <SectionRow title="Rediscover" songs={rediscoverSongs} onPick={pickSong} scrollable />
+      <SectionRow title={t('library.home.recentlyPlayed')} songs={recentlyPlayed} onPick={pickSong} scrollable />
+      <SectionRow title={t('library.home.rediscover')} songs={rediscoverSongs} onPick={pickSong} scrollable />
       {moreFromArtist ? (
         <SectionRow
-          title={`More from ${moreFromArtist.artistName}`}
+          title={t('library.home.moreFrom', { artist: moreFromArtist.artistName })}
           songs={moreFromArtist.songs}
           onPick={pickSong}
           scrollable
@@ -440,13 +443,13 @@ const HomePage = () => {
 
       {userPlaylists.length ? (
         <section className="space-y-3">
-          <SectionTitle>Your Playlists</SectionTitle>
+          <SectionTitle>{t('library.home.yourPlaylists')}</SectionTitle>
           <div className="flex gap-3 overflow-x-auto pb-3 pr-2">
             {userPlaylists.map((playlist) => (
               <div key={playlist.id} className="min-w-[200px] max-w-[220px] flex-1">
                 <AlbumCard
                   title={playlist.name}
-                  subtitle={`${playlist.songIds.length} songs`}
+                  subtitle={tp('library.songCount', playlist.songIds.length)}
                   artwork={getPlaylistArtwork(playlist)}
                   onClick={() => playPlaylist(playlist.songIds, undefined, playlist.id)}
                 />
@@ -460,7 +463,7 @@ const HomePage = () => {
 
       {madeForYouMixes.length ? (
         <section className="space-y-3">
-          <SectionTitle>Made for you</SectionTitle>
+          <SectionTitle>{t('library.home.madeForYou')}</SectionTitle>
           <div className="anim-stagger grid gap-5 xl:grid-cols-2">
             {madeForYouMixes.map((mix) => (
               <MadeForYouHero key={mix.id} mix={mix} onPlay={() => playPlaylist(mix.songIds)} />

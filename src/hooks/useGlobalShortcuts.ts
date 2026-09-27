@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { playbackActions, usePlayerStore } from '@/store/playerStore';
 import { getPlaybackProgressSnapshot } from '@/store/playbackProgressStore';
 import { scheduleInteraction } from '@/services/playbackScheduler';
+import { formatNumber, t } from '@/i18n';
 
 const VOLUME_STEP = 0.05;
 /** The volume to return to when M unmutes. */
@@ -47,7 +48,9 @@ export const useGlobalShortcuts = (): void => {
         event.preventDefault();
         const { setVolume, showToast } = usePlayerStore.getState();
         setVolume(nextVolume);
-        showToast(nextVolume === 0 ? 'Muted' : `Volume ${Math.round(nextVolume * 100)}%`);
+        showToast(
+          nextVolume === 0 ? t('common.shortcuts.muted') : t('common.shortcuts.volume', { percent: formatNumber(Math.round(nextVolume * 100)) }),
+        );
         return;
       }
 

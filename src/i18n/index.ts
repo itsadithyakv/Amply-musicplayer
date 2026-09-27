@@ -8,7 +8,7 @@ import en from '@/i18n/locales/en';
  * (enforced per namespace file with `satisfies`). Other languages load on demand.
  *
  * Keys are flat and namespaced ("settings.playback.title"). Placeholders are `{name}`. Plurals use
- * `_one` / `_other` suffixes picked with Intl.PluralRules (`tp`).
+ * `_one` / `_other` suffixes picked with Intl.PluralRules (`tp` from `useT`).
  */
 
 export const LANGUAGES = [
@@ -99,12 +99,6 @@ const pluralKey = (language: LanguageCode, messages: Messages, base: PluralKey, 
 
 /** Translates `key` in the current language. For code outside React (stores, toasts). */
 export const t = (key: MessageKey, params?: Params): string => lookup(useI18nStore.getState().messages, key, params);
-
-/** Translates a plural message; `{count}` is available to the template. */
-export const tp = (base: PluralKey, count: number, params?: Params): string => {
-  const { language, messages } = useI18nStore.getState();
-  return lookup(messages, pluralKey(language, messages, base, count), { count: formatNumber(count), ...params });
-};
 
 /** `t` and `tp` for components: using it re-renders the component when the language changes. */
 export const useT = () => {

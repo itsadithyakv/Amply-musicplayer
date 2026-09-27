@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, normalizeSettings } from '@/store/defaultSettings';
 import { getFlag, setFlags } from '@/services/runtimeFlags';
+import { t } from '@/i18n';
 import { pickRandom, shuffle } from '@/utils/random';
 import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, OnlineRecommendationProvider, RepeatMode } from '@/types/music';
@@ -872,7 +873,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             audioEngine.pause();
             setGlobalPlayingFlag(false);
             set({ isPlaying: false, positionSec: position, autoPausedByFocus: true });
-            get().showToast('Amply paused for other audio');
+            get().showToast(t('messages.playback.pausedForOtherAudio'));
           }
           return;
         }
@@ -891,7 +892,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             }
             void latest.resumePlayback();
             set({ autoPausedByFocus: false });
-            get().showToast('Amply resumed');
+            get().showToast(t('messages.playback.resumed'));
           }, 1800);
         }
       });
@@ -1059,11 +1060,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       // A moved, deleted or undecodable file should cost one song, not the whole queue.
       consecutiveLoadFailures += 1;
       if (consecutiveLoadFailures < MAX_CONSECUTIVE_LOAD_FAILURES && resolveNextSongId(get())) {
-        get().showToast(`Skipped "${song.title}": the file could not be played`);
+        get().showToast(t('messages.playback.skippedUnplayable', { title: song.title }));
         void get().playNext(false, { skipRecord: true });
       } else {
         consecutiveLoadFailures = 0;
-        get().showToast('Several tracks in a row could not be played. Check that the files are still there.');
+        get().showToast(t('messages.playback.repeatedFailures'));
       }
       return;
     }
@@ -1113,7 +1114,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const resumeAt = get().positionSec || 0;
     void ensureCurrentSongPrepared(songId, resumeAt, true).then((prepared) => {
       if (!prepared) {
-        get().showToast('Track failed to load');
+        get().showToast(t('messages.playback.trackFailedToLoad'));
         return;
       }
       setGlobalPlayingFlag(true);
@@ -1123,7 +1124,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       recordPlaybackLatency('resume', performance.now() - latencyStart);
     }).catch((error: unknown) => {
         recordPerfEvent('player.resume-failed', { error: error instanceof Error ? error.message : String(error) });
-        get().showToast('Track failed to load');
+        get().showToast(t('messages.playback.trackFailedToLoad'));
       });
   },
 
@@ -1157,7 +1158,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const resumeAt = get().positionSec || 0;
     void ensureCurrentSongPrepared(songId, resumeAt, true).then((prepared) => {
       if (!prepared) {
-        get().showToast('Track failed to load');
+        get().showToast(t('messages.playback.trackFailedToLoad'));
         return;
       }
       setGlobalPlayingFlag(true);
@@ -1167,7 +1168,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       persistPlaybackState(get(), { positionSec: resumeAt });
     }).catch((error: unknown) => {
         recordPerfEvent('player.resume-failed', { error: error instanceof Error ? error.message : String(error) });
-        get().showToast('Track failed to load');
+        get().showToast(t('messages.playback.trackFailedToLoad'));
       });
   },
 
@@ -1411,11 +1412,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ settings: verifiedSettings });
       await persistSettings(verifiedSettings);
       if (state === 'disabled-by-user') {
-        get().showToast('Turn Amply on in Windows Settings > Apps > Startup');
+        get().showToast(t('messages.startup.blockedByUser'));
       } else if (state === 'managed') {
-        get().showToast('Startup launch is managed by your organisation');
+        get().showToast(t('messages.startup.managed'));
       } else {
-        get().showToast(actualEnabled ? 'Amply will launch on startup' : 'Startup launch disabled');
+        get().showToast(actualEnabled ? t('messages.startup.enabled') : t('messages.startup.disabled'));
       }
     } catch (error) {
       const actualEnabled = await readLaunchOnStartupEnabled(previous.launchOnStartup);
@@ -1425,7 +1426,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       };
       set({ settings: revertedSettings });
       await persistSettings(revertedSettings);
-      get().showToast('Startup setting failed');
+      get().showToast(t('messages.startup.failed'));
       recordPerfEvent('settings.launch-startup.verify-failed', {
         requested: enabled,
         actual: actualEnabled,
@@ -1724,7 +1725,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       persistPlaybackState(get(), { songId: null, positionSec: 0 });
     }
 
-    get().showToast('Song deleted from device');
+    get().showToast(t('messages.playback.songDeleted'));
     return true;
   },
 

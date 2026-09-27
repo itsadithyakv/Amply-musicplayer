@@ -4,6 +4,7 @@ import type { OnlineRecommendationSignalsBySong } from '@/services/recommendatio
 import { getSearchRecommendations, type SearchRecommendations } from '@/services/searchRecommendations';
 import { useLibraryStore } from '@/store/libraryStore';
 import type { Song } from '@/types/music';
+import { useT } from '@/i18n';
 
 const EMPTY_SIGNALS: OnlineRecommendationSignalsBySong = {};
 
@@ -36,8 +37,11 @@ export const useSearchRecommendations = (
     };
   }, [onlineSignalsVersion]);
 
+  // Section titles and reasons are translated when built, so a language switch rebuilds them.
+  const { language } = useT();
   return useMemo(
     () => getSearchRecommendations(librarySongs, query, results, signals),
-    [librarySongs, query, results, signals],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [librarySongs, query, results, signals, language],
   );
 };

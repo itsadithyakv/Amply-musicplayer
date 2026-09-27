@@ -1,20 +1,31 @@
 import { useEffect, useState } from 'react';
 import { usePlayerStore } from '@/store/playerStore';
 import { Badge, Slider, TextInput, Toggle } from '@/components/ui';
+import { useT, type MessageKey } from '@/i18n';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
 
 const clampLevel = (value: number | undefined, fallback: number): number => Math.max(0, Math.min(1, value ?? fallback));
 
-const discoveryLabelFor = (level: number): string =>
-  level < 0.2 ? 'Subtle' : level < 0.5 ? 'Balanced' : level < 0.8 ? 'Adventurous' : 'Wild';
+const discoveryLabelFor = (level: number): MessageKey =>
+  level < 0.2
+    ? 'settings.smart.discovery.subtle'
+    : level < 0.5
+      ? 'settings.smart.discovery.balanced'
+      : level < 0.8
+        ? 'settings.smart.discovery.adventurous'
+        : 'settings.smart.wild';
 
-const randomnessLabelFor = (level: number): string =>
-  level < 0.2 ? 'Focused' : level < 0.5 ? 'Varied' : level < 0.8 ? 'Surprising' : 'Wild';
-
-const formatLevel = (level: number, labelFor: (level: number) => string): string =>
-  `${Math.round(level * 100)}% / ${labelFor(level)}`;
+const randomnessLabelFor = (level: number): MessageKey =>
+  level < 0.2
+    ? 'settings.smart.randomness.focused'
+    : level < 0.5
+      ? 'settings.smart.randomness.varied'
+      : level < 0.8
+        ? 'settings.smart.randomness.surprising'
+        : 'settings.smart.wild';
 
 export const SmartPlaylistsSection = () => {
+  const { t, language } = useT();
   const discoveryIntensity = usePlayerStore((state) => state.settings.discoveryIntensity);
   const randomnessIntensity = usePlayerStore((state) => state.settings.randomnessIntensity);
   const pauseMixRegenDuringPlayback = usePlayerStore((state) => state.settings.pauseMixRegenDuringPlayback);
@@ -36,12 +47,16 @@ export const SmartPlaylistsSection = () => {
   const discoveryLevel = clampLevel(discoveryIntensity, 0.35);
   const randomnessLevel = clampLevel(randomnessIntensity, 0.3);
 
+  const percent = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 0 });
+  const formatLevel = (level: number, labelFor: (level: number) => MessageKey): string =>
+    `${percent.format(level)} / ${t(labelFor(level))}`;
+
   return (
-    <SettingsSection icon="sparkle" title="Smart Playlists" description="Control discovery and mix variation.">
+    <SettingsSection icon="sparkle" title={t('settings.smart.title')} description={t('settings.smart.description')}>
       <div className="grid gap-1">
         <SettingField
-          label="Discovery Intensity"
-          description="Higher values surface more low-play and forgotten tracks."
+          label={t('settings.smart.discovery.label')}
+          description={t('settings.smart.discovery.description')}
           trailing={formatLevel(discoveryLevel, discoveryLabelFor)}
         >
           <Slider
@@ -49,7 +64,7 @@ export const SmartPlaylistsSection = () => {
             min={0}
             max={1}
             step={0.05}
-            ariaLabel="Discovery intensity"
+            ariaLabel={t('settings.smart.discovery.label')}
             formatValue={(value) => formatLevel(value, discoveryLabelFor)}
             onChange={(value) => {
               void setDiscoveryIntensity(value);
@@ -58,8 +73,8 @@ export const SmartPlaylistsSection = () => {
         </SettingField>
 
         <SettingField
-          label="Randomness"
-          description="Higher values reduce repeats and bias toward less-played songs."
+          label={t('settings.smart.randomness.label')}
+          description={t('settings.smart.randomness.description')}
           trailing={formatLevel(randomnessLevel, randomnessLabelFor)}
         >
           <Slider
@@ -67,7 +82,7 @@ export const SmartPlaylistsSection = () => {
             min={0}
             max={1}
             step={0.05}
-            ariaLabel="Randomness"
+            ariaLabel={t('settings.smart.randomness.label')}
             formatValue={(value) => formatLevel(value, randomnessLabelFor)}
             onChange={(value) => {
               void setRandomnessIntensity(value);
@@ -76,16 +91,16 @@ export const SmartPlaylistsSection = () => {
         </SettingField>
 
         <Toggle
-          label="Pause Mix Regen During Playback"
-          description="Skip heavy mix updates while music plays."
+          label={t('settings.smart.pauseRegen.label')}
+          description={t('settings.smart.pauseRegen.description')}
           checked={pauseMixRegenDuringPlayback}
           onChange={(next) => {
             void setPauseMixRegenDuringPlayback(next);
           }}
         />
         <Toggle
-          label="Online Recommendations"
-          description="Use cached Last.fm and MusicBrainz signals in idle background jobs."
+          label={t('settings.smart.online.label')}
+          description={t('settings.smart.online.description')}
           checked={onlineRecommendationsEnabled}
           onChange={(next) => {
             void setOnlineRecommendationsEnabled(next);
@@ -93,17 +108,21 @@ export const SmartPlaylistsSection = () => {
         />
 
         <SettingField
-          label="Last.fm API Key"
-          description="Optional. MusicBrainz remains available without a key."
-          trailing={<Badge tone={lastFmApiKey ? 'success' : 'neutral'}>{lastFmApiKey ? 'Saved' : 'Not Set'}</Badge>}
+          label={t('settings.smart.lastFm.label')}
+          description={t('settings.smart.lastFm.description')}
+          trailing={
+            <Badge tone={lastFmApiKey ? 'success' : 'neutral'}>
+              {lastFmApiKey ? t('settings.smart.lastFm.saved') : t('settings.smart.lastFm.notSet')}
+            </Badge>
+          }
         >
           <TextInput
             type="password"
             autoComplete="off"
             value={lastFmApiKeyText}
             onValueChange={setLastFmApiKeyText}
-            placeholder="Last.fm API key"
-            aria-label="Last.fm API key"
+            placeholder={t('settings.smart.lastFm.label')}
+            aria-label={t('settings.smart.lastFm.label')}
             onBlur={() => {
               if (lastFmApiKeyText !== (lastFmApiKey ?? '')) {
                 void setLastFmApiKey(lastFmApiKeyText);

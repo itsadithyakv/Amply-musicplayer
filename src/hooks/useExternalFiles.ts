@@ -7,6 +7,7 @@ import { recordPerfEvent } from '@/services/perfDiagnostics';
 import { isTauri } from '@/services/storageService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { t } from '@/i18n';
 
 /**
  * Plays audio files handed to Amply from outside: "Open with" / a double-click in Explorer, or a
@@ -19,7 +20,7 @@ export const openExternalFiles = async (paths: string[]): Promise<void> => {
     return [];
   });
   if (!songs.length) {
-    player.showToast('Nothing playable in what was opened');
+    player.showToast(t('common.externalFiles.nothingPlayable'));
     return;
   }
   await useLibraryStore.getState().addLooseSongs(songs);

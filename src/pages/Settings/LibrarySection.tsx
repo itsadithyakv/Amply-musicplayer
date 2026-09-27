@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
 import { Button, IconButton, TextInput } from '@/components/ui';
+import { useT } from '@/i18n';
 import { pickMusicFolders } from '@/services/storageService';
 import { SettingsSection } from '@/pages/Settings/SettingsSection';
 
 export const LibrarySection = () => {
+  const { t } = useT();
   const libraryPaths = useLibraryStore((state) => state.libraryPaths);
   const isScanning = useLibraryStore((state) => state.isScanning);
   const addLibraryPath = useLibraryStore((state) => state.addLibraryPath);
@@ -15,21 +17,21 @@ export const LibrarySection = () => {
   const [localPath, setLocalPath] = useState('');
 
   return (
-    <SettingsSection icon="folder" title="Music Library" description="Folders Amply scans for playback.">
+    <SettingsSection icon="folder" title={t('settings.library.title')} description={t('settings.library.description')}>
       <div className="space-y-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <TextInput
             value={localPath}
             onValueChange={setLocalPath}
             icon="folder"
-            placeholder="Add folder path manually (optional)"
-            aria-label="Folder path"
+            placeholder={t('settings.library.pathPlaceholder')}
+            aria-label={t('settings.library.pathLabel')}
             className="min-w-0 flex-1"
           />
           <Button
             variant="primary"
             icon="add"
-            title="Add path"
+            title={t('settings.library.addPath')}
             className="w-full sm:w-auto sm:min-w-[120px]"
             onClick={async () => {
               const value = localPath.trim();
@@ -40,7 +42,7 @@ export const LibrarySection = () => {
               setLocalPath('');
             }}
           >
-            Add Path
+            {t('settings.library.addPath')}
           </Button>
         </div>
 
@@ -48,7 +50,7 @@ export const LibrarySection = () => {
           <Button
             block
             icon="folder"
-            title="Browse folders"
+            title={t('settings.library.browseTitle')}
             onClick={async () => {
               const picked = await pickMusicFolders();
               if (picked.length) {
@@ -57,17 +59,17 @@ export const LibrarySection = () => {
               }
             }}
           >
-            Browse
+            {t('settings.library.browse')}
           </Button>
           <Button
             block
             icon="refresh"
-            title="Rescan library"
+            title={t('settings.library.rescanTitle')}
             onClick={() => {
               void scanLibrary();
             }}
           >
-            {isScanning ? 'Scanning...' : 'Rescan'}
+            {isScanning ? t('settings.library.scanning') : t('settings.library.rescan')}
           </Button>
         </div>
       </div>
@@ -81,7 +83,7 @@ export const LibrarySection = () => {
               </p>
               <IconButton
                 name="trash"
-                label="Remove folder"
+                label={t('settings.library.removeFolder')}
                 size="sm"
                 variant="flat"
                 onClick={() => {

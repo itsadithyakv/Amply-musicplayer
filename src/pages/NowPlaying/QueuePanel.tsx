@@ -15,6 +15,7 @@ import { Badge, Card, Divider, Icon, IconButton, Kicker } from '@/components/ui'
 import { beginControlInteraction } from '@/services/controlInteraction';
 import { usePlayerStore } from '@/store/playerStore';
 import { useQueueView } from '@/hooks/useLibraryViews';
+import { useT } from '@/i18n';
 
 type QueueItem = ReturnType<typeof useQueueView>['items'][number];
 
@@ -34,6 +35,7 @@ const QueueRow = ({
   albumQueueView: boolean;
   allowReorder: boolean;
 }) => {
+  const { t } = useT();
   const playSongById = usePlayerStore((state) => state.playSongById);
   const removeQueuedSong = usePlayerStore((state) => state.removeQueuedSong);
   // Pointer-based sorting: Windows hands file drops to the native handler, which swallows HTML5
@@ -58,7 +60,7 @@ const QueueRow = ({
         <IconButton
           ref={setActivatorNodeRef}
           name="drag"
-          label={`Drag ${item.title}`}
+          label={t('player.queue.drag', { title: item.title })}
           size="xs"
           variant="ghost"
           className="cursor-grab active:cursor-grabbing"
@@ -71,7 +73,7 @@ const QueueRow = ({
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
         onClick={() => {
           if (item.available && item.id) {
-            const finishInteraction = beginControlInteraction('queue-item-play', 'Opening track...');
+            const finishInteraction = beginControlInteraction('queue-item-play', t('player.feedback.openingTrack'));
             void playSongById(item.id).finally(() => {
               finishInteraction();
             });
@@ -87,15 +89,16 @@ const QueueRow = ({
         </span>
       </button>
       {albumQueueView ? (
-        <Badge tone={item.available ? 'success' : 'neutral'}>{item.available ? 'Available' : 'Missing'}</Badge>
+        <Badge tone={item.available ? 'success' : 'neutral'}>{item.available ? t('player.queue.available') : t('player.queue.missing')}</Badge>
       ) : (
-        <IconButton name="close" label="Remove from queue" size="xs" variant="ghost" onClick={() => removeQueuedSong(item.id!)} />
+        <IconButton name="close" label={t('player.queue.remove')} size="xs" variant="ghost" onClick={() => removeQueuedSong(item.id!)} />
       )}
     </div>
   );
 };
 
 export const QueuePanel = memo(({ active }: { active: boolean }) => {
+  const { t, tp } = useT();
   const { currentSongId, albumQueueView, allowReorder, items: queueDisplay } = useQueueView();
   const reorderQueue = usePlayerStore((state) => state.reorderQueue);
   const sortIds = useMemo(() => queueDisplay.map(itemKey), [queueDisplay]);
@@ -120,15 +123,15 @@ export const QueuePanel = memo(({ active }: { active: boolean }) => {
       <Card padding="none">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
-            <Kicker>Queue</Kicker>
-            {albumQueueView ? <Badge>Album mode</Badge> : null}
+            <Kicker>{t('player.queue')}</Kicker>
+            {albumQueueView ? <Badge>{t('player.queue.albumMode')}</Badge> : null}
           </div>
-          <span className="text-[12px] text-amply-textMuted">{queueDisplay.length} songs</span>
+          <span className="text-[12px] text-amply-textMuted">{tp('player.queue.songs', queueDisplay.length)}</span>
         </div>
         <Divider />
         <div className="max-h-[50vh] overflow-y-auto">
           {queueDisplay.length === 0 ? (
-            <p className="px-4 py-6 text-[13px] text-amply-textMuted">Queue is empty.</p>
+            <p className="px-4 py-6 text-[13px] text-amply-textMuted">{t('player.queue.empty')}</p>
           ) : (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={sortIds} strategy={verticalListSortingStrategy}>

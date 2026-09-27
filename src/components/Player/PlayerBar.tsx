@@ -12,16 +12,20 @@ import { usePlayerStore } from '@/store/playerStore';
 import { beginTrackedInteraction } from '@/services/interactionTrace';
 import { usePlayerBarView } from '@/hooks/useLibraryViews';
 import { artworkThumb } from '@/utils/artwork';
+import { useT } from '@/i18n';
 
 const RightControls = memo(() => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useT();
   const { currentSongId, nowPlayingTab, song, volume } = usePlayerBarView();
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
   const deleteCurrentSong = usePlayerStore((state) => state.deleteCurrentSong);
   const setVolume = usePlayerStore((state) => state.setVolume);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // The song title is set in bold inside the translated sentence, so split the template around it.
+  const [deleteBodyBefore, deleteBodyAfter = ''] = t('player.delete.body').split('{title}');
 
   useEffect(() => {
     if (!currentSongId) {
@@ -44,11 +48,11 @@ const RightControls = memo(() => {
   return (
     <>
       <div className="flex items-center justify-end gap-2">
-        <IconButton name="queue" label="Queue" size="sm" onClick={() => openNowPlaying('queue')} />
-        <IconButton name="lyrics" label="Lyrics" size="sm" onClick={() => openNowPlaying('lyrics')} />
+        <IconButton name="queue" label={t('player.queue')} size="sm" onClick={() => openNowPlaying('queue')} />
+        <IconButton name="lyrics" label={t('player.lyrics')} size="sm" onClick={() => openNowPlaying('lyrics')} />
         <IconButton
           name="trash"
-          label="Delete song"
+          label={t('player.delete.title')}
           size="sm"
           disabled={!currentSongId || deleteBusy}
           onClick={() => {
@@ -68,7 +72,7 @@ const RightControls = memo(() => {
             max={1}
             step={0.01}
             onChange={setVolume}
-            ariaLabel="Volume"
+            ariaLabel={t('player.volume')}
             formatValue={(value) => `${Math.round(value * 100)}%`}
           />
         </div>
@@ -91,15 +95,16 @@ const RightControls = memo(() => {
             setConfirmDeleteOpen(false);
           });
         }}
-        title="Delete song"
-        confirmLabel="Delete"
+        title={t('player.delete.title')}
+        confirmLabel={t('player.delete.confirm')}
         danger
         busy={deleteBusy}
         body={
           <div className="space-y-3">
             <p className="text-[13px] leading-relaxed text-amply-textSecondary">
-              Delete <span className="font-semibold text-amply-textPrimary">{song?.title ?? 'this song'}</span> from your device? This
-              removes the local file, not just the track from Amply.
+              {deleteBodyBefore}
+              <span className="font-semibold text-amply-textPrimary">{song?.title ?? t('player.delete.thisSong')}</span>
+              {deleteBodyAfter}
             </p>
             {song ? (
               <div className="neu-well rounded-sm px-3 py-2">
@@ -119,6 +124,7 @@ RightControls.displayName = 'RightControls';
 
 const SongInfoSection = memo(() => {
   const location = useLocation();
+  const { t } = useT();
   const { song, customPlaylists } = usePlayerBarView();
   const toggleFavorite = useLibraryStore((state) => state.toggleFavorite);
   const addSongToCustomPlaylist = useLibraryStore((state) => state.addSongToCustomPlaylist);
@@ -164,20 +170,20 @@ const SongInfoSection = memo(() => {
       >
         <ArtworkImage
           src={artworkThumb(song?.albumArt, 64)}
-          alt={song?.album ?? 'Unknown Album'}
+          alt={song?.album ?? t('player.unknownAlbum')}
           className="neu-well h-12 w-12 shrink-0 overflow-hidden rounded-sm"
           loading="eager"
           forceReady
         />
         <div className="min-w-0">
-          <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? 'Select a track'}</p>
-          <p className="truncate text-[12px] text-amply-textSecondary">{song ? `${song.artist} - ${song.album}` : 'Your local library'}</p>
+          <p className="truncate text-[13px] font-bold text-amply-textPrimary">{song?.title ?? t('player.selectTrack')}</p>
+          <p className="truncate text-[12px] text-amply-textSecondary">{song ? `${song.artist} - ${song.album}` : t('player.localLibrary')}</p>
         </div>
       </Link>
       <div className="flex items-center gap-1">
         <IconButton
           name={song?.favorite ? 'heart-filled' : 'heart'}
-          label={song?.favorite ? 'Remove from favorites' : 'Add to favorites'}
+          label={song?.favorite ? t('player.favorites.remove') : t('player.favorites.add')}
           size="sm"
           active={Boolean(song?.favorite)}
           accentIcon={Boolean(song?.favorite)}
@@ -191,7 +197,7 @@ const SongInfoSection = memo(() => {
             void toggleFavorite(song.id);
             if (willFavorite) {
               setFavoritePulse(true);
-              setFavoriteMessage('Added to Favorites');
+              setFavoriteMessage(t('player.favorites.added'));
               if (favoriteMessageRef.current) {
                 window.clearTimeout(favoriteMessageRef.current);
               }
@@ -207,7 +213,7 @@ const SongInfoSection = memo(() => {
         />
         <IconButton
           name="playlist-add"
-          label="Add to playlist"
+          label={t('player.addToPlaylist')}
           size="sm"
           disabled={!song}
           onClick={() => setShowPlaylistPicker((value) => !value)}

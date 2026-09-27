@@ -1,4 +1,5 @@
 import type { Playlist } from '@/types/music';
+import { t } from '@/i18n';
 import { probeAudioFiles } from '@/services/musicScanner';
 import { openTextFile, safeFileName, saveTextFile } from '@/services/fileDialogs';
 import { buildM3u, parseM3u, pathKey, playlistNameFromPath } from '@/services/playlistFiles';
@@ -10,9 +11,9 @@ export const exportPlaylistFile = async (playlist: Pick<Playlist, 'name' | 'song
   const byId = library.getSongsById();
   const songs = playlist.songIds.map((id) => byId.get(id)).filter((song) => song !== undefined);
   return saveTextFile({
-    title: 'Export playlist',
+    title: t('messages.playlistFile.exportTitle'),
     defaultName: `${safeFileName(playlist.name)}.m3u8`,
-    filterName: 'Playlist',
+    filterName: t('messages.playlistFile.filterName'),
     extensions: ['m3u8', 'm3u'],
     content: buildM3u(playlist.name, songs),
   });
@@ -31,7 +32,11 @@ export interface PlaylistImportResult {
  * file is gone are skipped and counted.
  */
 export const importPlaylistFile = async (): Promise<PlaylistImportResult | null> => {
-  const file = await openTextFile({ title: 'Import playlist', filterName: 'Playlist', extensions: ['m3u8', 'm3u'] });
+  const file = await openTextFile({
+    title: t('messages.playlistFile.importTitle'),
+    filterName: t('messages.playlistFile.filterName'),
+    extensions: ['m3u8', 'm3u'],
+  });
   if (!file) {
     return null;
   }

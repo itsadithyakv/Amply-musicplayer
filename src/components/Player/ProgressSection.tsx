@@ -2,9 +2,11 @@ import { memo } from 'react';
 import { Slider } from '@/components/ui';
 import { formatDuration } from '@/utils/time';
 import { useScrubbedProgress } from '@/components/Player/useScrubbedProgress';
+import { useT } from '@/i18n';
 
 /** Inline "elapsed / slider / total" row used by both player bars. */
 export const ProgressSection = memo(() => {
+  const { t } = useT();
   const { positionSec, durationSec, onScrub, onSeek } = useScrubbedProgress();
 
   return (
@@ -18,7 +20,7 @@ export const ProgressSection = memo(() => {
         step={0.1}
         onChange={onScrub}
         onCommit={onSeek}
-        ariaLabel="Playback position"
+        ariaLabel={t('player.position')}
         formatValue={formatDuration}
       />
       <span className="w-9 tabular-nums">{formatDuration(durationSec)}</span>

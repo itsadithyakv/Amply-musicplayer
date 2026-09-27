@@ -13,8 +13,10 @@ import { beginTrackedInteraction, cancelTrackedInteraction, scheduleAfterPaint, 
 import { useLyricsView, useNowPlayingView } from '@/hooks/useLibraryViews';
 import { QueuePanel } from '@/pages/NowPlaying/QueuePanel';
 import { TabHeader, type NowPlayingTabId } from '@/pages/NowPlaying/TabHeader';
+import { useT } from '@/i18n';
 
 const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
+  const { t } = useT();
   const { song, isPlaying, shuffleEnabled, repeatMode } = useNowPlayingView();
   const { positionSec, durationSec, onScrub, onSeek } = useScrubbedProgress();
   const playPrevious = usePlayerStore((state) => state.playPrevious);
@@ -33,12 +35,12 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
 
       <div className="flex flex-col justify-center gap-5">
         <div>
-          <p className="text-[18px] font-bold text-amply-textPrimary">{song?.title ?? 'No song selected'}</p>
+          <p className="text-[18px] font-bold text-amply-textPrimary">{song?.title ?? t('player.nowPlaying.noSong')}</p>
           <div className="flex flex-wrap items-center gap-3 text-[14px] font-medium text-amply-textSecondary">
             <div className="neu-well h-10 w-10 overflow-hidden rounded-sm">
-              <ArtworkImage src={song?.albumArt} alt={song?.artist ?? 'Artist'} className="h-full w-full object-cover" loading="eager" forceReady />
+              <ArtworkImage src={song?.albumArt} alt={song?.artist ?? t('player.nowPlaying.artistAlt')} className="h-full w-full object-cover" loading="eager" forceReady />
             </div>
-            <span>{song?.artist ?? 'Pick a track from Library'}</span>
+            <span>{song?.artist ?? t('player.nowPlaying.pickTrack')}</span>
             {song?.album ? <span className="text-[12px] text-amply-textMuted">{song.album}</span> : null}
           </div>
         </div>
@@ -51,7 +53,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
             step={0.1}
             onChange={onScrub}
             onCommit={onSeek}
-            ariaLabel="Playback position"
+            ariaLabel={t('player.position')}
             formatValue={formatDuration}
           />
           <div className="flex justify-between text-[12px] tabular-nums text-amply-textMuted">
@@ -64,7 +66,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
           <div className="flex flex-1 items-center justify-end">
             <IconButton
               name={shuffleEnabled ? 'shuffle' : 'queue'}
-              label={shuffleEnabled ? 'Shuffle on' : 'Shuffle off'}
+              label={shuffleEnabled ? t('player.controls.shuffleOn') : t('player.controls.shuffleOff')}
               variant="ghost"
               active={shuffleEnabled}
               accentIcon={shuffleEnabled}
@@ -74,10 +76,10 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
           <div className="flex items-center justify-center gap-3">
             <IconButton
               name="prev"
-              label="Previous"
+              label={t('common.previous')}
               variant="ghost"
               onClick={() => {
-                const finishInteraction = beginControlInteraction('previous', 'Opening previous track...');
+                const finishInteraction = beginControlInteraction('previous', t('player.feedback.openingPrevious'));
                 void playPrevious().finally(() => {
                   finishInteraction();
                 });
@@ -85,22 +87,22 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
             />
             <IconButton
               name={isPlaying ? 'pause' : 'play'}
-              label={isPlaying ? 'Pause' : 'Play'}
+              label={isPlaying ? t('common.pause') : t('common.play')}
               size="xl"
               variant="accent"
               className={isPlaying ? 'anim-pulse-ring' : undefined}
               onClick={() => {
-                const finishInteraction = beginControlInteraction('play-pause', isPlaying ? 'Pausing...' : 'Resuming...');
+                const finishInteraction = beginControlInteraction('play-pause', isPlaying ? t('player.feedback.pausing') : t('player.feedback.resuming'));
                 togglePlayPause();
                 finishInteraction();
               }}
             />
             <IconButton
               name="next"
-              label="Next"
+              label={t('common.next')}
               variant="ghost"
               onClick={() => {
-                const finishInteraction = beginControlInteraction('next', 'Opening next track...');
+                const finishInteraction = beginControlInteraction('next', t('player.feedback.openingNext'));
                 void playNext(true).finally(() => {
                   finishInteraction();
                 });
@@ -110,7 +112,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
           <div className="flex flex-1 items-center justify-start">
             <IconButton
               name="repeat"
-              label={isLooping ? 'Loop on' : 'Loop off'}
+              label={isLooping ? t('player.controls.loopOn') : t('player.controls.loopOff')}
               variant="ghost"
               active={isLooping}
               accentIcon={isLooping}
@@ -125,6 +127,7 @@ const NowPlayingHero = memo(({ hidden }: { hidden: boolean }) => {
 NowPlayingHero.displayName = 'NowPlayingHero';
 
 const NowPlayingPage = () => {
+  const { t } = useT();
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const nowPlayingTab = usePlayerStore((state) => state.nowPlayingTab);
   const setNowPlayingTab = usePlayerStore((state) => state.setNowPlayingTab);
@@ -150,7 +153,7 @@ const NowPlayingPage = () => {
     tabFeedbackRef.current = beginInteractionFeedback({
       delayMs: 120,
       minVisibleMs: 160,
-      message: tab === 'lyrics' ? 'Opening lyrics...' : 'Opening queue...',
+      message: tab === 'lyrics' ? t('player.feedback.openingLyrics') : t('player.feedback.openingQueue'),
     });
     setNowPlayingTab(tab);
   };
@@ -183,7 +186,7 @@ const NowPlayingPage = () => {
         <ErrorBoundary
           fallback={
             <div className="flex h-full items-center justify-center px-6 text-center">
-              <p className="text-[13px] text-amply-textMuted">Lyrics failed to render. Reopen the tab and try again.</p>
+              <p className="text-[13px] text-amply-textMuted">{t('player.lyrics.renderFailed')}</p>
             </div>
           }
         >

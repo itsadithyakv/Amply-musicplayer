@@ -22,6 +22,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { Button, Card, Divider, IconButton, Kicker, SearchInput, SegmentedTabs, Surface, TextInput } from '@/components/ui';
 import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCollage';
+import { t, useT } from '@/i18n';
+import { localizedPlaylistDescription } from '@/i18n/playlistNames';
 import { recordBudgetLatency } from '@/services/perfDiagnostics';
 import type { Playlist, Song } from '@/types/music';
 import { filterPlaylistSongs, indexPlaylistSongs, type PlaylistComposerFilter } from './playlistComposerModel';
@@ -37,10 +39,10 @@ interface PlaylistComposerProps {
 
 const resizeCover = async (file: File): Promise<string> => {
   if (!file.type.startsWith('image/')) {
-    throw new Error('Choose an image file.');
+    throw new Error(t('playlists.composer.error.notImage'));
   }
   if (file.size > 8 * 1024 * 1024) {
-    throw new Error('Cover images must be smaller than 8 MB.');
+    throw new Error(t('playlists.composer.error.tooLarge'));
   }
 
   const sourceUrl = URL.createObjectURL(file);
@@ -56,7 +58,7 @@ const resizeCover = async (file: File): Promise<string> => {
     canvas.height = outputSize;
     const context = canvas.getContext('2d');
     if (!context) {
-      throw new Error('Cover processing is unavailable.');
+      throw new Error(t('playlists.composer.error.processing'));
     }
     const sourceX = (image.naturalWidth - sourceSize) / 2;
     const sourceY = (image.naturalHeight - sourceSize) / 2;
@@ -79,6 +81,7 @@ const PlaylistSongRow = memo(({ index, style, data }: ListChildComponentProps<Pl
     return null;
   }
   const selected = data.selectedSongIds.has(song.id);
+  const label = selected ? t('playlists.composer.added') : t('playlists.composer.add');
 
   return (
     <div style={style} className="px-1 py-1">
@@ -96,7 +99,7 @@ const PlaylistSongRow = memo(({ index, style, data }: ListChildComponentProps<Pl
           onClick={() => data.togglePlaylistSong(song.id)}
           className={clsx('min-w-[66px]', selected && 'text-amply-accent')}
         >
-          {selected ? 'Added' : 'Add'}
+          {label}
         </Button>
       </div>
     </div>
@@ -116,6 +119,7 @@ const SortableSong = ({
   onRemove: (songId: string) => void;
   onMove: (position: number, direction: -1 | 1) => void;
 }) => {
+  const { t } = useT();
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: song.id });
   return (
     <div
@@ -126,7 +130,7 @@ const SortableSong = ({
       <IconButton
         ref={setActivatorNodeRef}
         name="drag"
-        label={`Drag ${song.title}`}
+        label={t('playlists.composer.drag', { title: song.title })}
         size="xs"
         variant="ghost"
         className="cursor-grab active:cursor-grabbing"
@@ -138,9 +142,9 @@ const SortableSong = ({
         <p className="truncate text-[11px] text-amply-textSecondary">{song.artist}</p>
       </div>
       <div className="flex items-center gap-1">
-        <IconButton name="arrow-up" label={`Move ${song.title} up`} size="xs" variant="flat" disabled={position === 0} onClick={() => onMove(position, -1)} />
-        <IconButton name="arrow-down" label={`Move ${song.title} down`} size="xs" variant="flat" disabled={position === count - 1} onClick={() => onMove(position, 1)} />
-        <IconButton name="close" label={`Remove ${song.title}`} size="xs" variant="ghost" onClick={() => onRemove(song.id)} />
+        <IconButton name="arrow-up" label={t('playlists.composer.moveUp', { title: song.title })} size="xs" variant="flat" disabled={position === 0} onClick={() => onMove(position, -1)} />
+        <IconButton name="arrow-down" label={t('playlists.composer.moveDown', { title: song.title })} size="xs" variant="flat" disabled={position === count - 1} onClick={() => onMove(position, 1)} />
+        <IconButton name="close" label={t('playlists.composer.remove', { title: song.title })} size="xs" variant="ghost" onClick={() => onRemove(song.id)} />
       </div>
     </div>
   );
@@ -163,8 +167,9 @@ const SelectedSongRow = memo(({ index, style, data }: ListChildComponentProps<Se
 });
 
 const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: PlaylistComposerProps) => {
+  const { t, tp } = useT();
   const [playlistName, setPlaylistName] = useState(initialPlaylist?.name ?? '');
-  const [playlistDescription, setPlaylistDescription] = useState(initialPlaylist?.description ?? '');
+  const [playlistDescription, setPlaylistDescription] = useState(initialPlaylist ? localizedPlaylistDescription(initialPlaylist) : '');
   const [playlistArtwork, setPlaylistArtwork] = useState<string | undefined>(initialPlaylist?.artwork);
   const [playlistSongQuery, setPlaylistSongQuery] = useState('');
   const deferredQuery = useDeferredValue(playlistSongQuery);
@@ -238,7 +243,7 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
   const savePlaylist = async () => {
     const name = playlistName.trim();
     if (!name) {
-      setPlaylistError('Playlist name is required.');
+      setPlaylistError(t('playlists.composer.error.nameRequired'));
       return;
     }
     setSaving(true);
@@ -249,14 +254,14 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
         id: initialPlaylist?.id ?? `custom_${Date.now()}`,
         name,
         type: 'custom',
-        description: playlistDescription.trim() || 'Custom playlist',
+        description: playlistDescription.trim(),
         artwork: playlistArtwork,
         songIds: selectedSongIds,
         updatedAt: Math.floor(Date.now() / 1000),
       });
       recordBudgetLatency('playlist-save', performance.now() - startedAt, 300);
     } catch {
-      setPlaylistError('Amply could not save this playlist. Try again.');
+      setPlaylistError(t('playlists.composer.error.saveFailed'));
       setSaving(false);
     }
   };
@@ -266,24 +271,24 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
       <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className="space-y-4">
           <Card as="section" padding="md">
-            <Kicker>Playlist details</Kicker>
+            <Kicker>{t('playlists.composer.details')}</Kicker>
             <div className="mt-4 flex items-start gap-4">
               <PlaylistArtworkCollage artworkSet={previewArtwork} radius="sm" thumbSize={128} className="h-24 w-24" />
               <div className="min-w-0 flex-1 space-y-3">
-                <TextInput autoFocus label="Name" size="sm" value={playlistName} onValueChange={setPlaylistName} placeholder="Playlist name" />
-                <TextInput label="Note" size="sm" value={playlistDescription} onValueChange={setPlaylistDescription} placeholder="Optional description" />
+                <TextInput autoFocus label={t('playlists.composer.name')} size="sm" value={playlistName} onValueChange={setPlaylistName} placeholder={t('playlists.composer.namePlaceholder')} />
+                <TextInput label={t('playlists.composer.note')} size="sm" value={playlistDescription} onValueChange={setPlaylistDescription} placeholder={t('playlists.composer.notePlaceholder')} />
               </div>
             </div>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <Button size="sm" icon="folder" onClick={() => coverInputRef.current?.click()}>
-                {playlistArtwork ? 'Change cover' : 'Choose cover'}
+                {playlistArtwork ? t('playlists.composer.changeCover') : t('playlists.composer.chooseCover')}
               </Button>
               <input
                 ref={coverInputRef}
                 type="file"
                 accept="image/*"
                 className="hidden"
-                aria-label="Playlist cover image"
+                aria-label={t('playlists.composer.coverInput')}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (!file) return;
@@ -293,17 +298,17 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
                   }).catch((error: Error) => setPlaylistError(error.message));
                 }}
               />
-              {playlistArtwork ? <Button size="sm" variant="ghost" onClick={() => setPlaylistArtwork(undefined)}>Use auto collage</Button> : null}
+              {playlistArtwork ? <Button size="sm" variant="ghost" onClick={() => setPlaylistArtwork(undefined)}>{t('playlists.composer.autoCollage')}</Button> : null}
             </div>
           </Card>
 
           <Card as="section" padding="md">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <Kicker>Track order</Kicker>
-                <p className="mt-1 text-[12px] text-amply-textSecondary">{selectedSongIds.length} selected</p>
+                <Kicker>{t('playlists.composer.trackOrder')}</Kicker>
+                <p className="mt-1 text-[12px] text-amply-textSecondary">{tp('playlists.composer.selected', selectedSongIds.length)}</p>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedSongIds([])} disabled={!selectedSongIds.length}>Clear</Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedSongIds([])} disabled={!selectedSongIds.length}>{t('playlists.composer.clear')}</Button>
             </div>
             <div className="mt-3 h-[330px] overflow-hidden">
               {selectedSongs.length ? (
@@ -316,7 +321,7 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
                 </DndContext>
               ) : (
                 <Surface variant="well" radius="sm" className="flex h-full items-center justify-center px-4 text-center text-[12px] text-amply-textSecondary">
-                  Add tracks from your library. Empty playlists can be saved.
+                  {t('playlists.composer.emptyOrder')}
                 </Surface>
               )}
             </div>
@@ -326,30 +331,30 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
         <Card as="section" padding="md" className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[14px] font-semibold text-amply-textPrimary">Choose tracks</p>
-              <p className="mt-0.5 text-[12px] text-amply-textSecondary">{composerSongs.length.toLocaleString()} matching tracks</p>
+              <p className="text-[14px] font-semibold text-amply-textPrimary">{t('playlists.composer.chooseTracks')}</p>
+              <p className="mt-0.5 text-[12px] text-amply-textSecondary">{tp('playlists.composer.matching', composerSongs.length)}</p>
             </div>
-            <SearchInput size="sm" value={playlistSongQuery} onValueChange={setPlaylistSongQuery} placeholder="Title, artist, or album" aria-label="Search tracks" className="w-full max-w-xs" />
+            <SearchInput size="sm" value={playlistSongQuery} onValueChange={setPlaylistSongQuery} placeholder={t('playlists.composer.searchPlaceholder')} aria-label={t('playlists.composer.search')} className="w-full max-w-xs" />
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <SegmentedTabs
               size="sm"
-              ariaLabel="Filter tracks"
+              ariaLabel={t('playlists.composer.filter')}
               tabs={[
-                { value: 'all', label: 'All' },
-                { value: 'favorites', label: 'Favorites' },
-                { value: 'recent', label: 'Recent' },
-                { value: 'most_played', label: 'Most played' },
+                { value: 'all', label: t('playlists.composer.filter.all') },
+                { value: 'favorites', label: t('playlists.composer.filter.favorites') },
+                { value: 'recent', label: t('playlists.composer.filter.recent') },
+                { value: 'most_played', label: t('playlists.composer.filter.mostPlayed') },
               ]}
               value={filterTab}
               onChange={setFilterTab}
             />
             <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setSelectedSongIds((current) => Array.from(new Set([...current, ...composerSongs.map((song) => song.id)])))}>Add results</Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedSongIds((current) => Array.from(new Set([...current, ...composerSongs.map((song) => song.id)])))}>{t('playlists.composer.addResults')}</Button>
               <Button size="sm" variant="ghost" onClick={() => {
                 const visible = new Set(composerSongs.map((song) => song.id));
                 setSelectedSongIds((current) => current.filter((id) => !visible.has(id)));
-              }}>Remove results</Button>
+              }}>{t('playlists.composer.removeResults')}</Button>
             </div>
           </div>
           <Surface variant="pressed" radius="md" className="mt-4 h-[520px] overflow-hidden p-1">
@@ -363,8 +368,8 @@ const PlaylistComposer = ({ songs, initialPlaylist, onSave, onCancel }: Playlist
       {playlistError ? <p role="alert" className="text-[12px] text-amply-danger">{playlistError}</p> : null}
       <Divider />
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button variant="primary" loading={saving} onClick={() => void savePlaylist()}>{saving ? 'Saving…' : initialPlaylist ? 'Save changes' : 'Create playlist'}</Button>
+        <Button variant="ghost" onClick={onCancel}>{t('playlists.composer.cancel')}</Button>
+        <Button variant="primary" loading={saving} onClick={() => void savePlaylist()}>{saving ? t('playlists.composer.saving') : initialPlaylist ? t('playlists.composer.saveChanges') : t('playlists.composer.createTitle')}</Button>
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ import { releaseMetadata, tryAcquireMetadata } from '@/services/metadataAttemptS
 import { pickPlaylistArtwork } from '@/services/playlistArtworkService';
 import { useAlbumArtFrequency } from '@/hooks/useAlbumArtFrequency';
 import { useLibraryTabView, useStructuralSongsSnapshot } from '@/hooks/useLibraryViews';
+import { t, useT } from '@/i18n';
 import { LibraryCardGrid } from './LibraryCardGrid';
 import { ArtistCard } from './ArtistCard';
 import { AlbumDetailModal, type ActiveAlbum } from './AlbumDetailModal';
@@ -44,11 +45,11 @@ import {
   type SongGroup,
 } from './libraryGroups';
 
-const tabs: Array<{ label: string; value: LibraryTab }> = [
-  { label: 'Songs', value: 'songs' },
-  { label: 'Albums', value: 'albums' },
-  { label: 'Artists', value: 'artists' },
-  { label: 'Genres', value: 'genres' },
+const libraryTabs = (): Array<{ label: string; value: LibraryTab }> => [
+  { label: t('library.tabs.songs'), value: 'songs' },
+  { label: t('library.tabs.albums'), value: 'albums' },
+  { label: t('library.tabs.artists'), value: 'artists' },
+  { label: t('library.tabs.genres'), value: 'genres' },
 ];
 
 interface LibraryPageProps {
@@ -63,6 +64,7 @@ type AlbumSummary = AlbumTrackMatches & { tracklist: AlbumTracklist | null };
 const EMPTY_SONGS: Song[] = [];
 
 const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
+  const { tp } = useT();
   const [isTabPending, startTabTransition] = useTransition();
   const isScanning = useLibraryStore((state) => state.isScanning);
   const scanError = useLibraryStore((state) => state.scanError);
@@ -289,15 +291,15 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
 
   return (
     <div className="space-y-5 pb-8">
-      <PageHeader title="Library" description={`${deferredSongs.length.toLocaleString()} songs indexed`} />
+      <PageHeader title={t('library.title')} description={tp('library.songsIndexed', deferredSongs.length)} />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between" aria-busy={isTabPending}>
         <SegmentedTabs
-          tabs={tabs}
+          tabs={libraryTabs()}
           value={activeTab}
           onChange={(tab) => startTabTransition(() => setActiveTab(tab))}
           variant="bare"
-          ariaLabel="Library sections"
+          ariaLabel={t('library.tabs.label')}
           className="w-full justify-between sm:w-auto sm:justify-start"
         />
 
@@ -307,12 +309,12 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
               value={localPath}
               onValueChange={setLocalPath}
               icon="folder"
-              placeholder="Add folder path..."
+              placeholder={t('library.folder.placeholder')}
               className="hidden min-w-[260px] flex-1 md:flex"
             />
             <IconButton
               name="add"
-              label="Add music folder"
+              label={t('library.folder.add')}
               onClick={async () => {
                 if (localPath.trim()) {
                   await addLibraryPath(localPath.trim());
@@ -333,7 +335,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
                 void scanLibrary();
               }}
             >
-              {isScanning ? 'Scanning...' : 'Rescan'}
+              {isScanning ? t('library.scan.button') : t('library.scan.rescan')}
             </Button>
           </div>
         ) : null}
@@ -341,8 +343,8 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
 
       {isScanning ? (
         <div className="space-y-2">
-          <ProgressBar indeterminate ariaLabel="Scanning library" />
-          <p className="text-[13px] text-amply-textSecondary">Scanning library...</p>
+          <ProgressBar indeterminate ariaLabel={t('library.scan.progressLabel')} />
+          <p className="text-[13px] text-amply-textSecondary">{t('library.scan.progress')}</p>
         </div>
       ) : null}
       {scanError ? <p className="text-[13px] text-amply-danger">{scanError}</p> : null}
@@ -355,16 +357,16 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             <SearchInput
               value={albumQuery}
               onValueChange={setAlbumQuery}
-              placeholder="Search albums or artists..."
+              placeholder={t('library.albums.search')}
               className="min-w-0 flex-1"
             />
             <Select
-              label="Sort"
+              label={t('library.sort.label')}
               value={albumSort}
               onChange={(event) => setAlbumSort(event.target.value as AlbumSort)}
               className="w-full md:w-[260px]"
             >
-              {albumSortOptions.map((option) => (
+              {albumSortOptions().map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -377,7 +379,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             getKey={(entry) => entry.key}
             renderItem={(entry) => {
               const summary = albumSummaries.get(entry.key);
-              const meta = summary?.tracklist ? `${summary.available}/${summary.total} tracks` : `${entry.songs.length} tracks`;
+              const meta = summary?.tracklist
+                ? tp('library.tracksOf', summary.total, { available: summary.available })
+                : tp('library.trackCount', entry.songs.length);
               return (
                 <AlbumCard
                   title={entry.album}
@@ -396,14 +400,14 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       {activeTab === 'artists' ? (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <SearchInput value={artistQuery} onValueChange={setArtistQuery} placeholder="Search artists..." className="min-w-0 flex-1" />
+            <SearchInput value={artistQuery} onValueChange={setArtistQuery} placeholder={t('library.artists.search')} className="min-w-0 flex-1" />
             <Select
-              label="Sort"
+              label={t('library.sort.label')}
               value={artistSort}
               onChange={(event) => setArtistSort(event.target.value as ArtistSort)}
               className="w-full md:w-[260px]"
             >
-              {artistSortOptions.map((option) => (
+              {artistSortOptions().map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -429,14 +433,14 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
       {activeTab === 'genres' ? (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <SearchInput value={genreQuery} onValueChange={setGenreQuery} placeholder="Search genres..." className="min-w-0 flex-1" />
+            <SearchInput value={genreQuery} onValueChange={setGenreQuery} placeholder={t('library.genres.search')} className="min-w-0 flex-1" />
             <Select
-              label="Sort"
+              label={t('library.sort.label')}
               value={genreSort}
               onChange={(event) => setGenreSort(event.target.value as GenreSort)}
               className="w-full md:w-[260px]"
             >
-              {genreSortOptions.map((option) => (
+              {genreSortOptions().map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -450,7 +454,7 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
             renderItem={(genreGroup) => (
               <AlbumCard
                 title={genreGroup.label}
-                subtitle={`${genreGroup.songs.length} songs`}
+                subtitle={tp('library.songCount', genreGroup.songs.length)}
                 artwork={genreGroup.artwork}
                 onClick={() => playGroup(genreGroup)}
               />

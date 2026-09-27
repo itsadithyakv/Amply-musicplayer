@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { useT } from '@/i18n';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -21,11 +22,12 @@ export const ConfirmDialog = ({
   onConfirm,
   title,
   body,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   danger = false,
   busy = false,
 }: ConfirmDialogProps) => {
+  const { t } = useT();
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
     <Modal
@@ -39,10 +41,10 @@ export const ConfirmDialog = ({
       footer={
         <>
           <Button ref={cancelRef} variant="ghost" onClick={onClose} disabled={busy}>
-            {cancelLabel}
+            {cancelLabel ?? t('common.cancel')}
           </Button>
           <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} loading={busy}>
-            {confirmLabel}
+            {confirmLabel ?? t('common.confirm')}
           </Button>
         </>
       }

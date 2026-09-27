@@ -1,5 +1,33 @@
 /** English source strings for the `stats` namespace. Keys are `stats.*`; other languages must translate every key. */
 const stats = {
+  "stats.title": "Listening stats",
+  "stats.description": "What you have been playing, from Amply's own listening history.",
+  "stats.range.label": "Time range",
+  "stats.range.7d": "Last 7 days",
+  "stats.range.30d": "Last 30 days",
+  "stats.range.all": "All time",
+  "stats.empty.title": "No listening yet in this range",
+  "stats.empty.body": "Play a few songs and your stats will show up here.",
+  "stats.tiles.listeningTime": "Listening time",
+  "stats.tiles.plays": "Plays",
+  "stats.tiles.songs": "Songs",
+  "stats.tiles.artists": "Artists",
+  "stats.tiles.streak": "Day streak",
+  "stats.days_one": "{count} day",
+  "stats.days_other": "{count} days",
+  "stats.plays_one": "{count} play",
+  "stats.plays_other": "{count} plays",
+  "stats.charts.perDay": "Listening per day",
+  "stats.charts.perDayLast30": "Listening per day, last 30 days",
+  "stats.charts.byHour": "Plays by time of day",
+  "stats.charts.showTable": "Table",
+  "stats.charts.showChart": "Chart",
+  "stats.top.songs": "Top songs",
+  "stats.top.artists": "Top artists",
+  "stats.top.genres": "Top genres",
+  "stats.top.empty": "Nothing yet.",
+  "stats.time.hoursMinutes": "{hours} h {minutes} min",
+  "stats.time.minutes": "{minutes} min",
 };
 
 export default stats;

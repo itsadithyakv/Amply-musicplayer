@@ -6,8 +6,11 @@ import { Surface } from '@/components/ui/Surface';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useHomeView } from '@/hooks/useLibraryViews';
+import { useT } from '@/i18n';
+import { localizedPlaylistName } from '@/i18n/playlistNames';
 
 const GameModePage = () => {
+  const { t, tp, language } = useT();
   const { allSongIds, playlists } = useHomeView();
   const recordPlaylistUse = useLibraryStore((state) => state.recordPlaylistUse);
   const setQueue = usePlayerStore((state) => state.setQueue);
@@ -21,11 +24,13 @@ const GameModePage = () => {
         .filter((playlist) => playlist.songIds.length > 0)
         .map((playlist) => ({
           id: playlist.id,
-          name: playlist.name,
+          name: localizedPlaylistName(playlist),
           count: playlist.songIds.length,
           songIds: playlist.songIds,
         })),
-    [playlists],
+    // `language` re-runs this when the UI language changes, so smart mix names follow it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [playlists, language],
   );
 
   const playPlaylist = async (songIds: string[], playlistId?: string) => {
@@ -46,10 +51,10 @@ const GameModePage = () => {
       <Card padding="lg" className="flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-2">
           <Badge tone="accent" icon="game">
-            Game Mode
+            {t('library.gameMode.badge')}
           </Badge>
-          <h1 className="text-[20px] font-bold tracking-tight text-amply-textPrimary">Lean Library</h1>
-          <p className="text-[12px] text-amply-textSecondary">Only playlists and essential playback controls. Background work stays off.</p>
+          <h1 className="text-[20px] font-bold tracking-tight text-amply-textPrimary">{t('library.gameMode.title')}</h1>
+          <p className="text-[12px] text-amply-textSecondary">{t('library.gameMode.description')}</p>
         </div>
         <Button
           variant="secondary"
@@ -58,20 +63,20 @@ const GameModePage = () => {
             void setGameMode(false);
           }}
         >
-          Exit Game Mode
+          {t('library.gameMode.exit')}
         </Button>
       </Card>
 
       <Surface variant="pressed" radius="md" className="p-2">
         {items.length === 0 ? (
-          <p className="px-4 py-4 text-[12px] text-amply-textSecondary">No playlists yet. Create one in normal mode.</p>
+          <p className="px-4 py-4 text-[12px] text-amply-textSecondary">{t('library.gameMode.empty')}</p>
         ) : (
           <ul className="anim-stagger space-y-1">
             {items.map((playlist) => (
               <li key={playlist.id} className="flex items-center justify-between gap-3 rounded-sm px-3 py-2.5">
                 <div className="min-w-0">
                   <p className="truncate text-[14px] font-semibold text-amply-textPrimary">{playlist.name}</p>
-                  <p className="text-[11px] text-amply-textSecondary">{playlist.count} songs</p>
+                  <p className="text-[11px] text-amply-textSecondary">{tp('library.songCount', playlist.count)}</p>
                 </div>
                 <Button
                   variant="primary"
@@ -81,7 +86,7 @@ const GameModePage = () => {
                     void playPlaylist(playlist.songIds, playlist.id);
                   }}
                 >
-                  Play
+                  {t('common.play')}
                 </Button>
               </li>
             ))}
@@ -89,7 +94,7 @@ const GameModePage = () => {
         )}
       </Surface>
       <p className="text-[11px] text-amply-textSecondary">
-        Game Mode trims the app down to playlist launch and basic transport controls for the lightest possible playback path.
+        {t('library.gameMode.footnote')}
       </p>
     </div>
   );

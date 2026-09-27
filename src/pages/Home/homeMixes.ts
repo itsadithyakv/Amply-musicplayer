@@ -200,7 +200,7 @@ export const buildMadeForYouMixes = (songs: Song[], seed: number): MadeForYouMix
     const artistNames = selectedArtists.map(([artistName]) => artistName);
     mixes.push({
       id: `home-made-for-you-${genre.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-      title: `${artistNames[0]} + ${artistNames[1]} Mix`,
+      artists: [artistNames[0], artistNames[1]],
       subtitle: artistNames.slice(0, 3).join(', '),
       genre,
       songIds,
@@ -251,9 +251,9 @@ export const buildMadeForYouMixes = (songs: Song[], seed: number): MadeForYouMix
       existingIds.add(id);
       mixes.push({
         id,
-        title: `${firstName} + ${secondName} Mix`,
+        artists: [firstName, secondName],
         subtitle: [firstName, secondName].join(', '),
-        genre: 'Made for you',
+        genre: null,
         songIds,
         coverSongs,
         backgroundArtwork: coverSongs[0]?.albumArt,

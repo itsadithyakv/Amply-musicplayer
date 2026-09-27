@@ -3,6 +3,7 @@ import { useId, useRef, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { IconButton } from '@/components/ui/IconButton';
 import { useDialog } from '@/hooks/useDialog';
+import { useT } from '@/i18n';
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -48,6 +49,7 @@ export const Modal = ({
   className,
   children,
 }: ModalProps) => {
+  const { t } = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -93,7 +95,7 @@ export const Modal = ({
                 </p>
               ) : null}
             </div>
-            {!hideClose ? <IconButton name="close" label="Close" size="sm" variant="flat" onClick={onClose} /> : null}
+            {!hideClose ? <IconButton name="close" label={t('common.close')} size="sm" variant="flat" onClick={onClose} /> : null}
           </div>
         ) : null}
         <div className={clsx('min-h-0 flex-1 overflow-y-auto', flush ? 'pt-4' : 'px-6 pb-6 pt-4')}>{children}</div>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import packageInfo from '../../../package.json';
 import { Button, ConfirmDialog, IconButton, Modal } from '@/components/ui';
+import { useT } from '@/i18n';
 import { SettingField, SettingsNote, SettingsSection } from '@/pages/Settings/SettingsSection';
 import { buildBackup, parseBackup, planRestore } from '@/services/backup';
 import { findDuplicateGroups, type DuplicateGroup } from '@/services/duplicates';
@@ -13,6 +14,7 @@ import { formatDuration } from '@/utils/time';
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const DuplicatesModal = ({ groups, onClose }: { groups: DuplicateGroup[]; onClose: () => void }) => {
+  const { t, tp } = useT();
   const deleteSongFromDisk = useLibraryStore((state) => state.deleteSongFromDisk);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<Song | null>(null);
@@ -21,9 +23,15 @@ const DuplicatesModal = ({ groups, onClose }: { groups: DuplicateGroup[]; onClos
     .filter((group) => group.songs.length > 1);
 
   return (
-    <Modal open onClose={onClose} size="lg" title="Duplicate songs" description="The same recording stored more than once. The first copy of each is the one you play most.">
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={t('settings.libraryTools.duplicates.label')}
+      description={t('settings.libraryTools.modal.description')}
+    >
       {visible.length === 0 ? (
-        <p className="py-6 text-center text-[13px] text-amply-textSecondary">No duplicates left.</p>
+        <p className="py-6 text-center text-[13px] text-amply-textSecondary">{t('settings.libraryTools.modal.empty')}</p>
       ) : (
         <div className="grid max-h-[60vh] gap-3 overflow-y-auto pr-1">
           {visible.map((group) => (
@@ -37,12 +45,18 @@ const DuplicatesModal = ({ groups, onClose }: { groups: DuplicateGroup[]; onClos
                       {song.path}
                     </span>
                     <span className="shrink-0 tabular-nums text-amply-textMuted">
-                      {formatDuration(song.duration)} · {song.playCount} plays
+                      {formatDuration(song.duration)} · {tp('settings.libraryTools.modal.plays', song.playCount)}
                     </span>
                     {index === 0 ? (
-                      <span className="w-8 shrink-0 text-center text-[11px] text-amply-textMuted">keep</span>
+                      <span className="min-w-8 shrink-0 text-center text-[11px] text-amply-textMuted">{t('settings.libraryTools.modal.keep')}</span>
                     ) : (
-                      <IconButton name="trash" label={`Delete ${song.filename}`} size="xs" variant="danger" onClick={() => setConfirming(song)} />
+                      <IconButton
+                        name="trash"
+                        label={t('settings.libraryTools.modal.deleteFile', { name: song.filename })}
+                        size="xs"
+                        variant="danger"
+                        onClick={() => setConfirming(song)}
+                      />
                     )}
                   </li>
                 ))}
@@ -53,9 +67,9 @@ const DuplicatesModal = ({ groups, onClose }: { groups: DuplicateGroup[]; onClos
       )}
       <ConfirmDialog
         open={confirming !== null}
-        title="Delete this copy?"
-        body={confirming ? `${confirming.path} will be deleted from disk.` : undefined}
-        confirmLabel="Delete"
+        title={t('settings.libraryTools.modal.confirmTitle')}
+        body={confirming ? t('settings.libraryTools.modal.confirmBody', { path: confirming.path }) : undefined}
+        confirmLabel={t('settings.libraryTools.modal.confirmDelete')}
         danger
         onClose={() => setConfirming(null)}
         onConfirm={() => {
@@ -74,8 +88,15 @@ const DuplicatesModal = ({ groups, onClose }: { groups: DuplicateGroup[]; onClos
   );
 };
 
+/** "{n} songs" and "{n} playlists", for the backup and restore notes. */
+const historyCounts = (tp: ReturnType<typeof useT>['tp'], songs: number, playlists: number) => ({
+  songs: tp('settings.libraryTools.songs', songs),
+  playlists: tp('settings.libraryTools.playlists', playlists),
+});
+
 /** Duplicate finder, and backup / restore of listening history, playlists and settings. */
 export const LibraryToolsSection = () => {
+  const { t, tp } = useT();
   const songs = useLibraryStore((state) => state.songs);
   const [duplicates, setDuplicates] = useState<DuplicateGroup[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -95,17 +116,17 @@ export const LibraryToolsSection = () => {
       });
       const date = backup.exportedAt.slice(0, 10);
       const saved = await saveTextFile({
-        title: 'Back up Amply',
-        defaultName: `Amply backup ${date}.json`,
-        filterName: 'Amply backup',
+        title: t('settings.libraryTools.backup.dialogTitle'),
+        defaultName: t('settings.libraryTools.backup.fileName', { date }),
+        filterName: t('settings.libraryTools.backup.filterName'),
         extensions: ['json'],
         content: JSON.stringify(backup, null, 1),
       });
       if (saved) {
-        setNote(`Saved ${backup.songs.length} songs' history and ${backup.playlists.length} playlists to ${saved}.`);
+        setNote(t('settings.libraryTools.backup.saved', { ...historyCounts(tp, backup.songs.length, backup.playlists.length), path: saved }));
       }
     } catch (error) {
-      setNote(`Backup failed: ${errorText(error)}`);
+      setNote(t('settings.libraryTools.backup.failed', { error: errorText(error) }));
     } finally {
       setBusy(false);
     }
@@ -115,13 +136,17 @@ export const LibraryToolsSection = () => {
     setBusy(true);
     setNote(null);
     try {
-      const file = await openTextFile({ title: 'Restore an Amply backup', filterName: 'Amply backup', extensions: ['json'] });
+      const file = await openTextFile({
+        title: t('settings.libraryTools.restore.dialogTitle'),
+        filterName: t('settings.libraryTools.backup.filterName'),
+        extensions: ['json'],
+      });
       if (!file) {
         return;
       }
       const backup = parseBackup(file.content);
       if (!backup) {
-        setNote('That file is not an Amply backup.');
+        setNote(t('settings.libraryTools.restore.notBackup'));
         return;
       }
       const library = useLibraryStore.getState();
@@ -129,54 +154,58 @@ export const LibraryToolsSection = () => {
       await library.applyRestorePlan(plan);
       await usePlayerStore.getState().restoreSettings(plan.settings);
       setNote(
-        `Restored history for ${plan.matchedSongs} songs and ${plan.playlists.length} playlists` +
-          (plan.unmatchedSongs ? ` (${plan.unmatchedSongs} songs from the backup are not in this library).` : '.') +
-          ' Reloading to apply settings…',
+        [
+          t('settings.libraryTools.restore.done', historyCounts(tp, plan.matchedSongs, plan.playlists.length)),
+          plan.unmatchedSongs ? tp('settings.libraryTools.restore.unmatched', plan.unmatchedSongs) : null,
+          t('settings.libraryTools.restore.reloading'),
+        ]
+          .filter(Boolean)
+          .join(' '),
       );
       window.setTimeout(() => window.location.reload(), 2500);
     } catch (error) {
-      setNote(`Restore failed: ${errorText(error)}`);
+      setNote(t('settings.libraryTools.restore.failed', { error: errorText(error) }));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <SettingsSection icon="folder" title="Library Tools" description="Duplicates, backups and restores.">
+    <SettingsSection icon="folder" title={t('settings.libraryTools.title')} description={t('settings.libraryTools.description')}>
       <div className="grid gap-1">
         <SettingField
-          label="Duplicate songs"
+          label={t('settings.libraryTools.duplicates.label')}
           description={
             duplicateCount === null
-              ? 'Find the same recording stored more than once.'
+              ? t('settings.libraryTools.duplicates.description')
               : duplicateCount === 0
-                ? 'No duplicates found.'
-                : `${duplicateCount} songs have more than one copy.`
+                ? t('settings.libraryTools.duplicates.none')
+                : tp('settings.libraryTools.duplicates.found', duplicateCount)
           }
           icon="list"
           trailing={
             <Button size="sm" onClick={() => setDuplicates(findDuplicateGroups(songs))}>
-              Find
+              {t('settings.libraryTools.duplicates.find')}
             </Button>
           }
         />
         <SettingField
-          label="Back up"
-          description="Save play counts, favourites, playlists and settings to a file."
+          label={t('settings.libraryTools.backup.label')}
+          description={t('settings.libraryTools.backup.description')}
           icon="download"
           trailing={
             <Button size="sm" onClick={() => void backUp()} disabled={busy}>
-              Back up
+              {t('settings.libraryTools.backup.button')}
             </Button>
           }
         />
         <SettingField
-          label="Restore"
-          description="Merge a backup into this library. Nothing newer is overwritten."
+          label={t('settings.libraryTools.restore.label')}
+          description={t('settings.libraryTools.restore.description')}
           icon="refresh"
           trailing={
             <Button size="sm" onClick={() => void restore()} disabled={busy}>
-              Restore
+              {t('settings.libraryTools.restore.button')}
             </Button>
           }
         />

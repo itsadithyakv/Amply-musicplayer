@@ -1,6 +1,7 @@
 import { memo, type KeyboardEvent } from 'react';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { IconButton, Surface } from '@/components/ui';
+import { useT } from '@/i18n';
 
 interface AlbumCardProps {
   title: string;
@@ -12,6 +13,7 @@ interface AlbumCardProps {
 }
 
 const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCardProps) => {
+  const { t } = useT();
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!onClick) {
       return;
@@ -47,7 +49,7 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
         {onInfo ? (
           <IconButton
             name="info"
-            label="View tracklist"
+            label={t('common.albumCard.viewTracklist')}
             size="xs"
             variant="raised"
             onClick={(event) => {

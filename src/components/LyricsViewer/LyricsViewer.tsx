@@ -18,6 +18,7 @@ import { useInteractionFeedback } from '@/services/interactionFeedback';
 import { beginPerfInteraction } from '@/services/perfDiagnostics';
 import { scheduleAfterPaint } from '@/services/interactionTrace';
 import { usePlaybackProgress } from '@/store/playbackProgressStore';
+import { useT, type MessageKey } from '@/i18n';
 
 interface LyricsViewerProps {
   song: Song | null;
@@ -40,14 +41,14 @@ const buildChoiceSubtitle = (candidate: LyricsCandidate): string => {
   return parts.join(' - ');
 };
 
-const buildChoicePreview = (candidate: LyricsCandidate): string => {
+const buildChoicePreview = (candidate: LyricsCandidate, noPreview: string): string => {
   const firstLine = candidate.preview
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean);
 
   if (!firstLine) {
-    return 'No preview available';
+    return noPreview;
   }
 
   return firstLine.length > 96 ? `${firstLine.slice(0, 96)}...` : firstLine;
@@ -55,10 +56,11 @@ const buildChoicePreview = (candidate: LyricsCandidate): string => {
 
 const OFFSET_STEP_MS = 250;
 
-const formatOffset = (offsetMs: number): string => {
-  const seconds = (Math.abs(offsetMs) / 1000).toFixed(2);
+/** The signed offset in seconds, e.g. "+0.25" ("+0,25" in French); the unit is part of the message. */
+const formatOffset = (offsetMs: number, language: string): string => {
+  const seconds = new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(offsetMs) / 1000);
   const sign = offsetMs > 0 ? '+' : offsetMs < 0 ? '-' : '';
-  return `Sync ${sign}${seconds}s`;
+  return `${sign}${seconds}`;
 };
 
 /**
@@ -79,6 +81,7 @@ const parseTintChannels = (tint: string): [number, number, number] | null => {
 };
 
 const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: LyricsViewerProps) => {
+  const { t, language } = useT();
   const positionSec = usePlaybackProgress((progress) => progress.positionSec);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
   const fetchLyricsCandidatesForSong = useLibraryStore((state) => state.fetchLyricsCandidatesForSong);
@@ -89,7 +92,8 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   const [choices, setChoices] = useState<LyricsCandidate[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingChoiceId, setSavingChoiceId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // A message key, translated at render so a language switch updates a visible error.
+  const [error, setError] = useState<MessageKey | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [offsetMs, setOffsetMs] = useState(0);
   const [surfaceReady, setSurfaceReady] = useState(false);
@@ -173,7 +177,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     if (gameMode) {
       setLoading(false);
       setSavingChoiceId(null);
-      setError('Lyrics disabled in Game Mode.');
+      setError('player.lyrics.gameMode');
       setLyrics(null);
       setChoices([]);
       return;
@@ -217,15 +221,15 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
 
         setError(
           fetched.status === 'instrumental'
-            ? 'This track is instrumental.'
+            ? 'player.lyrics.instrumental'
             : fetched.status === 'offline'
-              ? 'Could not reach the lyrics service. Check your connection and reopen this tab.'
-              : 'No lyrics found for this track. You can search for them manually.',
+              ? 'player.lyrics.offline'
+              : 'player.lyrics.notFound',
         );
       } catch (error) {
         if (!abortController.signal.aborted && alive) {
           console.warn('[Lyrics] Initial load failed:', error);
-          setError('Failed to load lyrics.');
+          setError('player.lyrics.loadFailed');
         }
       } finally {
         if (!abortController.signal.aborted && alive) {
@@ -296,12 +300,12 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     try {
       const candidates = await fetchLyricsCandidatesForSong(songId);
       if (!candidates.length) {
-        setError('No alternate lyrics found.');
+        setError('player.lyrics.noAlternates');
         return;
       }
       setChoices(candidates);
     } catch {
-      setError('Lyrics fetch failed.');
+      setError('player.lyrics.fetchFailed');
     } finally {
       setLoading(false);
     }
@@ -541,7 +545,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   }, []);
 
   if (!song) {
-    return <p className="text-[13px] text-amply-textMuted">No song selected.</p>;
+    return <p className="text-[13px] text-amply-textMuted">{t('player.lyrics.noSong')}</p>;
   }
 
   if (active && !surfaceReady) {
@@ -551,7 +555,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   if (active && !idleReady) {
     return (
       <Card className={clsx(fullHeight && 'h-full')}>
-        {interactionFeedback.visible ? null : <p className="text-[12px] text-amply-textMuted">Preparing lyrics...</p>}
+        {interactionFeedback.visible ? null : <p className="text-[12px] text-amply-textMuted">{t('player.lyrics.preparing')}</p>}
       </Card>
     );
   }
@@ -561,8 +565,8 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
       <Card className={clsx('flex items-center gap-3 text-[13px] text-amply-textSecondary', fullHeight && 'h-full')}>
         {interactionFeedback.visible ? null : (
           <>
-            <Spinner size={16} label="Loading lyrics" />
-            <span>Loading lyrics...</span>
+            <Spinner size={16} label={t('player.lyrics.loadingLabel')} />
+            <span>{t('player.lyrics.loading')}</span>
           </>
         )}
       </Card>
@@ -573,8 +577,8 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     return (
       <Card className={clsx('space-y-3', fullHeight && 'h-full overflow-y-auto')}>
         <div className="space-y-1">
-          <p className="text-[14px] font-medium text-amply-textPrimary">Multiple lyric matches found</p>
-          <Meta>Pick the correct one. Your selection will be cached for offline playback.</Meta>
+          <p className="text-[14px] font-medium text-amply-textPrimary">{t('player.lyrics.multipleTitle')}</p>
+          <Meta>{t('player.lyrics.multipleHint')}</Meta>
         </div>
 
         <div className="space-y-2">
@@ -598,7 +602,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
                     setLyrics(selected);
                     setChoices([]);
                   } catch {
-                    setError('Failed to save selected lyrics.');
+                    setError('player.lyrics.saveFailed');
                   } finally {
                     setSavingChoiceId(null);
                   }
@@ -610,16 +614,16 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
               >
                 <div className="flex items-center justify-between gap-3">
                   <p className="truncate text-[13px] font-medium text-amply-textPrimary">{candidate.trackName}</p>
-                  <Badge tone={candidate.isSynced ? 'accent' : 'neutral'}>{candidate.isSynced ? 'Synced' : 'Unsynced'}</Badge>
+                  <Badge tone={candidate.isSynced ? 'accent' : 'neutral'}>{candidate.isSynced ? t('player.lyrics.synced') : t('player.lyrics.unsynced')}</Badge>
                 </div>
                 <Meta className="mt-1 truncate">{buildChoiceSubtitle(candidate)}</Meta>
-                <Meta className="mt-1 truncate text-amply-textMuted">{isSaving ? 'Saving selection...' : buildChoicePreview(candidate)}</Meta>
+                <Meta className="mt-1 truncate text-amply-textMuted">{isSaving ? t('player.lyrics.saving') : buildChoicePreview(candidate, t('player.lyrics.noPreview'))}</Meta>
               </button>
             );
           })}
         </div>
 
-        {error ? <p className="text-[12px] text-amply-danger">{error}</p> : null}
+        {error ? <p className="text-[12px] text-amply-danger">{t(error)}</p> : null}
       </Card>
     );
   }
@@ -627,7 +631,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   if (!lyrics || error) {
     return (
       <Card className={clsx(fullHeight && 'h-full')}>
-        <p className="text-[13px] text-amply-textMuted">{error ?? 'No lyrics available.'}</p>
+        <p className="text-[13px] text-amply-textMuted">{t(error ?? 'player.lyrics.noLyrics')}</p>
       </Card>
     );
   }
@@ -760,7 +764,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
                 setAutoScroll(true);
               }}
             >
-              Back to current line
+              {t('player.lyrics.backToCurrent')}
             </Button>
           </div>
         ) : null}
@@ -770,22 +774,22 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
         <div className="flex shrink-0 items-center justify-center gap-2">
           <IconButton
             name="minus"
-            label="Shift lyrics later"
+            label={t('player.lyrics.shiftLater')}
             size="xs"
             variant="ghost"
             onClick={() => void handleOffsetChange(-OFFSET_STEP_MS)}
           />
-          <Meta className="min-w-[88px] text-center tabular-nums text-amply-textMuted">{formatOffset(offsetMs)}</Meta>
+          <Meta className="min-w-[88px] text-center tabular-nums text-amply-textMuted">{t('player.lyrics.syncOffset', { offset: formatOffset(offsetMs, language) })}</Meta>
           <IconButton
             name="plus"
-            label="Shift lyrics earlier"
+            label={t('player.lyrics.shiftEarlier')}
             size="xs"
             variant="ghost"
             onClick={() => void handleOffsetChange(OFFSET_STEP_MS)}
           />
         </div>
       ) : (
-        <Meta className="shrink-0 text-center text-amply-textMuted">Unsynced</Meta>
+        <Meta className="shrink-0 text-center text-amply-textMuted">{t('player.lyrics.unsynced')}</Meta>
       )}
     </div>
   );

@@ -4,8 +4,12 @@ import { Select, Slider, Toggle } from '@/components/ui';
 import { isTauri } from '@/services/storageService';
 import { listOutputDevices, type OutputDeviceInfo } from '@/services/audioDeviceService';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
+import { useT } from '@/i18n';
 
 export const PlaybackSection = () => {
+  const { t, tp, language } = useT();
+  const formatSpeed = (value: number) =>
+    `${new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}x`;
   const crossfadeDurationSec = usePlayerStore((state) => state.settings.crossfadeDurationSec);
   const crossfadeEnabled = usePlayerStore((state) => state.settings.crossfadeEnabled);
   const gaplessEnabled = usePlayerStore((state) => state.settings.gaplessEnabled);
@@ -44,23 +48,22 @@ export const PlaybackSection = () => {
   }, []);
 
   return (
-    <SettingsSection icon="volume" title="Advanced Playback" description="Routing, fades, and playback speed.">
+    <SettingsSection icon="volume" title={t('settings.playback.title')} description={t('settings.playback.description')}>
       <div className="grid gap-1">
         {isTauri() ? (
-          <SettingField label="Output Device">
+          <SettingField label={t('settings.playback.outputDevice')}>
             <Select
-              label="Device"
+              label={t('settings.playback.device')}
               value={outputDeviceName ?? ''}
               onChange={(event) => {
                 const value = event.target.value || null;
                 void setOutputDeviceName(value);
               }}
             >
-              <option value="">System Default</option>
+              <option value="">{t('settings.playback.systemDefault')}</option>
               {outputDevices.map((device) => (
                 <option key={device.name} value={device.name}>
-                  {device.name}
-                  {device.isDefault ? ' (Default)' : ''}
+                  {device.isDefault ? t('settings.playback.deviceDefault', { name: device.name }) : device.name}
                 </option>
               ))}
             </Select>
@@ -68,22 +71,25 @@ export const PlaybackSection = () => {
         ) : null}
 
         <Toggle
-          label="Crossfade"
-          description="Blend tracks into each other."
+          label={t('settings.playback.crossfade.label')}
+          description={t('settings.playback.crossfade.description')}
           checked={crossfadeEnabled}
           onChange={(next) => {
             void setCrossfadeEnabled(next);
           }}
         />
 
-        <SettingField label="Crossfade Duration" trailing={`${crossfadeDurationSec}s`}>
+        <SettingField
+          label={t('settings.playback.crossfadeDuration.label')}
+          trailing={t('settings.playback.crossfadeDuration.short', { seconds: crossfadeDurationSec })}
+        >
           <Slider
             value={crossfadeDurationSec}
             min={1}
             max={12}
             step={1}
-            ariaLabel="Crossfade duration"
-            formatValue={(value) => `${value} seconds`}
+            ariaLabel={t('settings.playback.crossfadeDuration.label')}
+            formatValue={(value) => tp('settings.playback.crossfadeDuration.seconds', value)}
             onChange={(value) => {
               void setCrossfadeDuration(value);
             }}
@@ -91,8 +97,8 @@ export const PlaybackSection = () => {
         </SettingField>
 
         <Toggle
-          label="Gapless Playback"
-          description="Preload the next track."
+          label={t('settings.playback.gapless.label')}
+          description={t('settings.playback.gapless.description')}
           checked={gaplessEnabled}
           onChange={(next) => {
             void setGaplessEnabled(next);
@@ -100,11 +106,11 @@ export const PlaybackSection = () => {
         />
 
         <SettingField
-          label="Volume Normalization"
-          description="Play every song at the same loudness. Uses ReplayGain tags, or measures songs without them."
+          label={t('settings.playback.normalization.label')}
+          description={t('settings.playback.normalization.description')}
         >
           <Select
-            label="Level"
+            label={t('settings.playback.normalization.level')}
             value={volumeNormalization}
             onChange={(event) => {
               const next = event.target.value;
@@ -113,20 +119,20 @@ export const PlaybackSection = () => {
               }
             }}
           >
-            <option value="track">Per song</option>
-            <option value="album">Per album (keeps album dynamics)</option>
-            <option value="off">Off</option>
+            <option value="track">{t('settings.playback.normalization.track')}</option>
+            <option value="album">{t('settings.playback.normalization.album')}</option>
+            <option value="off">{t('settings.playback.normalization.off')}</option>
           </Select>
         </SettingField>
 
-        <SettingField label="Playback Speed" trailing={`${playbackSpeed.toFixed(2)}x`}>
+        <SettingField label={t('settings.playback.speed.label')} trailing={formatSpeed(playbackSpeed)}>
           <Slider
             value={playbackSpeed}
             min={0.75}
             max={1.5}
             step={0.05}
-            ariaLabel="Playback speed"
-            formatValue={(value) => `${value.toFixed(2)}x`}
+            ariaLabel={t('settings.playback.speed.label')}
+            formatValue={formatSpeed}
             onChange={(value) => {
               void setPlaybackSpeed(value);
             }}

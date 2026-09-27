@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { t } from '@/i18n';
 
 type InteractionFeedbackSnapshot = {
   visible: boolean;
@@ -60,7 +61,7 @@ export const beginInteractionFeedback = (options: InteractionFeedbackOptions = {
 
   const interaction: PendingInteraction = {
     id: ++nextInteractionId,
-    message: options.message ?? 'Loading...',
+    message: options.message ?? t('messages.loading'),
     delayHandle: null,
     hideHandle: null,
     visibleSince: null,

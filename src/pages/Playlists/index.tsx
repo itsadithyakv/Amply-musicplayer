@@ -10,6 +10,8 @@ import { usePlayerStore } from '@/store/playerStore';
 import type { Playlist } from '@/types/music';
 import { type PlaylistCardView } from '@/services/libraryRepository';
 import { useLibraryTabView, usePlaylistCardsView } from '@/hooks/useLibraryViews';
+import { useT } from '@/i18n';
+import { localizedPlaylistDescription, localizedPlaylistName } from '@/i18n/playlistNames';
 
 const PlaylistComposer = lazy(() => import('@/components/Playlists/PlaylistComposer'));
 
@@ -36,7 +38,10 @@ const PlaylistCard = memo(({
   onEdit: (playlist: Playlist) => void;
   onDelete: (playlist: Playlist) => void;
 }) => {
+  const { t, tp } = useT();
   const isSmart = playlist.type !== 'custom';
+  const name = localizedPlaylistName(playlist);
+  const description = localizedPlaylistDescription(playlist);
 
   return (
     <Surface
@@ -54,7 +59,7 @@ const PlaylistCard = memo(({
       }}
       role="button"
       tabIndex={0}
-      aria-label={`Open ${playlist.name}`}
+      aria-label={t('playlists.card.open', { name })}
       className="render-contained group relative flex h-full min-w-0 cursor-pointer items-stretch overflow-hidden outline-none"
     >
       <CoverBackdrop src={artworkSet[0]} fade="right" />
@@ -63,28 +68,28 @@ const PlaylistCard = memo(({
       <div className="relative z-10 flex min-w-0 flex-1 flex-col p-4">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate text-[18px] font-semibold tracking-[-0.02em] text-amply-onCover">{playlist.name}</p>
-            <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-amply-onCoverMuted">{playlist.description || 'A playlist made by you.'}</p>
+            <p className="truncate text-[18px] font-semibold tracking-[-0.02em] text-amply-onCover">{name}</p>
+            <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-amply-onCoverMuted">{description || t('playlists.card.defaultDescription')}</p>
           </div>
           {!isSmart ? (
             <div className="flex shrink-0 items-center gap-1">
-              <IconButton name="edit" label={`Edit ${playlist.name}`} size="sm" variant="flat" onClick={(event) => { event.stopPropagation(); onEdit(playlist); }} />
-              <IconButton name="trash" label={`Delete ${playlist.name}`} size="sm" variant="flat" onClick={(event) => { event.stopPropagation(); onDelete(playlist); }} />
+              <IconButton name="edit" label={t('playlists.card.edit', { name })} size="sm" variant="flat" onClick={(event) => { event.stopPropagation(); onEdit(playlist); }} />
+              <IconButton name="trash" label={t('playlists.card.delete', { name })} size="sm" variant="flat" onClick={(event) => { event.stopPropagation(); onDelete(playlist); }} />
             </div>
           ) : null}
         </div>
 
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-3 pr-12">
           <Badge tone={isSmart ? 'accent' : 'neutral'} icon={isSmart ? 'smart-mix' : 'playlist-add'}>
-            {isSmart ? 'Smart mix' : 'Your playlist'}
+            {isSmart ? t('playlists.badge.smart') : t('playlists.badge.custom')}
           </Badge>
-          <Badge>{playlist.songIds.length} tracks</Badge>
+          <Badge>{tp('playlists.tracks', playlist.songIds.length)}</Badge>
         </div>
       </div>
 
       <IconButton
         name="play"
-        label={`Play ${playlist.name}`}
+        label={t('playlists.card.play', { name })}
         size="md"
         variant="accent"
         disabled={!firstSongId}
@@ -102,6 +107,7 @@ const PlaylistCell = memo(({ columnIndex, rowIndex, style, data }: GridChildComp
 });
 
 const PlaylistsPage = () => {
+  const { t, tp } = useT();
   const songs = useLibraryTabView('songs').songs;
   const upsertCustomPlaylist = useLibraryStore((state) => state.upsertCustomPlaylist);
   const deleteCustomPlaylist = useLibraryStore((state) => state.deleteCustomPlaylist);
@@ -129,8 +135,8 @@ const PlaylistsPage = () => {
   return (
     <div className="min-w-0 space-y-5 overflow-x-hidden pb-8">
       <PageHeader
-        title="Playlists"
-        description="Smart mixes from Amply and playlists arranged by you."
+        title={t('playlists.header.title')}
+        description={t('playlists.header.description')}
         action={
           <div className="flex items-center gap-2">
             <Button
@@ -140,14 +146,14 @@ const PlaylistsPage = () => {
                   if (!result) {
                     return;
                   }
-                  usePlayerStore.getState().showToast(`Imported ${result.found} of ${result.total} songs`);
+                  usePlayerStore.getState().showToast(tp('playlists.toast.imported', result.total, { found: result.found }));
                   navigate(`/playlist/${result.playlistId}`);
                 });
               }}
             >
-              Import
+              {t('playlists.header.import')}
             </Button>
-            <Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>New playlist</Button>
+            <Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>{t('playlists.header.new')}</Button>
           </div>
         }
       />
@@ -162,7 +168,7 @@ const PlaylistsPage = () => {
         </Surface>
       ) : (
         <Surface variant="well" radius="lg" className="p-8 text-center text-[13px] text-amply-textSecondary">
-          No playlists yet. Create one to get started.
+          {t('playlists.empty')}
         </Surface>
       )}
 
@@ -170,10 +176,10 @@ const PlaylistsPage = () => {
         open={showComposer}
         onClose={closeComposer}
         size="xl"
-        title={editingPlaylist ? 'Edit playlist' : 'Create playlist'}
-        description="Details, tracks, and playback order."
+        title={editingPlaylist ? t('playlists.composer.editTitle') : t('playlists.composer.createTitle')}
+        description={t('playlists.composer.modalDescription')}
       >
-        <Suspense fallback={<div className="p-10 text-center text-[12px] text-amply-textSecondary">Preparing your library…</div>}>
+        <Suspense fallback={<div className="p-10 text-center text-[12px] text-amply-textSecondary">{t('playlists.composer.preparing')}</div>}>
           <PlaylistComposer
             songs={songs}
             initialPlaylist={editingPlaylist}
@@ -192,9 +198,9 @@ const PlaylistsPage = () => {
           setPendingDelete(null);
           void deleteCustomPlaylist(id);
         }}
-        title={`Remove “${pendingDelete?.name ?? ''}”?`}
-        body="The playlist will be removed. Your music files will not be affected."
-        confirmLabel="Delete"
+        title={t('playlists.delete.title', { name: pendingDelete ? localizedPlaylistName(pendingDelete) : '' })}
+        body={t('playlists.delete.body')}
+        confirmLabel={t('playlists.delete.confirm')}
         danger
       />
     </div>

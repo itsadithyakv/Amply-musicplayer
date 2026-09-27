@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { usePlayerStore } from '@/store/playerStore';
 import { Divider, TextInput, Toggle } from '@/components/ui';
+import { useT } from '@/i18n';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
 
 export const AppBehaviorSection = () => {
+  const { t } = useT();
   const autoPauseIgnoreApps = usePlayerStore((state) => state.settings.autoPauseIgnoreApps);
   const autoPauseIgnoreFullscreen = usePlayerStore((state) => state.settings.autoPauseIgnoreFullscreen);
   const autoPauseOnFocus = usePlayerStore((state) => state.settings.autoPauseOnFocus);
@@ -23,35 +25,35 @@ export const AppBehaviorSection = () => {
   }, [autoPauseIgnoreApps]);
 
   return (
-    <SettingsSection icon="settings" title="App Behavior" description="Launch and focus behavior.">
+    <SettingsSection icon="settings" title={t('settings.behavior.title')} description={t('settings.behavior.description')}>
       <div className="grid gap-1">
         <Toggle
-          label="Launch on System Startup"
-          description="Open Amply when your system starts."
+          label={t('settings.behavior.startup.label')}
+          description={t('settings.behavior.startup.description')}
           checked={launchOnStartup}
           onChange={(next) => {
             void setLaunchOnStartup(next);
           }}
         />
         <Toggle
-          label="Game Mode"
-          description="Lean mode with fewer heavy panels."
+          label={t('settings.behavior.gameMode.label')}
+          description={t('settings.behavior.gameMode.description')}
           checked={gameMode}
           onChange={(next) => {
             void setGameMode(next);
           }}
         />
         <Toggle
-          label="Auto-pause for Other Audio (Windows)"
-          description="Pause for other audio, then resume."
+          label={t('settings.behavior.autoPause.label')}
+          description={t('settings.behavior.autoPause.description')}
           checked={autoPauseOnFocus}
           onChange={(next) => {
             void setAutoPauseOnFocus(next);
           }}
         />
         <Toggle
-          label="Ignore Fullscreen Apps"
-          description="Keep playing while fullscreen apps are active."
+          label={t('settings.behavior.ignoreFullscreen.label')}
+          description={t('settings.behavior.ignoreFullscreen.description')}
           checked={autoPauseIgnoreFullscreen}
           onChange={(next) => {
             void setAutoPauseIgnoreFullscreen(next);
@@ -60,14 +62,11 @@ export const AppBehaviorSection = () => {
 
         <Divider className="my-1" />
 
-        <SettingField
-          label="Ignore These Apps"
-          description={'Comma-separated process names, e.g. "eldenring.exe, valorant.exe".'}
-        >
+        <SettingField label={t('settings.behavior.ignoreApps.label')} description={t('settings.behavior.ignoreApps.description')}>
           <TextInput
             value={ignoreAppsText}
             onValueChange={setIgnoreAppsText}
-            aria-label="Ignored apps"
+            aria-label={t('settings.behavior.ignoreApps.aria')}
             placeholder="eldenring.exe, valorant.exe"
             onBlur={() => {
               const list = ignoreAppsText
