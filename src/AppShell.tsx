@@ -1,4 +1,5 @@
 import { useThemeSync } from '@/hooks/useThemeSync';
+import { useLanguageSync } from '@/hooks/useLanguageSync';
 import { setFlags } from '@/services/runtimeFlags';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
@@ -176,6 +177,7 @@ const AppShell = () => {
   }, [initializeLibrary, initializePlayer]);
 
   useThemeSync();
+  useLanguageSync();
   useOverlayController(miniNowPlayingOverlay);
   useMediaSession();
   const draggingFiles = useExternalFiles(libraryInitialized);

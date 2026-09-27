@@ -5,6 +5,7 @@ import { playbackActions, usePlayerStore } from '@/store/playerStore';
 import { isTauri } from '@/services/storageService';
 import { useCurrentSongSnapshot } from '@/hooks/useLibraryViews';
 import { invoke } from '@tauri-apps/api/core';
+import { useT } from '@/i18n';
 import { recordPerfEvent } from '@/services/perfDiagnostics';
 import { getPlaybackProgressSnapshot, subscribePlaybackProgress } from '@/store/playbackProgressStore';
 
@@ -18,6 +19,7 @@ const TIMELINE_REFRESH_MS = 15_000;
  * desktop app. The browser build uses `navigator.mediaSession` below instead.
  */
 const useNativeMediaControls = (): void => {
+  const { t } = useT();
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const playbackSpeed = usePlayerStore((state) => state.settings.playbackSpeed);
   const { song } = useCurrentSongSnapshot();
@@ -45,6 +47,7 @@ const useNativeMediaControls = (): void => {
             playing: isPlaying,
             positionSec,
             durationSec,
+            labels: { previous: t('common.previous'), play: t('common.play'), pause: t('common.pause'), next: t('common.next') },
           }
         : null;
       invoke('media_controls_update', { state }).catch((error: unknown) => {
@@ -70,7 +73,7 @@ const useNativeMediaControls = (): void => {
         window.clearInterval(refresh);
       }
     };
-  }, [songId, songTitle, songArtist, songAlbum, songAlbumArt, isPlaying, playbackSpeed]);
+  }, [songId, songTitle, songArtist, songAlbum, songAlbumArt, isPlaying, playbackSpeed, t]);
 
   useEffect(() => {
     if (!isTauri()) {

@@ -1,3 +1,4 @@
+import { isLanguageCode } from '@/i18n';
 import type { AppSettings, OnlineRecommendationProvider } from '@/types/music';
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -7,6 +8,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   crossfadeDurationSec: 6,
   gaplessEnabled: true,
   volumeNormalization: 'track',
+  language: 'system',
   playbackSpeed: 1,
   outputDeviceName: undefined,
   eqPreset: 'flat',
@@ -69,6 +71,7 @@ export const normalizeSettings = (input: unknown): AppSettings => {
   return {
     libraryPath: str(raw.libraryPath, d.libraryPath),
     appTheme: raw.appTheme === 'dark' ? 'dark' : 'light',
+    language: raw.language === 'system' || isLanguageCode(raw.language) ? (raw.language as AppSettings['language']) : d.language,
     crossfadeEnabled: bool(raw.crossfadeEnabled, d.crossfadeEnabled),
     crossfadeDurationSec: num(raw.crossfadeDurationSec, d.crossfadeDurationSec, 1, 20),
     gaplessEnabled: bool(raw.gaplessEnabled, d.gaplessEnabled),

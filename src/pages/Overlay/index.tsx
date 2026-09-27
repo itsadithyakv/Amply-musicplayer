@@ -4,6 +4,7 @@ import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition, type W
 import { isTauri } from '@/services/storageService';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
 import { IconButton } from '@/components/ui';
+import { isLanguageCode, setLanguage } from '@/i18n';
 
 type OverlayTheme = 'light' | 'dark';
 
@@ -17,7 +18,7 @@ type OverlayState = {
   theme: OverlayTheme | null;
 };
 
-type OverlayPayload = Partial<Omit<OverlayState, 'theme'>> & { theme?: unknown };
+type OverlayPayload = Partial<Omit<OverlayState, 'theme'>> & { theme?: unknown; language?: unknown };
 
 const initialState: OverlayState = {
   title: 'Nothing Playing',
@@ -192,6 +193,9 @@ const OverlayPage = () => {
     void listen<OverlayPayload>('amply://overlay-state', (event) => {
       if (!alive || !event.payload) return;
       const payload = event.payload;
+      if (isLanguageCode(payload.language)) {
+        void setLanguage(payload.language);
+      }
       setState((previous) => ({
         title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : previous.title,
         artist: typeof payload.artist === 'string' && payload.artist.trim() ? payload.artist : previous.artist,

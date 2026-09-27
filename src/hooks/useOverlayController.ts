@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { PhysicalPosition, currentMonitor, primaryMonitor } from '@tauri-apps/api/window';
 import { emitTo, listen } from '@tauri-apps/api/event';
+import { useT, type LanguageCode } from '@/i18n';
 import { usePlayerStore } from '@/store/playerStore';
 import { useCurrentSongSnapshot } from '@/hooks/useLibraryViews';
 import { isTauri } from '@/services/storageService';
@@ -22,6 +23,7 @@ type OverlayPayload = {
   isPlaying: boolean;
   spinningArtwork: boolean;
   theme: AppSettings['appTheme'];
+  language: LanguageCode;
 };
 
 const getOverlayWindow = async (): Promise<WebviewWindow | null> =>
@@ -49,6 +51,7 @@ export const useOverlayController = (enabled: boolean): void => {
   const overlaySpinningArtwork = usePlayerStore((state) => state.settings.overlaySpinningArtwork);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const appTheme = usePlayerStore((state) => state.settings.appTheme);
+  const { language } = useT();
   const { song } = useCurrentSongSnapshot();
   const payloadRef = useRef<OverlayPayload>({
     title: 'Nothing Playing',
@@ -57,6 +60,7 @@ export const useOverlayController = (enabled: boolean): void => {
     isPlaying: false,
     spinningArtwork: true,
     theme: 'light',
+    language: 'en',
   });
   const lastPayloadKeyRef = useRef<string | null>(null);
 
@@ -69,12 +73,13 @@ export const useOverlayController = (enabled: boolean): void => {
       isPlaying,
       spinningArtwork: overlaySpinningArtwork,
       theme: appTheme,
+      language,
     };
-  }, [song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork, appTheme]);
+  }, [song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork, appTheme, language]);
 
   const emitOverlayState = async (force = false): Promise<void> => {
     const payload = payloadRef.current;
-    const payloadKey = `${payload.title}\u0000${payload.artist}\u0000${payload.albumArt ?? ''}\u0000${payload.isPlaying ? 1 : 0}\u0000${payload.spinningArtwork ? 1 : 0}\u0000${payload.theme}`;
+    const payloadKey = `${payload.title}\u0000${payload.artist}\u0000${payload.albumArt ?? ''}\u0000${payload.isPlaying ? 1 : 0}\u0000${payload.spinningArtwork ? 1 : 0}\u0000${payload.theme}\u0000${payload.language}`;
     if (!force && payloadKey === lastPayloadKeyRef.current) return;
     const overlay = await getOverlayWindow();
     if (!overlay) return;
@@ -204,7 +209,7 @@ export const useOverlayController = (enabled: boolean): void => {
   useEffect(() => {
     if (!enabled || !isTauri() || getCurrentWebviewWindow().label === OVERLAY_LABEL) return;
     void emitOverlayState().catch((error) => recordPerfEvent('overlay.emit-error', { error: String(error) }));
-  }, [enabled, song?.id, song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork, appTheme]);
+  }, [enabled, song?.id, song?.title, song?.artist, song?.albumArt, isPlaying, overlaySpinningArtwork, appTheme, language]);
 
   useEffect(() => {
     if (!enabled || !isTauri() || getCurrentWebviewWindow().label === OVERLAY_LABEL) return;

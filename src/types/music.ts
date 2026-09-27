@@ -87,6 +87,8 @@ export type OnlineRecommendationProvider = 'lastfm' | 'musicbrainz';
 export interface AppSettings {
   libraryPath: string;
   appTheme: 'light' | 'dark';
+  /** UI language: 'system' follows Windows' language when Amply supports it. */
+  language: 'system' | 'en' | 'zh-CN' | 'hi' | 'es' | 'fr';
   crossfadeEnabled: boolean;
   crossfadeDurationSec: number;
   gaplessEnabled: boolean;
