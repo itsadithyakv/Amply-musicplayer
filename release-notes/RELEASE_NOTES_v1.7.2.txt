@@ -1,0 +1,9 @@
+Amply v1.7.2
+Release date: 2026-09-27
+
+Ratings
+- New "Rate Amply" button in Settings > App Version. Store installs show Windows' own rating
+  dialog without leaving Amply; other installs open the Microsoft Store review page.
+- After a week of use and 30 plays, Store installs may show one small "Enjoying Amply?" card.
+  "Not now" snoozes it for a month, "Don't ask again" ends it, and it never appears more than
+  three times, during Game Mode, or after you have rated.
