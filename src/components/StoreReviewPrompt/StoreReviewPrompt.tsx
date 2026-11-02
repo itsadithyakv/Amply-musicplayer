@@ -1,3 +1,5 @@
+import { effectiveSettings, useProStore } from '@/store/proStore';
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { useEffect, useState } from 'react';
 import { Button, Card, Icon } from '@/components/ui';
 import {
@@ -20,7 +22,7 @@ const PROMPT_DELAY_MS = 3 * 60_000;
  */
 export const StoreReviewPrompt = () => {
   const { t } = useT();
-  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const gameMode = useEffectiveSetting((settings) => settings.gameMode);
   const showToast = usePlayerStore((state) => state.showToast);
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -32,7 +34,7 @@ export const StoreReviewPrompt = () => {
     let alive = true;
     const timer = window.setTimeout(() => {
       void (async () => {
-        if (!(await isStoreInstall()) || !alive || usePlayerStore.getState().settings.gameMode) {
+        if (!(await isStoreInstall()) || !alive || effectiveSettings(usePlayerStore.getState().settings).gameMode || useProStore.getState().paywall) {
           return;
         }
         const totalPlays = useLibraryStore.getState().songs.reduce((sum, song) => sum + (song.playCount ?? 0), 0);

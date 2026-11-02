@@ -1,3 +1,4 @@
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
@@ -83,7 +84,7 @@ const parseTintChannels = (tint: string): [number, number, number] | null => {
 const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: LyricsViewerProps) => {
   const { t, language } = useT();
   const positionSec = usePlaybackProgress((progress) => progress.positionSec);
-  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const gameMode = useEffectiveSetting((settings) => settings.gameMode);
   const fetchLyricsCandidatesForSong = useLibraryStore((state) => state.fetchLyricsCandidatesForSong);
   const idleReady = useIdleRender(300);
   const interactionFeedback = useInteractionFeedback();

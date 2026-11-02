@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::time::Duration;
 
 use log::LevelFilter;
 use tauri::image::Image;
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
 mod artwork;
@@ -173,20 +175,38 @@ fn main() {
             library::write_song_tags,
             files::save_text_file,
             files::open_text_file,
+            platform::store_license::pro_status_cached,
+            platform::store_license::pro_refresh,
+            platform::store_license::pro_purchase,
             platform::store_review::is_store_install_rust,
             platform::store_review::request_store_review_rust,
             platform::media_controls::media_controls_update,
             platform::startup::startup_get_state,
-            platform::startup::startup_set_enabled
+            platform::startup::startup_set_enabled,
+            exit_ready
         ])
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { .. } = event {
+            if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "overlay" {
                     return;
                 }
-                let app = window.app_handle();
-                close_all_windows(app);
-                app.exit(0);
+                // The webview cannot finish an async save while its window is being destroyed, so
+                // the frontend saves first and calls `exit_ready`. A frontend that never answers
+                // (crashed, hung) still gets closed.
+                api.prevent_close();
+                let app = window.app_handle().clone();
+                if EXITING.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                if window.emit("amply://exit-requested", ()).is_err() {
+                    exit_now(&app);
+                    return;
+                }
+                std::thread::spawn(move || {
+                    std::thread::sleep(EXIT_SAVE_TIMEOUT);
+                    log::warn!("The window did not finish saving within {EXIT_SAVE_TIMEOUT:?}; closing anyway");
+                    exit_now(&app);
+                });
             }
         })
         .build(tauri::generate_context!())
@@ -198,6 +218,24 @@ fn main() {
                 audio::shutdown(app);
             }
         });
+}
+
+static EXITING: AtomicBool = AtomicBool::new(false);
+static EXITED: AtomicBool = AtomicBool::new(false);
+const EXIT_SAVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn exit_now(app: &tauri::AppHandle) {
+    if EXITED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    close_all_windows(app);
+    app.exit(0);
+}
+
+/// The frontend has saved; the app can close.
+#[tauri::command]
+fn exit_ready(app: tauri::AppHandle) {
+    exit_now(&app);
 }
 
 fn close_all_windows(app: &tauri::AppHandle) {

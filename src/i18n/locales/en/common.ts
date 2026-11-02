@@ -50,16 +50,12 @@ const common = {
   "common.songList.sortBy.mostPlayed": "Most Played",
   "common.songList.column.time": "Time",
   "common.songList.column.fav": "Fav",
-  "common.songList.column.playlist": "Playlist",
-  "common.songList.column.queueInfo": "Queue · Info",
+  "common.songList.column.queueInfo": "Actions",
   "common.songList.setGenre": "Set genre...",
   "common.songList.customGenre": "Custom...",
   "common.songList.editGenre": "Edit genre",
   "common.songList.addToFavorites": "Add to favorites",
   "common.songList.removeFromFavorites": "Remove from favorites",
-  "common.songList.add": "Add",
-  "common.songList.addTo": "Add to...",
-  "common.songList.noPlaylists": "No playlists",
   "common.songList.addToQueue": "Add to queue",
 
   // Song editor

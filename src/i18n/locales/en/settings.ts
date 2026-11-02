@@ -192,6 +192,12 @@ const settings = {
   "settings.version.rate.button": "Rate",
   "settings.version.rate.thanks": "Thanks for rating Amply!",
   "settings.version.rate.failed": "Couldn't open the Microsoft Store",
+  "settings.shortcuts.title": "Keyboard shortcuts",
+  "settings.shortcuts.playPause": "Play or pause",
+  "settings.shortcuts.seek": "Back or forward 5 seconds",
+  "settings.shortcuts.track": "Previous or next song",
+  "settings.shortcuts.volume": "Volume down or up",
+  "settings.shortcuts.mute": "Mute",
 };
 
 export default settings;

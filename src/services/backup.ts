@@ -21,6 +21,8 @@ interface BackupPlaylist {
   name: string;
   description: string;
   paths: string[];
+  /** Parallel to `paths`. Absent in backups from before 1.8. */
+  fingerprints?: string[];
 }
 
 export interface AmplyBackup {
@@ -43,7 +45,7 @@ export const buildBackup = (input: {
   appVersion: string;
   now?: Date;
 }): AmplyBackup => {
-  const pathById = new Map(input.songs.map((song) => [song.id, song.path]));
+  const songById = new Map(input.songs.map((song) => [song.id, song]));
   const settings: Partial<AppSettings> = { ...input.settings };
   for (const key of MACHINE_SETTINGS) {
     delete settings[key];
@@ -65,11 +67,15 @@ export const buildBackup = (input: {
         lastSkipped: song.lastSkipped,
         totalPlaySeconds: song.totalPlaySeconds,
       })),
-    playlists: input.customPlaylists.map((playlist) => ({
-      name: playlist.name,
-      description: playlist.description,
-      paths: playlist.songIds.map((id) => pathById.get(id)).filter((path): path is string => Boolean(path)),
-    })),
+    playlists: input.customPlaylists.map((playlist) => {
+      const songs = playlist.songIds.map((id) => songById.get(id)).filter((song): song is Song => Boolean(song));
+      return {
+        name: playlist.name,
+        description: playlist.description,
+        paths: songs.map((song) => song.path),
+        fingerprints: songs.map(songFingerprint),
+      };
+    }),
     settings,
   };
 };
@@ -145,7 +151,7 @@ export const planRestore = (backup: AmplyBackup, songs: readonly Song[], customP
   }
 
   const playlists = backup.playlists.map((playlist) => {
-    const ids = playlist.paths.map((path) => resolve(path)?.id).filter((id): id is string => Boolean(id));
+    const ids = playlist.paths.map((path, index) => resolve(path, playlist.fingerprints?.[index])?.id).filter((id): id is string => Boolean(id));
     const existing = customPlaylists.find((entry) => entry.name.trim().toLowerCase() === playlist.name.trim().toLowerCase());
     const songIds = existing ? [...existing.songIds, ...ids.filter((id) => !existing.songIds.includes(id))] : [...new Set(ids)];
     return { existingId: existing?.id ?? null, name: playlist.name, description: playlist.description ?? '', songIds };

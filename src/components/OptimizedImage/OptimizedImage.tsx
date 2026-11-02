@@ -1,3 +1,4 @@
+import { Icon } from '@/components/ui/Icon';
 import { fnv1a36 as hashString } from '@/utils/hash';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
@@ -12,7 +13,11 @@ const placeholderClass = 'neu-well flex items-center justify-center text-amply-t
 /** Its own component so only the rare missing-image placeholder subscribes to the language. */
 const NoImageLabel = () => {
   const { t } = useT();
-  return <span className="text-xs">{t('common.noImage')}</span>;
+  return (
+    <span role="img" aria-label={t('common.noImage')} className="inline-flex opacity-70">
+      <Icon name="music" size={16} />
+    </span>
+  );
 };
 
 const getSrcCacheKey = (src: string): string => {

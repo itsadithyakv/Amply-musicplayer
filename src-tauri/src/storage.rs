@@ -12,6 +12,18 @@ use tauri_plugin_opener::OpenerExt;
 use crate::error::AmplyResult;
 
 pub(crate) const STORAGE_SUBFOLDERS: [&str; 4] = ["lyrics_cache", "playlists", "artist_cache", "metadata_cache"];
+/// Legacy on-disk caches. `playlists` is not one of them: it can hold the user's own data.
+const CACHE_SUBFOLDERS: [&str; 3] = ["lyrics_cache", "artist_cache", "metadata_cache"];
+/// Everything that can be fetched or computed again. Settings, playlists, listening history, library
+/// folders and the Pro license are not caches and must survive "Clear Cache".
+const CACHE_KEY_PREFIXES: [&str; 4] = ["lyrics_cache/", "artist_cache/", "metadata_cache/", "recommendations/"];
+const CACHE_KEYS: [&str; 5] = [
+    "playlists/library_cache.json",
+    "playlists/smart_cache.json",
+    "playlists/smart_cache_lite.json",
+    "lyrics_bg_cache.json",
+    "system/perf_diagnostics.json",
+];
 const DB_FILE_NAME: &str = "amply_cache.db";
 
 pub(crate) fn storage_root_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -56,7 +68,7 @@ pub(crate) fn init_storage_db(conn: &Connection) -> Result<(), String> {
     crate::audio::loudness::init(conn)
 }
 
-fn now_unix() -> i64 {
+pub(crate) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -109,6 +121,18 @@ pub(crate) fn delete_kv(conn: &Connection, key: &str) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
     stmt.execute(params![key]).map_err(|err| err.to_string())?;
     Ok(())
+}
+
+fn clear_cached_entries(conn: &Connection) -> Result<(), String> {
+    for prefix in CACHE_KEY_PREFIXES {
+        let upper = format!("{prefix}\u{10FFFF}");
+        conn.execute("DELETE FROM kv WHERE path >= ?1 AND path < ?2", params![prefix, upper])
+            .map_err(|err| err.to_string())?;
+    }
+    for key in CACHE_KEYS {
+        delete_kv(conn, key)?;
+    }
+    conn.execute_batch("VACUUM;").map_err(|err| err.to_string())
 }
 
 /// Returns every `(path, value)` whose path starts with `prefix`, ordered by path.
@@ -280,9 +304,9 @@ pub async fn clear_storage_cache(app: tauri::AppHandle) -> AmplyResult<()> {
         let db = storage_db(&app)?;
         db.with_conn(|conn| {
             crate::scan_index::clear(conn)?;
-            conn.execute_batch("DELETE FROM kv; VACUUM;").map_err(|err| err.to_string())
+            clear_cached_entries(conn)
         })?;
-        for folder in STORAGE_SUBFOLDERS {
+        for folder in CACHE_SUBFOLDERS {
             let target = db.root().join(folder);
             if target.exists() {
                 fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
@@ -316,6 +340,31 @@ pub async fn write_storage_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_the_cache_keeps_everything_that_is_not_a_cache() {
+        let conn = memory_db();
+        let kept = [
+            "settings.json",
+            "playlists/custom_playlists.json",
+            "playlists/song_activity.json",
+            "playlists/listening_events.json",
+            "library/roots.json",
+            "library/loose_files.json",
+            "entitlement/amply_pro.json",
+        ];
+        let cleared = ["lyrics_cache/a.json", "artist_cache/b.json", "metadata_cache/c.json", "recommendations/d.json", "playlists/smart_cache.json"];
+        for key in kept.iter().chain(cleared.iter()) {
+            write_kv(&conn, key, "x").unwrap();
+        }
+        clear_cached_entries(&conn).unwrap();
+        for key in kept {
+            assert_eq!(read_kv(&conn, key).unwrap().as_deref(), Some("x"), "{key} must survive");
+        }
+        for key in cleared {
+            assert_eq!(read_kv(&conn, key).unwrap(), None, "{key} must go");
+        }
+    }
 
     fn memory_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory sqlite");

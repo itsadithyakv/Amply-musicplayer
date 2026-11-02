@@ -193,6 +193,12 @@ const settings = {
   "settings.version.rate.button": "评分",
   "settings.version.rate.thanks": "感谢你为 Amply 评分！",
   "settings.version.rate.failed": "无法打开 Microsoft Store",
+  "settings.shortcuts.title": "键盘快捷键",
+  "settings.shortcuts.playPause": "播放或暂停",
+  "settings.shortcuts.seek": "后退或前进 5 秒",
+  "settings.shortcuts.track": "上一首或下一首",
+  "settings.shortcuts.volume": "降低或提高音量",
+  "settings.shortcuts.mute": "静音",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

@@ -1,4 +1,4 @@
-import { shuffle } from '@/utils/random';
+import { pickRandom } from '@/utils/random';
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
@@ -6,7 +6,9 @@ import { Badge, Button, Card, ConfirmDialog, IconButton, Kicker, Meta, Modal } f
 import { exportPlaylistFile } from '@/services/playlistImport';
 import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCollage';
 import { useLibraryStore } from '@/store/libraryStore';
+import { isProMix } from '@/services/proFeatures';
 import { usePlayerStore } from '@/store/playerStore';
+import { useProStore } from '@/store/proStore';
 import { usePlaylistDetailView } from '@/hooks/useLibraryViews';
 import { t as translate, useT } from '@/i18n';
 import { localizedPlaylistDescription, localizedPlaylistName } from '@/i18n/playlistNames';
@@ -35,6 +37,8 @@ const PlaylistDetailPage = () => {
   const setShuffleEnabled = usePlayerStore((state) => state.setShuffleEnabled);
   const navigate = useNavigate();
   const { playlist, playlistSongs, playlistIds, artworkSet } = usePlaylistDetailView(playlistId);
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const totalSeconds = useMemo(
@@ -47,6 +51,18 @@ const PlaylistDetailPage = () => {
       <div className="space-y-4 pb-8">
         <IconButton name="chevron-left" label={t('playlists.detail.back')} variant="flat" onClick={() => navigate('/playlists')} />
         <Card padding="lg" className="text-[13px] text-amply-textSecondary">{t('playlists.detail.notFound')}</Card>
+      </div>
+    );
+  }
+
+  if (!isPro && isProMix(playlist.id)) {
+    return (
+      <div className="space-y-4 pb-8">
+        <IconButton name="chevron-left" label={t('playlists.detail.back')} variant="flat" onClick={() => navigate('/playlists')} />
+        <Card padding="lg" className="flex flex-wrap items-center justify-between gap-3">
+          <p className="min-w-0 text-[13px] text-amply-textSecondary">{t('pro.mixes.locked')}</p>
+          <Button icon="lock" onClick={() => openPaywall('moreMixes')}>{t('pro.mixes.unlock')}</Button>
+        </Card>
       </div>
     );
   }
@@ -74,10 +90,11 @@ const PlaylistDetailPage = () => {
     if (playlistIds.length === 0) {
       return;
     }
-    const shuffled = shuffle(playlistIds);
-    setQueue(shuffled, shuffled[0], { playlistId: playlist.id });
+    // Shuffle first, so the queue keeps the playlist's order for when shuffle is turned off again.
+    const first = pickRandom(playlistIds) ?? playlistIds[0];
     setShuffleEnabled(true);
-    void playSongById(shuffled[0], false);
+    setQueue(playlistIds, first, { playlistId: playlist.id });
+    void playSongById(first, false);
     void recordPlaylistUse(playlist.id);
   };
 

@@ -1,6 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
-import { IconButton, Surface } from '@/components/ui';
+import { Icon, IconButton, Surface } from '@/components/ui';
 import { useT } from '@/i18n';
 
 interface AlbumCardProps {
@@ -44,7 +44,7 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
           src={artwork}
           alt={title}
           className="h-full w-full object-cover"
-          placeholderContent={<span className="text-xs uppercase tracking-[0.14em] text-amply-textMuted">Amply</span>}
+          placeholderContent={<Icon name="music" size={28} className="text-amply-textMuted opacity-60" />}
         />
         {onInfo ? (
           <IconButton

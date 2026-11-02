@@ -53,7 +53,7 @@ const library = {
   "library.gameMode.exit": "गेम मोड से बाहर निकलें",
   "library.gameMode.empty": "अभी कोई प्लेलिस्ट नहीं है। सामान्य मोड में एक बनाएँ।",
   "library.gameMode.footnote": "गेम मोड ऐप को सिर्फ़ प्लेलिस्ट चलाने और बुनियादी प्लेबैक कंट्रोल तक सीमित कर देता है, ताकि प्लेबैक जितना हो सके उतना हल्का रहे।",
-  "library.home.title": "डिस्कवर",
+  "library.home.title": "होम",
   "library.home.refreshMixes": "मिक्स रीफ़्रेश करें",
   "library.home.smartPlaylists": "स्मार्ट प्लेलिस्ट",
   "library.home.refreshing": "प्लेलिस्ट रीफ़्रेश हो रही हैं…",

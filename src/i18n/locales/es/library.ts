@@ -53,7 +53,7 @@ const library = {
   "library.gameMode.exit": "Salir del modo juego",
   "library.gameMode.empty": "Aún no hay listas. Crea una en el modo normal.",
   "library.gameMode.footnote": "El modo juego reduce la app a abrir listas y a los controles básicos de reproducción, para que la reproducción sea lo más ligera posible.",
-  "library.home.title": "Descubrir",
+  "library.home.title": "Inicio",
   "library.home.refreshMixes": "Actualizar mixes",
   "library.home.smartPlaylists": "Listas inteligentes",
   "library.home.refreshing": "Actualizando listas…",

@@ -53,7 +53,7 @@ const library = {
   "library.gameMode.exit": "退出游戏模式",
   "library.gameMode.empty": "还没有播放列表。请在普通模式下创建。",
   "library.gameMode.footnote": "游戏模式将应用精简为启动播放列表和基本播放控制，让播放尽可能轻量。",
-  "library.home.title": "发现",
+  "library.home.title": "首页",
   "library.home.refreshMixes": "刷新合辑",
   "library.home.smartPlaylists": "智能播放列表",
   "library.home.refreshing": "正在刷新播放列表…",

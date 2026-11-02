@@ -1,3 +1,5 @@
+import { pathKey } from '@/services/playlistFiles';
+import { withUniqueIds } from '@/services/songIds';
 import { getFlag } from '@/services/runtimeFlags';
 import { t } from '@/i18n';
 import { dayKey, isoWeekKey, seedFromKey } from '@/utils/dateSeed';
@@ -120,7 +122,8 @@ interface LibraryState {
   initialize: () => Promise<void>;
   scanLibrary: (pathsOverride?: string[]) => Promise<void>;
   /** Adds songs from outside the library folders (opened or dropped files) and remembers them. */
-  addLooseSongs: (songs: Song[]) => Promise<void>;
+  /** Adds files from outside the library folders; returns them as the library now knows them. */
+  addLooseSongs: (songs: Song[]) => Promise<Song[]>;
   setLibraryPaths: (paths: string[]) => Promise<void>;
   addLibraryPath: (path: string) => Promise<void>;
   removeLibraryPath: (path: string) => Promise<void>;
@@ -1910,7 +1913,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     try {
       // The nonce reseeds every mix, the Daily Mix included; it is persisted with the weekly cache.
       smartRegenNonce = seed;
-      const generated = await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, {
+      // The merged view: `songs` lags this session's favourites, which the Favorites mix must show.
+      const generated = await refreshSmartPlaylists([...get().getSongsById().values()], get().smartPlaylistOverrides, {
         force: true,
       });
       const customPlaylists = get().customPlaylists;
@@ -2097,7 +2101,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         (path) => !rootPrefixes.some((prefix) => toPathPrefix(path).startsWith(prefix)),
       );
       const looseSongs = await probeAudioFiles(loosePaths).catch(() => [] as Song[]);
-      const flattened = [...scanResults.flatMap((result) => result.songs), ...looseSongs, ...carriedOver];
+      // Ids the library already has keep their song; a different file on the same id gets its own.
+      const knownIds = new Map(get().songs.map((song) => [song.id, song.path]));
+      const scanned = [...scanResults.flatMap((result) => result.songs), ...looseSongs];
+      const claimed = new Map(
+        [...knownIds].filter(([id, path]) => scanned.some((song) => song.id === id && song.path === path)),
+      );
+      const flattened = [...withUniqueIds(scanned, claimed), ...carriedOver];
       const dedupedById = new Map<string, Song>();
       await yieldToMain();
 
@@ -2241,10 +2251,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   addLooseSongs: async (incoming) => {
     if (!incoming.length) {
-      return;
+      return [];
     }
-    const known = new Set(get().songs.map((song) => song.id));
-    const added = incoming.filter((song) => !known.has(song.id));
+    const byPath = new Map(get().songs.map((song) => [pathKey(song.path), song]));
+    const fresh = incoming.filter((song) => !byPath.has(pathKey(song.path)));
+    const added = withUniqueIds(fresh, new Map(get().songs.map((song) => [song.id, song.path])));
+    const addedByPath = new Map(added.map((song) => [pathKey(song.path), song]));
+    const resolved = incoming.map((song) => byPath.get(pathKey(song.path)) ?? addedByPath.get(pathKey(song.path)) ?? song);
     const rootPrefixes = get().libraryPaths.filter(isAbsoluteLibraryPath).map(toPathPrefix);
     const outside = incoming
       .map((song) => song.path)
@@ -2254,12 +2267,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       await writeStorageJson(looseFilesPath, [...new Set([...stored, ...outside])]);
     }
     if (!added.length) {
-      return;
+      return resolved;
     }
     const songs = [...get().songs, ...added];
     set({ songs, libraryVersion: get().libraryVersion + 1 });
     recordSongArrayReplacement('library-loose-files', { songs: songs.length });
     await persistLibrary(songs, get().customPlaylists);
+    return resolved;
   },
 
   setLibraryPaths: async (paths) => {

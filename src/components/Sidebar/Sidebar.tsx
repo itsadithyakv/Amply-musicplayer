@@ -5,7 +5,10 @@ import logoIcon from '@/assets/icons/LogoAmply.png';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { Divider } from '@/components/ui/Divider';
+import { ProLockIcon } from '@/components/Pro/ProGate';
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { useLibraryStore } from '@/store/libraryStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useT, type MessageKey } from '@/i18n';
 
@@ -63,15 +66,20 @@ const MetadataStatus = () => {
 /** One-click mini player switch so the overlay can be toggled without opening Settings. */
 const OverlayQuickToggle = () => {
   const { t } = useT();
-  const enabled = usePlayerStore((state) => state.settings.miniNowPlayingOverlay);
+  const enabled = useEffectiveSetting((settings) => settings.miniNowPlayingOverlay);
   const setEnabled = usePlayerStore((state) => state.setMiniNowPlayingOverlay);
+  const isPro = useProStore((state) => state.isPro);
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
       title={enabled ? t('common.sidebar.hideMiniPlayer') : t('common.sidebar.showMiniPlayer')}
-      onClick={() => void setEnabled(!enabled)}
+      onClick={() => {
+        if (requirePro('miniPlayer')) {
+          void setEnabled(!enabled);
+        }
+      }}
       className={clsx(
         'neu-interactive sidebar-nav flex w-full items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] lg:justify-start',
         'text-amply-textSecondary hover:neu-flat hover:text-amply-textPrimary',
@@ -79,7 +87,59 @@ const OverlayQuickToggle = () => {
     >
       <Icon name="overlay" size={18} />
       <span className="hidden min-w-0 flex-1 text-left lg:inline">{t('common.sidebar.miniPlayer')}</span>
-      <span aria-hidden="true" data-checked={enabled} className="neu-toggle hidden scale-90 lg:block" />
+      {isPro ? (
+        <span aria-hidden="true" data-checked={enabled} className="neu-toggle hidden scale-90 lg:block" />
+      ) : (
+        <span className="hidden lg:block">
+          <ProLockIcon />
+        </span>
+      )}
+    </button>
+  );
+};
+
+/** Which plan this install is on, at a glance. Free opens the upgrade dialog; Pro is just a label. */
+const PlanChip = () => {
+  const { t } = useT();
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
+  const plan = isPro ? t('pro.plan.pro') : t('pro.plan.free');
+  const chipClass = clsx(
+    'hidden min-h-6 items-center rounded-full px-2.5 text-[10px] font-bold uppercase leading-none tracking-[0.14em] lg:inline-flex',
+    isPro ? 'neu-pressed-sm text-amply-accent' : 'neu-raised-sm neu-interactive text-amply-textSecondary hover:text-amply-textPrimary',
+  );
+  if (isPro) {
+    return (
+      <span className={chipClass} title={t('pro.plan.label', { plan })}>
+        {plan}
+      </span>
+    );
+  }
+  return (
+    <button type="button" className={chipClass} title={t('pro.plan.label', { plan })} onClick={() => openPaywall()}>
+      {plan}
+    </button>
+  );
+};
+
+/** Free installs only; quiet enough to pass as navigation, and gone for good after buying. */
+const UpgradeEntry = () => {
+  const { t } = useT();
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
+  if (isPro) {
+    return null;
+  }
+  const label = t('pro.sidebar.upgrade');
+  return (
+    <button
+      type="button"
+      title={label}
+      onClick={() => openPaywall()}
+      className="neu-interactive sidebar-nav flex w-full items-center justify-center gap-3 rounded-full px-3 py-2.5 text-[12px] font-medium tracking-[0.01em] text-amply-accent hover:neu-flat lg:justify-start"
+    >
+      <Icon name="sparkle" size={18} />
+      <span className="hidden lg:inline">{label}</span>
     </button>
   );
 };
@@ -89,6 +149,7 @@ const Sidebar = () => (
     <div className="anim-rise mb-8 flex items-center justify-center gap-3 lg:justify-start lg:px-2">
       <img src={logoIcon} alt="Amply" className="h-10 w-10 shrink-0 object-contain" />
       <p className="hidden font-display text-[24px] font-black leading-none tracking-[-0.045em] text-amply-textPrimary lg:block">Amply</p>
+      <PlanChip />
     </div>
     <MetadataStatus />
 
@@ -101,6 +162,7 @@ const Sidebar = () => (
       <div className="mt-auto pt-6">
         <Divider className="my-4" />
         <div className="space-y-2">
+          <UpgradeEntry />
           <OverlayQuickToggle />
           {secondaryNav.map((item) => (
             <NavEntry key={item.path} item={item} />

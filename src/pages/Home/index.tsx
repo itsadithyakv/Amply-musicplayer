@@ -9,6 +9,7 @@ import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistPro
 import { getArtistLookupContext } from '@/utils/artists';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import { useLibraryVersions } from '@/store/libraryDataStore';
 import type { Playlist, Song } from '@/types/music';
 import { buildArtworkSet, pickPlaylistArtwork } from '@/services/playlistArtworkService';
@@ -56,6 +57,7 @@ const HomePage = () => {
 
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
+  const isPro = useProStore((state) => state.isPro);
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
@@ -402,8 +404,13 @@ const HomePage = () => {
           {showMoreMixesCard ? (
             <ExploreMixesCard
               artworkSongs={exploreArtworkSongs}
-              expanded={showMoreMixes}
-              onToggle={() => setShowMoreMixes((value) => !value)}
+              expanded={showMoreMixes && isPro}
+              locked={!isPro}
+              onToggle={() => {
+                if (requirePro('moreMixes')) {
+                  setShowMoreMixes((value) => !value);
+                }
+              }}
             />
           ) : null}
         </div>
@@ -412,7 +419,7 @@ const HomePage = () => {
           <EmptyNote>{t('library.home.noSmartPlaylists')}</EmptyNote>
         ) : null}
 
-        {showMoreMixes ? (
+        {showMoreMixes && isPro ? (
           <div id="home-all-mixes" className="space-y-3">
             <Kicker>{t('library.home.allMixes')}</Kicker>
             {smartMixesAll.length ? (

@@ -6,10 +6,15 @@ import { SettingField, SettingsNote, SettingsSection } from '@/pages/Settings/Se
 import { buildBackup, parseBackup, planRestore } from '@/services/backup';
 import { findDuplicateGroups, type DuplicateGroup } from '@/services/duplicates';
 import { openTextFile, saveTextFile } from '@/services/fileDialogs';
+import { ProBadge } from '@/components/Pro/ProGate';
 import { useLibraryStore } from '@/store/libraryStore';
+import { useProStore } from '@/store/proStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { Song } from '@/types/music';
 import { formatDuration } from '@/utils/time';
+
+/** `state.songs` lags this session's plays and favourites; the merged view has them. */
+const liveSongs = (): Song[] => [...useLibraryStore.getState().getSongsById().values()];
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -97,7 +102,8 @@ const historyCounts = (tp: ReturnType<typeof useT>['tp'], songs: number, playlis
 /** Duplicate finder, and backup / restore of listening history, playlists and settings. */
 export const LibraryToolsSection = () => {
   const { t, tp } = useT();
-  const songs = useLibraryStore((state) => state.songs);
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
   const [duplicates, setDuplicates] = useState<DuplicateGroup[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,7 +115,7 @@ export const LibraryToolsSection = () => {
     try {
       const library = useLibraryStore.getState();
       const backup = buildBackup({
-        songs: library.songs,
+        songs: liveSongs(),
         customPlaylists: library.customPlaylists,
         settings: usePlayerStore.getState().settings,
         appVersion: packageInfo.version,
@@ -150,7 +156,7 @@ export const LibraryToolsSection = () => {
         return;
       }
       const library = useLibraryStore.getState();
-      const plan = planRestore(backup, library.songs, library.customPlaylists);
+      const plan = planRestore(backup, liveSongs(), library.customPlaylists);
       await library.applyRestorePlan(plan);
       await usePlayerStore.getState().restoreSettings(plan.settings);
       setNote(
@@ -184,9 +190,15 @@ export const LibraryToolsSection = () => {
           }
           icon="list"
           trailing={
-            <Button size="sm" onClick={() => setDuplicates(findDuplicateGroups(songs))}>
-              {t('settings.libraryTools.duplicates.find')}
-            </Button>
+            isPro ? (
+              <Button size="sm" onClick={() => setDuplicates(findDuplicateGroups(liveSongs()))}>
+                {t('settings.libraryTools.duplicates.find')}
+              </Button>
+            ) : (
+              <button type="button" onClick={() => openPaywall('duplicateFinder')}>
+                <ProBadge />
+              </button>
+            )
           }
         />
         <SettingField

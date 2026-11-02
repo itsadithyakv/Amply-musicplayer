@@ -73,7 +73,7 @@ export const normalizeSettings = (input: unknown): AppSettings => {
     appTheme: raw.appTheme === 'dark' ? 'dark' : 'light',
     language: raw.language === 'system' || isLanguageCode(raw.language) ? (raw.language as AppSettings['language']) : d.language,
     crossfadeEnabled: bool(raw.crossfadeEnabled, d.crossfadeEnabled),
-    crossfadeDurationSec: num(raw.crossfadeDurationSec, d.crossfadeDurationSec, 1, 20),
+    crossfadeDurationSec: num(raw.crossfadeDurationSec, d.crossfadeDurationSec, 1, 12),
     gaplessEnabled: bool(raw.gaplessEnabled, d.gaplessEnabled),
     volumeNormalization:
       raw.volumeNormalization === 'off' || raw.volumeNormalization === 'album' || raw.volumeNormalization === 'track'

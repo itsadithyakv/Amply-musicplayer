@@ -74,7 +74,6 @@ export const LibraryDataSection = () => {
 
         <Button
           block
-          variant="danger"
           icon="trash"
           disabled={clearingCache}
           onClick={async () => {

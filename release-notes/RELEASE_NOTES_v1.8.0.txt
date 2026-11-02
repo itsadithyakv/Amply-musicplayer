@@ -1,0 +1,53 @@
+Amply v1.8.0
+Release date: unreleased
+
+Amply is free, with Amply Pro
+- Amply stays free: your whole library, every format, all playback, lyrics, artwork, artist info,
+  playlists, twelve smart mixes, a week of listening stats, backups and M3U import and export.
+  No ads and no limits on library size.
+- Amply Pro is a one-time purchase in the Microsoft Store (no subscription). It adds the mini
+  player, crossfade, the full equalizer (your own curve plus the Warm and Club presets), per-album
+  volume normalization, genre and mood mixes, mix tuning with Last.fm and MusicBrainz suggestions,
+  30-day and all-time stats, the tag editor, the duplicate finder, Game Mode and the Aurora and
+  Mono visualizer styles.
+- The price is shown in your own currency. "Restore purchase" in the Pro dialog picks up a
+  purchase made on another PC with the same Microsoft account.
+- Your plan (Free or Pro) is shown next to the Amply logo and at the top of Settings.
+- If you were already using a feature that is now in Pro, Amply says so once. Your settings are
+  kept and come back as soon as you upgrade.
+- Listening history keeps recording on the free plan, so upgrading shows all of it.
+
+Playback
+- Crossfade now really overlaps songs at the end of a track; before, the next song faded in after
+  the last one had stopped.
+- Shuffle plays every song in the queue once before repeating, and the queue panel shows the real
+  order. Turning shuffle off goes back to the queue's own order.
+- Previous walks back through what you played instead of bouncing between two songs.
+- A song deleted or moved while it was queued is skipped instead of stopping playback.
+- Turning shuffle on while repeating one song no longer keeps looping that song.
+- Removing the playing song from the queue no longer skips the next one.
+- Pausing during a crossfade no longer leaves the next song quiet.
+- The sleep timer is no longer undone when another app stops playing audio.
+- Your queue, Up Next, shuffle, repeat and volume are remembered between launches.
+- Closing Amply saves your place and settings before the window goes.
+
+Look and feel
+- Softer depth throughout: shadows and highlights are lighter and shorter, so surfaces read as
+  gently raised instead of embossed. Switches keep a thin outline so an "off" switch is easy to see.
+- Missing artwork shows a quiet music-note icon instead of the words "No image" or "Amply".
+- Song lists have one "Add to playlist" button per row instead of a drop-down in every row, which
+  gives titles, albums and genres room to breathe.
+- The Home page is called Home, like its sidebar entry.
+- Settings lists the keyboard shortcuts.
+- Playback speed goes from 0.5x to 2x.
+
+Library
+- Clear Cache only clears caches. It used to also erase playlists, favourites, play counts,
+  settings and library folders.
+- Backups and restores include this session's plays and favourites, and restored playlists follow
+  their songs to a new drive letter.
+- Files whose names differ only in spaces, punctuation or non-Latin letters, in different folders
+  or opened from outside the library, are no longer mixed up with each other.
+- Titles read from file names keep words like "Birthday", "Video" or "Clean" that belong to them,
+  and titles in any script no longer risk failing the scan.
+- The mini player no longer keeps the last cover for a song without one.

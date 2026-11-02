@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useMemo, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
@@ -6,7 +6,9 @@ import { Badge, Button, ConfirmDialog, IconButton, Modal, PageHeader, Surface } 
 import { importPlaylistFile } from '@/services/playlistImport';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { useLibraryStore } from '@/store/libraryStore';
+import { isProMix } from '@/services/proFeatures';
 import { usePlayerStore } from '@/store/playerStore';
+import { useProStore } from '@/store/proStore';
 import type { Playlist } from '@/types/music';
 import { type PlaylistCardView } from '@/services/libraryRepository';
 import { useLibraryTabView, usePlaylistCardsView } from '@/hooks/useLibraryViews';
@@ -113,7 +115,14 @@ const PlaylistsPage = () => {
   const deleteCustomPlaylist = useLibraryStore((state) => state.deleteCustomPlaylist);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
-  const playlistCards = usePlaylistCardsView();
+  const allPlaylistCards = usePlaylistCardsView();
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
+  const playlistCards = useMemo(
+    () => (isPro ? allPlaylistCards : allPlaylistCards.filter((card) => !isProMix(card.playlist.id))),
+    [allPlaylistCards, isPro],
+  );
+  const lockedMixes = allPlaylistCards.length - playlistCards.length;
   const navigate = useNavigate();
   const [showComposer, setShowComposer] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
@@ -157,6 +166,13 @@ const PlaylistsPage = () => {
           </div>
         }
       />
+
+      {lockedMixes > 0 ? (
+        <Surface variant="raised-sm" radius="md" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 text-[13px] text-amply-textSecondary">{tp('pro.playlists.banner', lockedMixes)}</p>
+          <Button size="sm" icon="lock" onClick={() => openPaywall('moreMixes')}>{t('pro.mixes.unlock')}</Button>
+        </Surface>
+      ) : null}
 
       {playlistCards.length ? (
         <Surface variant="pressed" radius="lg" className="anim-rise h-[70vh] min-w-0 overflow-hidden p-1">

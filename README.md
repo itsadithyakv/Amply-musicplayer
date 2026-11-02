@@ -8,7 +8,7 @@ soft neumorphic interface with light and dark themes.
 Nothing about your library leaves the machine except the metadata lookups you can switch off.
 
 - **Runtime**: Tauri 2 (WebView2 on Windows), React 18 + TypeScript frontend, Rust backend
-- **Version**: 1.7.0
+- **Version**: 1.8.0
 - **Platform**: Windows (the audio and metadata layers are portable; the focus watcher and media-key
   hook are Windows-only and compile to no-ops elsewhere)
 
@@ -21,6 +21,7 @@ Nothing about your library leaves the machine except the metadata lookups you ca
 - [Metadata pipeline](#metadata-pipeline)
 - [Design system](#design-system)
 - [Performance](#performance)
+- [Free and Pro](#free-and-pro)
 - [Security model](#security-model)
 - [Development](#development)
 - [Project structure](#project-structure)
@@ -34,7 +35,7 @@ Nothing about your library leaves the machine except the metadata lookups you ca
 
 | Feature | How it is built |
 |---|---|
-| Folder scanning with incremental merge | `scan_music` in `src-tauri/src/library.rs` walks the roots with `walkdir` and reads tags in parallel. A per-file index (`scan_index.rs`, its own SQLite table keyed by path with size + mtime) means a rescan only re-reads changed files: the 1272-song reference library rescans in ~50 ms instead of ~2.7 s. Results merge into the cached library, so play counts and favourites survive. |
+| Folder scanning with incremental merge | `scan_music` in `src-tauri/src/library.rs` walks the roots with `walkdir` and reads tags in parallel. A per-file index (`scan_index.rs`, its own SQLite table keyed by path with size + mtime) means a rescan only re-reads changed files: the 1272-song reference library rescans in ~50 ms instead of ~2.7 s. Results merge into the cached library, so play counts and favourites survive. Ids come from the path, so two paths can fold to one id; `withUniqueIds` (`services/songIds.ts`) keeps the existing owner's id and suffixes the other with a path hash, as `library.rs` does inside one scan. |
 | Tag reading | `lofty` 0.25 — title, artist, album, album artist, genre, track number, recording date, duration, ReplayGain track/album gain and track peak (through lofty's format-independent keys), and the embedded cover picture. Missing titles fall back to the filename. |
 | Supported formats | mp3, flac, wav, ogg/vorbis, m4a/aac (symphonia decoders, declared in `Cargo.toml`). Extensions without a decoder are not listed as supported. |
 | Live folder watching | `library_watch.rs` watches every root with `notify`; bursts of changes (copying an album) coalesce into one `amply://library-changed` after 3 s of quiet, and the frontend runs an index-backed rescan. |
@@ -57,13 +58,13 @@ Nothing about your library leaves the machine except the metadata lookups you ca
 |---|---|
 | Native audio engine | `rodio` 0.22 on a dedicated thread that owns the output device and the sink; the frontend talks to it through `audio_*` Tauri commands and a `mpsc` channel. |
 | Gapless / preloading | `audio_preload` reads whole files into `Arc<[u8]>` and every decoder built from one shares that buffer, so queueing the next track costs no copy. |
-| Crossfade | Two sinks with a linear volume ramp (`fade_in` / `fade_out` in `NativeAudio`), duration configurable 1–20 s. Mutually exclusive with gapless. |
+| Crossfade (Pro) | Two sinks with a linear volume ramp (`fade_in` / `fade_out` in `NativeAudio`), duration configurable 1–12 s. The next song starts that long before the current one ends (`crossfade.ts`), so the two really overlap. Mutually exclusive with gapless. |
 | 5-band EQ | Biquad peaking filters at 60 Hz, 250 Hz, 1 kHz, 4 kHz, 12 kHz (`src-tauri/src/audio/dsp.rs`), ±12 dB. Gains live in atomics, so dragging a band re-computes coefficients in place without rebuilding the sink. Presets: flat, warm, bass, treble, vocal, club, custom. |
 | Volume normalization | Settings → Playback: per song (default), per album, or off. ReplayGain tags are used when present (shifted from -18 to the -14 LUFS target); untagged files are measured once with EBU R128 (`audio/loudness.rs`, `ebur128`) in the background while the previous song plays and cached per file. Boosts never exceed +6 dB or the file's peak, and a gain only lands in a song's first 4 s, so the level never jumps mid-song (`loudnessGain.ts`). |
 | Playback speed | `SharedSpeed`, a rate-aware wrapper that reads an atomic factor. Changing speed folds the current position first, so the progress bar stays truthful at 0.5×–2×. |
 | Seeking | `Sink::try_seek` through the whole DSP chain (each stage implements `try_seek` and resets its filter state), with a decode-and-discard fallback if a container refuses. |
 | Output device selection | `audio_list_output_devices` enumerates cpal devices; switching rebuilds the stream and resumes at the same position. |
-| Queue, shuffle, repeat | `src/store/playerStore.ts`. Shuffle is a seeded Fisher–Yates (`src/utils/random.ts`) so the order is reproducible; repeat loops the current track by queueing a second copy rather than using `repeat_infinite` (which would buffer the whole decoded song). |
+| Queue, shuffle, repeat | `src/store/playerStore.ts`. Shuffle reorders the queue itself with a Fisher–Yates pass (`shuffledQueue`), so every song plays once before any repeats and the queue panel shows the real order; the original order is kept (and persisted) so turning shuffle off restores it; repeat loops the current track by queueing a second copy rather than using `repeat_infinite` (which would buffer the whole decoded song). |
 | Sleep timer | Countdown with auto-stop, in `src/pages/Settings/SleepTimerSection.tsx`. |
 | Spectrum analyser | `SpectrumSource` taps the signal, splits it into 8 bands and publishes smoothed levels into atomics; the audio thread emits `amply://audio-spectrum` at 20 Hz while playing and the visualizer is enabled. |
 | Playback recording | A play counts once it reaches 30 s or half the track (`QUALIFIED_PLAY_SEC`), a natural finish records exactly once, and any session under 60 % of the duration records a skip with its position. This feeds the mix engine. |
@@ -351,6 +352,38 @@ The work that matters on a large library, and where it lives:
   unmounts the visualizer until it recovers.
 - **A perf diagnostics ring buffer** (`perfDiagnostics.ts`) records marks and interaction latencies;
   `window.__AMPLY_DEBUG__.getPerfSnapshot()` dumps it in a dev build.
+
+---
+
+## Free and Pro
+
+Amply is free, with one optional durable Microsoft Store add-on: **Amply Pro** (product id
+`amply_pro`, Store id `9PHXSQW5654D`).
+
+| Free | Pro |
+|---|---|
+| Whole library, every format, folder watching | Tag editor, duplicate finder |
+| All playback, gapless, speed, output device, sleep timer, per-song normalization | Crossfade, per-album normalization |
+| EQ presets Flat, Bass, Treble, Vocal | Custom 5-band curve, Warm and Club presets |
+| Twelve core smart mixes | Genre and mood mixes, mix tuning, Last.fm and MusicBrainz signals |
+| Lyrics, artwork, artist info, recommendations from listening history | |
+| Listening stats, last 7 days (history always records) | Last 30 days and all time |
+| Themes, languages, media controls, Ember visualizer | Mini player, Game Mode, Aurora and Mono visualizers |
+| Custom playlists, M3U import and export, backup and restore | |
+
+How it is built:
+
+- **The Store is the source of truth.** `platform/store_license.rs` reads the add-on license through
+  `Windows.Services.Store`, and the price comes from the Store, formatted for the user's market, so
+  prices are only ever set in Partner Center. A definite "no" (a refund) ends Pro at once; when the
+  Store cannot answer, the last confirmed purchase is honoured for 30 days.
+- **One rule for what runs.** `state.settings` always holds what the user chose. `limitSettings`
+  (`services/proFeatures.ts`) gives what a free install runs on, and `audioEngine.applySettings` and
+  `useEffectiveSetting` apply it, so a Pro setting is never overwritten and returns on purchase.
+- **Plan status.** The sidebar shows FREE or PRO beside the logo, and the Settings card says which plan is active.
+- **One dialog.** Every lock calls `requirePro(feature)` or `openPaywall(feature)`; `ProPaywall` leads
+  with that feature. Someone already using a feature that became Pro is told so, once.
+- **Testing.** A debug build run with `AMPLY_DEV_PRO=1` behaves as Pro. Release builds ignore it.
 
 ---
 

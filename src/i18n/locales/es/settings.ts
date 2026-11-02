@@ -193,6 +193,12 @@ const settings = {
   "settings.version.rate.button": "Calificar",
   "settings.version.rate.thanks": "¡Gracias por calificar Amply!",
   "settings.version.rate.failed": "No se pudo abrir Microsoft Store",
+  "settings.shortcuts.title": "Atajos de teclado",
+  "settings.shortcuts.playPause": "Reproducir o pausar",
+  "settings.shortcuts.seek": "Retroceder o avanzar 5 segundos",
+  "settings.shortcuts.track": "Canción anterior o siguiente",
+  "settings.shortcuts.volume": "Bajar o subir el volumen",
+  "settings.shortcuts.mute": "Silenciar",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

@@ -52,7 +52,7 @@ const library = {
   "library.gameMode.exit": "Exit Game Mode",
   "library.gameMode.empty": "No playlists yet. Create one in normal mode.",
   "library.gameMode.footnote": "Game Mode trims the app down to playlist launch and basic transport controls for the lightest possible playback path.",
-  "library.home.title": "Discover",
+  "library.home.title": "Home",
   "library.home.refreshMixes": "Refresh mixes",
   "library.home.smartPlaylists": "Smart Playlists",
   "library.home.refreshing": "Refreshing playlists...",

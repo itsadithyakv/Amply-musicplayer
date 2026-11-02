@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { LockedRow } from '@/components/Pro/ProGate';
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import { Select, Slider, Toggle } from '@/components/ui';
 import { isTauri } from '@/services/storageService';
 import { listOutputDevices, type OutputDeviceInfo } from '@/services/audioDeviceService';
@@ -11,8 +14,9 @@ export const PlaybackSection = () => {
   const formatSpeed = (value: number) =>
     `${new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}x`;
   const crossfadeDurationSec = usePlayerStore((state) => state.settings.crossfadeDurationSec);
-  const crossfadeEnabled = usePlayerStore((state) => state.settings.crossfadeEnabled);
-  const gaplessEnabled = usePlayerStore((state) => state.settings.gaplessEnabled);
+  const crossfadeEnabled = useEffectiveSetting((settings) => settings.crossfadeEnabled);
+  const gaplessEnabled = useEffectiveSetting((settings) => settings.gaplessEnabled);
+  const isPro = useProStore((state) => state.isPro);
   const outputDeviceName = usePlayerStore((state) => state.settings.outputDeviceName);
   const playbackSpeed = usePlayerStore((state) => state.settings.playbackSpeed);
 
@@ -21,7 +25,7 @@ export const PlaybackSection = () => {
   const setCrossfadeEnabled = usePlayerStore((state) => state.setCrossfadeEnabled);
   const setCrossfadeDuration = usePlayerStore((state) => state.setCrossfadeDuration);
   const setGaplessEnabled = usePlayerStore((state) => state.setGaplessEnabled);
-  const volumeNormalization = usePlayerStore((state) => state.settings.volumeNormalization);
+  const volumeNormalization = useEffectiveSetting((settings) => settings.volumeNormalization);
   const setVolumeNormalization = usePlayerStore((state) => state.setVolumeNormalization);
 
   const [outputDevices, setOutputDevices] = useState<OutputDeviceInfo[]>([]);
@@ -70,6 +74,7 @@ export const PlaybackSection = () => {
           </SettingField>
         ) : null}
 
+        {!isPro ? <LockedRow feature="crossfade" /> : <>
         <Toggle
           label={t('settings.playback.crossfade.label')}
           description={t('settings.playback.crossfade.description')}
@@ -95,6 +100,7 @@ export const PlaybackSection = () => {
             }}
           />
         </SettingField>
+        </>}
 
         <Toggle
           label={t('settings.playback.gapless.label')}
@@ -114,13 +120,13 @@ export const PlaybackSection = () => {
             value={volumeNormalization}
             onChange={(event) => {
               const next = event.target.value;
-              if (next === 'off' || next === 'track' || next === 'album') {
+              if (next === 'off' || next === 'track' || (next === 'album' && requirePro('albumNormalization'))) {
                 void setVolumeNormalization(next);
               }
             }}
           >
             <option value="track">{t('settings.playback.normalization.track')}</option>
-            <option value="album">{t('settings.playback.normalization.album')}</option>
+            <option value="album">{isPro ? t('settings.playback.normalization.album') : t('pro.option', { name: t('settings.playback.normalization.album') })}</option>
             <option value="off">{t('settings.playback.normalization.off')}</option>
           </Select>
         </SettingField>
@@ -128,8 +134,8 @@ export const PlaybackSection = () => {
         <SettingField label={t('settings.playback.speed.label')} trailing={formatSpeed(playbackSpeed)}>
           <Slider
             value={playbackSpeed}
-            min={0.75}
-            max={1.5}
+            min={0.5}
+            max={2}
             step={0.05}
             ariaLabel={t('settings.playback.speed.label')}
             formatValue={formatSpeed}

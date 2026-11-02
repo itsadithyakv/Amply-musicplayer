@@ -6,12 +6,17 @@ import { useT } from '@/i18n';
 import { isTauri } from '@/services/storageService';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro } from '@/store/proStore';
 import type { Song } from '@/types/music';
 
 /** Which song the editor is open for. One editor serves every list, so rows only call `open`. */
 export const useSongEditor = create<{ songId: string | null; open: (songId: string) => void; close: () => void }>((set) => ({
   songId: null,
-  open: (songId) => set({ songId }),
+  open: (songId) => {
+    if (requirePro('tagEditor')) {
+      set({ songId });
+    }
+  },
   close: () => set({ songId: null }),
 }));
 

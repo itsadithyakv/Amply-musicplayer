@@ -10,6 +10,8 @@ import {
 } from '@/services/listeningStats';
 import type { ListeningEvent } from '@/services/mixEngine/types';
 import { useT } from '@/i18n';
+import { isProStatsRange } from '@/services/proFeatures';
+import { requirePro, useProStore } from '@/store/proStore';
 import { getListeningEvents, loadListeningHistory, useLibraryStore } from '@/store/libraryStore';
 import { ColumnChart, type Column } from './ColumnChart';
 
@@ -64,7 +66,11 @@ const dayLabel = (day: string, long: boolean, language: string) => {
 const StatsPage = () => {
   const { t, tp, language } = useT();
   const compact = useMemo(() => new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 }), [language]);
-  const [range, setRange] = usePersistedPreference<StatsRange>('stats.range', isStatsRange, '30d');
+  const [savedRange, setRange] = usePersistedPreference<StatsRange>('stats.range', isStatsRange, '30d');
+  const isPro = useProStore((state) => state.isPro);
+  // History keeps recording on every install, so buying Pro reveals all of it, not just what follows.
+  const range: StatsRange = isPro ? savedRange : '7d';
+  const proTab = (label: string) => (isPro ? label : t('pro.option', { name: label }));
   // Recompute when plays are recorded or the library changes.
   const activityVersion = useLibraryStore((state) => state.activityVersion);
   const libraryVersion = useLibraryStore((state) => state.libraryVersion);
@@ -110,11 +116,15 @@ const StatsPage = () => {
       <SegmentedTabs
         ariaLabel={t('stats.range.label')}
         value={range}
-        onChange={setRange}
+        onChange={(next) => {
+          if (!isProStatsRange(next) || requirePro('fullStats')) {
+            setRange(next);
+          }
+        }}
         tabs={[
           { label: t('stats.range.7d'), value: '7d' },
-          { label: t('stats.range.30d'), value: '30d' },
-          { label: t('stats.range.all'), value: 'all' },
+          { label: proTab(t('stats.range.30d')), value: '30d' },
+          { label: proTab(t('stats.range.all')), value: 'all' },
         ]}
       />
 

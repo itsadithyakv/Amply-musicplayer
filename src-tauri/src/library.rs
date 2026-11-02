@@ -346,7 +346,9 @@ fn clean_title(raw: &str) -> String {
             title.replace_range(start..=end, "");
         }
     }
-    let lowered = title.to_lowercase();
+    // ASCII lowercasing keeps byte offsets, so they stay valid for slicing `title` whatever script
+    // it is in; a full to_lowercase can change lengths and slice mid-character.
+    let lowered = title.to_ascii_lowercase();
     let cut = [" feat.", " ft.", " featuring ", " prod.", " produced by "]
         .iter()
         .filter_map(|token| lowered.find(token))
@@ -354,14 +356,19 @@ fn clean_title(raw: &str) -> String {
     if let Some(idx) = cut {
         title = title[..idx].to_string();
     }
-    let noise = [
-        "official", "audio", "video", "lyrics", "lyric", "visualizer", "hq", "hd",
-        "high quality", "remaster", "remastered", "instrumental", "acapella",
-        "slowed", "reverb", "speed up", "sped up", "clean", "explicit",
+    // Whole words at the end only: "Happy Birthday" contains "hd", "Video Killed the Radio Star"
+    // starts with "video", and "Come Clean" ends in a word that belongs to it.
+    const TRAILING_NOISE: [&str; 15] = [
+        "official music video", "official lyric video", "official video", "official audio",
+        "lyric video", "lyrics video", "music video", "lyrics", "visualizer", "hq", "hd",
+        "high quality", "remastered", "slowed", "sped up",
     ];
-    let lowered = title.to_lowercase();
-    if let Some(pos) = noise.iter().filter_map(|token| lowered.find(token)).min() {
-        title = title[..pos].to_string();
+    loop {
+        let lowered = title.trim_end().to_ascii_lowercase();
+        let Some(token) = TRAILING_NOISE.iter().find(|token| lowered.ends_with(&format!(" {token}"))) else {
+            break;
+        };
+        title.truncate(lowered.len() - token.len() - 1);
     }
     title
         .split_whitespace()
@@ -1074,6 +1081,22 @@ pub fn build_album_art_frequency_rust(songs: Vec<ArtworkSongInput>) -> AmplyResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filename_titles_lose_trailing_junk_and_nothing_else() {
+        assert_eq!(clean_title("Happy Birthday"), "Happy Birthday");
+        assert_eq!(clean_title("Video Killed the Radio Star"), "Video Killed the Radio Star");
+        assert_eq!(clean_title("Come Clean"), "Come Clean");
+        assert_eq!(clean_title("Song Official Music Video HD"), "Song");
+        assert_eq!(clean_title("Song (Official Video)"), "Song");
+        assert_eq!(clean_title("Song feat. Someone"), "Song");
+    }
+
+    #[test]
+    fn filename_titles_in_any_script_never_slice_mid_character() {
+        assert_eq!(clean_title("İstanbul feat. Someone"), "İstanbul");
+        assert_eq!(clean_title("İstanbul Official Video"), "İstanbul");
+    }
 
     #[test]
     fn filename_stems_lose_download_junk() {

@@ -1,6 +1,6 @@
 [package]
 name = "amply"
-version = "1.7.2"
+version = "1.8.0"
 edition = "2021"
 description = "Amply Music Player"
 authors = ["Adithya KV <adithyakrishnan.vinod@gmail.com>"]
@@ -37,7 +37,7 @@ notify = "8"
 ebur128 = "0.1.10"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["ApplicationModel", "Foundation", "Media", "Services_Store", "Storage", "Storage_Streams", "Win32_Graphics_Gdi", "Win32_System_Registry", "Win32_System_WinRT", "Win32_UI_HiDpi", "Win32_Foundation", "Win32_Media_Audio", "Win32_Storage_Packaging_Appx", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }
+windows = { version = "0.58", features = ["implement", "ApplicationModel", "Foundation", "Foundation_Collections", "Media", "Services_Store", "Storage", "Storage_Streams", "Win32_Graphics_Gdi", "Win32_System_Registry", "Win32_System_WinRT", "Win32_UI_HiDpi", "Win32_Foundation", "Win32_Media_Audio", "Win32_Storage_Packaging_Appx", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }
 
 [profile.release]
 codegen-units = 1

@@ -193,6 +193,12 @@ const settings = {
   "settings.version.rate.button": "रेट करें",
   "settings.version.rate.thanks": "Amply को रेट करने के लिए धन्यवाद!",
   "settings.version.rate.failed": "Microsoft Store नहीं खुल सका",
+  "settings.shortcuts.title": "कीबोर्ड शॉर्टकट",
+  "settings.shortcuts.playPause": "चलाएँ या रोकें",
+  "settings.shortcuts.seek": "5 सेकंड पीछे या आगे",
+  "settings.shortcuts.track": "पिछला या अगला गाना",
+  "settings.shortcuts.volume": "आवाज़ कम या ज़्यादा",
+  "settings.shortcuts.mute": "म्यूट",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

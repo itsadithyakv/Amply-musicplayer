@@ -1,3 +1,4 @@
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -73,7 +74,7 @@ const scheduleDeferredIdle = (task: () => void, delayMs = 1200, idleTimeoutMs = 
 
 const NowPlayingPanel = () => {
   const { t } = useT();
-  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const gameMode = useEffectiveSetting((settings) => settings.gameMode);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
   const fetchMissingMetadataForSong = useLibraryStore((state) => state.fetchMissingMetadataForSong);
   const setQueue = usePlayerStore((state) => state.setQueue);

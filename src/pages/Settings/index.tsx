@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/ui';
 import { useT } from '@/i18n';
+import { ProSection } from '@/pages/Settings/ProSection';
 import { LibrarySection } from '@/pages/Settings/LibrarySection';
 import { LibraryDataSection } from '@/pages/Settings/LibraryDataSection';
 import { LibraryToolsSection } from '@/pages/Settings/LibraryToolsSection';
@@ -22,6 +23,7 @@ const SettingsPage = () => {
 
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.28fr)_minmax(0,0.92fr)] 2xl:items-start">
         <div className="anim-stagger grid gap-4">
+          <ProSection />
           <LibrarySection />
           <LibraryDataSection />
           <LibraryToolsSection />

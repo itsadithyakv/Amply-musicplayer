@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { LockedRow } from '@/components/Pro/ProGate';
 import { usePlayerStore } from '@/store/playerStore';
+import { useProStore } from '@/store/proStore';
 import { Badge, Slider, TextInput, Toggle } from '@/components/ui';
 import { useT, type MessageKey } from '@/i18n';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
@@ -28,6 +30,7 @@ export const SmartPlaylistsSection = () => {
   const { t, language } = useT();
   const discoveryIntensity = usePlayerStore((state) => state.settings.discoveryIntensity);
   const randomnessIntensity = usePlayerStore((state) => state.settings.randomnessIntensity);
+  const isPro = useProStore((state) => state.isPro);
   const pauseMixRegenDuringPlayback = usePlayerStore((state) => state.settings.pauseMixRegenDuringPlayback);
   const onlineRecommendationsEnabled = usePlayerStore((state) => state.settings.onlineRecommendationsEnabled);
   const lastFmApiKey = usePlayerStore((state) => state.settings.lastFmApiKey);
@@ -54,6 +57,7 @@ export const SmartPlaylistsSection = () => {
   return (
     <SettingsSection icon="sparkle" title={t('settings.smart.title')} description={t('settings.smart.description')}>
       <div className="grid gap-1">
+        {!isPro ? <LockedRow feature="mixTuning" /> : <>
         <SettingField
           label={t('settings.smart.discovery.label')}
           description={t('settings.smart.discovery.description')}
@@ -89,6 +93,7 @@ export const SmartPlaylistsSection = () => {
             }}
           />
         </SettingField>
+        </>}
 
         <Toggle
           label={t('settings.smart.pauseRegen.label')}
@@ -98,6 +103,7 @@ export const SmartPlaylistsSection = () => {
             void setPauseMixRegenDuringPlayback(next);
           }}
         />
+        {isPro ? <>
         <Toggle
           label={t('settings.smart.online.label')}
           description={t('settings.smart.online.description')}
@@ -130,6 +136,7 @@ export const SmartPlaylistsSection = () => {
             }}
           />
         </SettingField>
+        </> : null}
       </div>
     </SettingsSection>
   );
