@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="icon" type="image/png" href="{{root}}amply.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #efebe5;
+    --surface: #f7f4ef;
+    --text: #1d1a16;
+    --muted: #6b6359;
+    --line: #ddd5ca;
+    --accent: #eb7e23;
+    --code: #e6e0d7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1916;
+      --surface: #23201c;
+      --text: #f1ece5;
+      --muted: #a89f93;
+      --line: #36312b;
+      --accent: #f08a34;
+      --code: #2e2a25;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  header, main, footer { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+  header { display: flex; align-items: center; gap: 12px; padding-top: 28px; }
+  header a { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+  header img { width: 36px; height: 36px; }
+  main {
+    width: calc(100% - 32px);
+    max-width: 720px;
+    margin: 24px auto 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 8px 32px 28px;
+  }
+  h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; margin: 28px 0 8px; }
+  h2 { font-size: 20px; letter-spacing: -0.01em; margin: 32px 0 8px; }
+  h1 + p { color: var(--muted); margin-top: 0; }
+  a { color: var(--accent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+  ul { padding-left: 22px; }
+  li { margin: 6px 0; }
+  code { background: var(--code); border-radius: 6px; padding: 1px 6px; font-size: 0.9em; }
+  table { display: block; overflow-x: auto; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th, td { min-width: 10em; text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  td:last-child { min-width: 16em; }
+  th { color: var(--muted); font-weight: 600; }
+  .stores { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0 8px; }
+  .button {
+    display: inline-block; padding: 10px 18px; border-radius: 999px; font-weight: 600;
+    background: var(--accent); color: #1c1610; text-decoration: none;
+  }
+  .button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  footer { color: var(--muted); font-size: 13px; padding-top: 20px; padding-bottom: 40px; }
+  @media (max-width: 560px) {
+    main { padding: 4px 18px 20px; border-radius: 14px; }
+    h1 { font-size: 25px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a href="{{root}}"><img src="{{root}}amply.png" alt="">Amply</a>
+</header>
+<main>
+{{content}}
+</main>
+<footer>Amply Music Player by PaperKite · <a href="{{root}}privacy/">Privacy policy</a> · <a href="https://github.com/itsadithyakv/Amply-musicplayer">Source on GitHub</a></footer>
+</body>
+</html>
