@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import packageInfo from '../../../package.json';
+import { BugReportDialog } from '@/components/BugReport/BugReportDialog';
 import { Button } from '@/components/ui';
 import { useT } from '@/i18n';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
@@ -12,6 +13,7 @@ export const AppVersionSection = () => {
   const { t } = useT();
   const showToast = usePlayerStore((state) => state.showToast);
   const [rating, setRating] = useState(false);
+  const [reporting, setReporting] = useState(false);
 
   const rate = async () => {
     setRating(true);
@@ -45,7 +47,18 @@ export const AppVersionSection = () => {
             </Button>
           }
         />
+        <SettingField
+          label={t('report.entry.label')}
+          description={t('report.entry.description')}
+          icon="warning"
+          trailing={
+            <Button size="sm" onClick={() => setReporting(true)}>
+              {t('report.entry.button')}
+            </Button>
+          }
+        />
       </div>
+      <BugReportDialog open={reporting} onClose={() => setReporting(false)} />
     </SettingsSection>
   );
 };

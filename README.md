@@ -112,7 +112,7 @@ Up to ~30 playlists are generated locally from your listening history. See
 | Neumorphic light and dark themes | See [Design system](#design-system). The theme is applied by an inline script in `index.html` before first paint, so there is no flash. |
 | Window memory | The main window reopens at its last size, position and maximised state (`tauri-plugin-window-state`, pinned to ~2.4 to match Tauri 2.11). |
 | Mini player | A separate always-on-top, transparent, undecorated `WebviewWindow` (`src/pages/Overlay/`, `useOverlayController.ts`). It collapses to artwork plus play, expands on hover, is draggable, and can auto-hide when paused. Toggled from the sidebar or Settings. |
-| Audio visualizer | A compact spectrum strip on the top edge of the player bar, in three styles (Ember, Aurora, Mono), drawn on a canvas from the live spectrum and the theme tokens. |
+| Audio visualizer | A spectrum strip along the top of the player bar, edge to edge and tapered at both ends: Ember (thin accent bars with falling peak caps), Aurora (two flowing violet-cyan-green waves) and Mono (a dot-matrix meter). Drawn on a canvas from the live spectrum and the theme tokens; Aurora and Mono are Pro. |
 | Game Mode | A single low-cost page with no artwork grids; disables the FPS monitor and collapses every shadow to a hairline. For playing while something else needs the GPU. |
 | Now Playing | Full-page view with artwork, queue, lyrics and the artist panel; a condensed version of the same lives in the right-hand sidebar. |
 | Listening stats | `/stats` (sidebar). Last 7 / 30 days from the listening log, all time from per-song lifetime totals: listening time, plays, songs, artists, day streak, minutes per day, plays by hour, top songs / artists / genres (`listeningStats.ts`). Charts use the `--amply-chart` token, the accent stepped per theme to pass the dataviz palette checks against each surface; every chart has a hover/focus tooltip and a table view. |
@@ -362,6 +362,9 @@ Amply is free, with one optional durable Microsoft Store add-on: **Amply Pro** (
 
 | Free | Pro |
 |---|---|
+| Light and dark themes in amber | Seven more accent colours, true black for OLED |
+| Custom playlists | Smart playlists that fill themselves from rules (`playlistRules.ts`) |
+| Listening history, always recorded | Amply Encore: the year played back as a story deck, a share card and a mix |
 | Whole library, every format, folder watching | Tag editor, duplicate finder |
 | All playback, gapless, speed, output device, sleep timer, per-song normalization | Crossfade, per-album normalization |
 | EQ presets Flat, Bass, Treble, Vocal | Custom 5-band curve, Warm and Club presets |
@@ -384,14 +387,19 @@ How it is built:
 - **One dialog.** Every lock calls `requirePro(feature)` or `openPaywall(feature)`; `ProPaywall` leads
   with that feature. Someone already using a feature that became Pro is told so, once.
 - **Testing.** A debug build run with `AMPLY_DEV_PRO=1` behaves as Pro. Release builds ignore it.
+- **Encore data.** The listening log is capped at 5,000 plays, so every play is also added to a small
+  per-year log (`stats/year_<year>.json`, `services/yearInMusic.ts`) that is never trimmed.
 
 ---
 
 ## Security model
 
+- **Privacy.** Nothing is uploaded except the title, artist and album sent to the metadata services, and
+  a bug report the user chooses to send; see [PRIVACY.md](PRIVACY.md), which is also the Microsoft Store
+  privacy policy.
 - **Content-Security-Policy** is set in `tauri.conf.json`. `img-src` allows the app's own schemes plus
-  `upload.wikimedia.org` and `*.mzstatic.com`; `connect-src` allows the IPC origin plus
-  `ws.audioscrobbler.com` and `musicbrainz.org`; `object-src` and `frame-src` are `none`.
+  `*.wikimedia.org` and `*.mzstatic.com`; `connect-src` allows the IPC origin plus
+  `ws.audioscrobbler.com`, `musicbrainz.org` and `api.emailjs.com`; `object-src` and `frame-src` are `none`.
 - **Asset scope** starts at the system Music folder and grows only to folders you have actually
   scanned. Roots are persisted and re-allowed at startup.
 - **Deleting a file** is refused unless the canonical path sits inside a registered root.
@@ -399,6 +407,10 @@ How it is built:
 - **Devtools** are off on the main window and the internal toggle is denied in the capability set.
 - **Metadata requests** all originate in Rust with one user agent; the webview never talks to a
   third-party host directly.
+- **Bug reports** (`services/bugReport.ts`) are the exception: the webview posts them to EmailJS's REST
+  API. EmailJS's public key ships in the app by design. Reports are rate limited on the client (one a
+  minute, five a day), and `C:\Users\<name>` is replaced with `~` in every field, on both the Rust
+  (`platform/diagnostics.rs`) and frontend (`services/errorLog.ts`) sides.
 
 ---
 

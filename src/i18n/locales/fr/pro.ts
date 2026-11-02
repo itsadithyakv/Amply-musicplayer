@@ -53,6 +53,12 @@ const pro = {
   "pro.mixes.unlock": "Débloquer les mix",
   "pro.playlists.banner_one": "{count} mix par genre ou par humeur vous attend dans Amply Pro.",
   "pro.playlists.banner_other": "{count} mix par genre et par humeur vous attendent dans Amply Pro.",
+  "pro.feature.themes.title": "Couleurs d’accent et noir absolu",
+  "pro.feature.themes.description": "Huit couleurs d’accent et un mode sombre noir absolu pour les écrans OLED.",
+  "pro.feature.smartRules.title": "Playlists intelligentes",
+  "pro.feature.smartRules.description": "Des playlists qui se remplissent seules selon des règles, comme le rock écouté plus de cinq fois.",
+  "pro.feature.encore.title": "Amply Encore",
+  "pro.feature.encore.description": "Votre année en musique, rejouée en une série de cartes ludiques, avec un mix de vos titres préférés.",
 } satisfies Record<keyof typeof source, string>;
 
 export default pro;

@@ -4,6 +4,9 @@ import type { ProFeature } from '@/services/proFeatures';
 import { useProStore } from '@/store/proStore';
 
 export const FEATURE_TITLES: Record<ProFeature, MessageKey> = {
+  themes: 'pro.feature.themes.title',
+  smartRules: 'pro.feature.smartRules.title',
+  encore: 'pro.feature.encore.title',
   miniPlayer: 'pro.feature.miniPlayer.title',
   equalizer: 'pro.feature.equalizer.title',
   crossfade: 'pro.feature.crossfade.title',
@@ -18,6 +21,9 @@ export const FEATURE_TITLES: Record<ProFeature, MessageKey> = {
 };
 
 export const FEATURE_DESCRIPTIONS: Record<ProFeature, MessageKey> = {
+  themes: 'pro.feature.themes.description',
+  smartRules: 'pro.feature.smartRules.description',
+  encore: 'pro.feature.encore.description',
   miniPlayer: 'pro.feature.miniPlayer.description',
   equalizer: 'pro.feature.equalizer.description',
   crossfade: 'pro.feature.crossfade.description',
@@ -32,6 +38,9 @@ export const FEATURE_DESCRIPTIONS: Record<ProFeature, MessageKey> = {
 };
 
 export const FEATURE_ICONS: Record<ProFeature, IconName> = {
+  themes: 'sun',
+  smartRules: 'smart-mix',
+  encore: 'sparkle',
   miniPlayer: 'overlay',
   equalizer: 'eq',
   crossfade: 'shuffle',

@@ -1,4 +1,5 @@
 import { clearPreferences } from '@/services/preferences';
+import { PROMPT_STATE_KEY, REVIEW_QUIET_KEY } from '@/services/storeReview';
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
@@ -233,6 +234,12 @@ export const flushPendingWrites = async (): Promise<void> => {
 
 export const hasPendingDebouncedWrites = (): boolean => debouncedJsonWrites.size > 0;
 
+/**
+ * Preferences that are memory, not cache: clearing them would ask for a rating again, repeat the
+ * one-time Pro notice and reset the volume.
+ */
+const DURABLE_PREFERENCES = [PROMPT_STATE_KEY, REVIEW_QUIET_KEY, 'pro.introSeen', 'player.volume'];
+
 export const clearStorageCache = async (): Promise<void> => {
   if (isTauri()) {
     await invoke('clear_storage_cache');
@@ -241,7 +248,7 @@ export const clearStorageCache = async (): Promise<void> => {
     lastWrittenJson.clear();
     debouncedJsonWrites.forEach((entry) => window.clearTimeout(entry.timeout));
     debouncedJsonWrites.clear();
-    clearPreferences();
+    clearPreferences(DURABLE_PREFERENCES);
     return;
   }
 
@@ -265,5 +272,5 @@ export const clearStorageCache = async (): Promise<void> => {
   }
 
   keys.forEach((key) => window.localStorage.removeItem(key));
-  clearPreferences();
+  clearPreferences(DURABLE_PREFERENCES);
 };

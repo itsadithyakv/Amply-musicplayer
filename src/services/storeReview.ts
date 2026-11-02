@@ -58,8 +58,9 @@ const MAX_PROMPTS = 3;
  * Whether to ask for a rating now: only after a week of real use (and 30 counted plays), never
  * while snoozed, never more than three times, and never again once the user has answered for good.
  */
-export const shouldPromptForReview = (state: ReviewPromptState, totalPlays: number, now: number): boolean =>
+export const shouldPromptForReview = (state: ReviewPromptState, totalPlays: number, now: number, quietUntil = 0): boolean =>
   !state.done &&
+  now >= quietUntil &&
   state.prompts < MAX_PROMPTS &&
   now >= state.snoozedUntil &&
   now - state.firstSeenAt >= MIN_DAYS_IN_USE * DAY_MS &&
@@ -84,7 +85,24 @@ export const nextReviewPromptState = (state: ReviewPromptState, event: ReviewPro
   }
 };
 
-const PROMPT_STATE_KEY = 'storeReviewPrompt';
+export const PROMPT_STATE_KEY = 'storeReviewPrompt';
+export const REVIEW_QUIET_KEY = 'storeReview.quietUntil';
+
+const isTimestamp = (value: string): value is string => /^\d+$/.test(value);
+
+/** No rating ask before this time (ms); 0 when nothing holds it back. */
+export const readReviewQuietUntil = (): number => Number(readPreference(REVIEW_QUIET_KEY, isTimestamp, '0'));
+
+/**
+ * Holds the rating ask back for `days`. Right after an upgrade dialog, or the notice that features
+ * moved to Pro, a rating would be about the price rather than the app, so Amply does not ask then.
+ */
+export const quietReviewPromptFor = (days: number, now: number = Date.now()): void => {
+  const until = now + days * DAY_MS;
+  if (until > readReviewQuietUntil()) {
+    writePreference(REVIEW_QUIET_KEY, String(until));
+  }
+};
 
 const isPromptStateJson = (value: string): value is string => {
   try {

@@ -9,6 +9,9 @@ import type { AppSettings } from '@/types/music';
  * choice is never overwritten and comes back as it was when Pro is bought.
  */
 export const PRO_FEATURES = [
+  'themes',
+  'smartRules',
+  'encore',
   'miniPlayer',
   'equalizer',
   'crossfade',
@@ -48,6 +51,8 @@ export const limitSettings = (settings: AppSettings): AppSettings => {
   const lockedEq = isProEqPreset(settings.eqPreset);
   const unchanged =
     !lockedEq &&
+    settings.accentColor === 'amber' &&
+    !settings.trueBlack &&
     !settings.crossfadeEnabled &&
     !settings.gameMode &&
     !settings.miniNowPlayingOverlay &&
@@ -61,6 +66,8 @@ export const limitSettings = (settings: AppSettings): AppSettings => {
   }
   return {
     ...settings,
+    accentColor: 'amber',
+    trueBlack: false,
     eqPreset: lockedEq ? 'flat' : settings.eqPreset,
     eqBands: lockedEq ? (FLAT_BANDS as number[]) : settings.eqBands,
     // Turning crossfade on turned gapless off; without crossfade, gapless is the default again.

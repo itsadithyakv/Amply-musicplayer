@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { limitSettings, type ProFeature } from '@/services/proFeatures';
 import { isTauri } from '@/services/storageService';
+import { quietReviewPromptFor } from '@/services/storeReview';
 import type { AppSettings } from '@/types/music';
 
 interface ProStatus {
@@ -33,6 +34,9 @@ interface ProState extends ProStatus {
 const FREE_STATUS: ProStatus = { isPro: false, storeInstall: false, offline: false, price: null };
 
 let loading: Promise<void> | null = null;
+
+const QUIET_DAYS_AFTER_PAYWALL = 3;
+const QUIET_DAYS_AFTER_PRO_NOTICE = 14;
 
 export const useProStore = create<ProState>((set, get) => ({
   ...FREE_STATUS,
@@ -88,7 +92,13 @@ export const useProStore = create<ProState>((set, get) => ({
   },
   openPaywall: (feature) => set({ paywall: { kind: 'feature', feature } }),
   showIntro: (features) => set({ paywall: { kind: 'intro', features } }),
-  closePaywall: () => set({ paywall: null }),
+  closePaywall: () => {
+    const { paywall, isPro } = get();
+    if (paywall && !isPro) {
+      quietReviewPromptFor(paywall.kind === 'intro' ? QUIET_DAYS_AFTER_PRO_NOTICE : QUIET_DAYS_AFTER_PAYWALL);
+    }
+    set({ paywall: null });
+  },
 }));
 
 /** The settings Amply actually runs on: all of them with Pro, the free limits without. */

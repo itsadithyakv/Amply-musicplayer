@@ -6,8 +6,9 @@ import player from '@/i18n/locales/en/player';
 import stats from '@/i18n/locales/en/stats';
 import messages from '@/i18n/locales/en/messages';
 import pro from '@/i18n/locales/en/pro';
+import report from '@/i18n/locales/en/report';
 
 /** Every English message, flat. The key set defines `MessageKey`. */
-const en = { ...common, ...settings, ...library, ...playlists, ...player, ...stats, ...messages, ...pro };
+const en = { ...common, ...settings, ...library, ...playlists, ...player, ...stats, ...messages, ...pro, ...report };
 
 export default en;

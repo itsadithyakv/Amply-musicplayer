@@ -51,6 +51,12 @@ const pro = {
   "pro.mixes.unlock": "Unlock mixes",
   "pro.playlists.banner_one": "{count} genre or mood mix is ready for you in Amply Pro.",
   "pro.playlists.banner_other": "{count} genre and mood mixes are ready for you in Amply Pro.",
+  "pro.feature.themes.title": "Accent colours and true black",
+  "pro.feature.themes.description": "Eight accent colours, and a pure black dark mode for OLED screens.",
+  "pro.feature.smartRules.title": "Smart playlists",
+  "pro.feature.smartRules.description": "Playlists that fill themselves from rules, like Rock you have played more than five times.",
+  "pro.feature.encore.title": "Amply Encore",
+  "pro.feature.encore.description": "Your year in music, played back as a deck of fun cards, plus a mix of your top songs.",
 };
 
 export default pro;

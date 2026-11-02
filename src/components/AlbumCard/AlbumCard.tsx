@@ -7,12 +7,14 @@ interface AlbumCardProps {
   title: string;
   subtitle: string;
   artwork?: string;
+  /** Shown if `artwork` fails to load. */
+  fallbackArtwork?: string;
   onClick?: () => void;
   meta?: string;
   onInfo?: () => void;
 }
 
-const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCardProps) => {
+const AlbumCard = ({ title, subtitle, artwork, fallbackArtwork, onClick, meta, onInfo }: AlbumCardProps) => {
   const { t } = useT();
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!onClick) {
@@ -42,6 +44,7 @@ const AlbumCard = ({ title, subtitle, artwork, onClick, meta, onInfo }: AlbumCar
       <div className="neu-well relative h-[148px] w-full overflow-hidden rounded-sm">
         <ArtworkImage
           src={artwork}
+          fallbackSrc={fallbackArtwork}
           alt={title}
           className="h-full w-full object-cover"
           placeholderContent={<Icon name="music" size={28} className="text-amply-textMuted opacity-60" />}

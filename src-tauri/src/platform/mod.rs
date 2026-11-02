@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod diagnostics;
 pub mod media_controls;
 pub mod startup;
 pub mod store_license;

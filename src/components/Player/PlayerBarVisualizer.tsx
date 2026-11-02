@@ -18,9 +18,9 @@ export const PlayerBarVisualizer = () => {
     return null;
   }
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-x-5 bottom-full h-[40px] overflow-hidden">
+    <div aria-hidden="true" className="visualizer-strip pointer-events-none absolute inset-x-0 bottom-full h-[40px] overflow-hidden">
       <Suspense fallback={null}>
-        <AudioVisualizer active compact isPlaying={isPlaying} theme={theme} />
+        <AudioVisualizer active isPlaying={isPlaying} theme={theme} />
       </Suspense>
     </div>
   );

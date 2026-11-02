@@ -39,6 +39,7 @@ export const TopArtistsRow = ({ artists, images, onPick }: TopArtistsRowProps) =
                 <span className="neu-well block h-full w-full overflow-hidden rounded-full">
                   <ArtworkImage
                     src={images[entry.artistName] ?? entry.topSong.albumArt}
+                    fallbackSrc={entry.topSong.albumArt}
                     alt=""
                     className="h-full w-full object-cover"
                     placeholderContent={

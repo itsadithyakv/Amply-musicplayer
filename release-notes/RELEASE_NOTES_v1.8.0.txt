@@ -5,7 +5,8 @@ Amply is free, with Amply Pro
 - Amply stays free: your whole library, every format, all playback, lyrics, artwork, artist info,
   playlists, twelve smart mixes, a week of listening stats, backups and M3U import and export.
   No ads and no limits on library size.
-- Amply Pro is a one-time purchase in the Microsoft Store (no subscription). It adds the mini
+- Amply Pro is a one-time purchase in the Microsoft Store (no subscription). It adds accent colours
+  and a true black theme, smart playlists that fill themselves from rules, Amply Encore, the mini
   player, crossfade, the full equalizer (your own curve plus the Warm and Club presets), per-album
   volume normalization, genre and mood mixes, mix tuning with Last.fm and MusicBrainz suggestions,
   30-day and all-time stats, the tag editor, the duplicate finder, Game Mode and the Aurora and
@@ -16,6 +17,23 @@ Amply is free, with Amply Pro
 - If you were already using a feature that is now in Pro, Amply says so once. Your settings are
   kept and come back as soon as you upgrade.
 - Listening history keeps recording on the free plan, so upgrading shows all of it.
+
+New in Pro
+- Accent colours: rose, violet, blue, teal, green, gold and graphite join amber, and a true black
+  dark mode suits OLED screens.
+- Smart playlists: build a playlist from rules ("Rock, played at least 5 times, added in the last
+  year") and it keeps itself up to date as you listen.
+- Amply Encore: your year in music, played back as a deck of colourful cards: minutes listened, your
+  sound, your number one artist and song, your top five, your listening personality, your longest
+  streak and loudest month. Save a share card, or play a mix of the songs that made your year.
+
+Report a problem
+- Settings > App Version > Report a problem sends a bug report or an idea straight to the developer.
+  You see exactly what is sent, technical details are optional, and your Windows user name is removed.
+
+Visualizer
+- Ember, Aurora and Mono now look different from one another: thin bars with falling peaks, flowing
+  colour waves, and a dot-matrix meter. The strip runs edge to edge and tapers at both ends.
 
 Playback
 - Crossfade now really overlaps songs at the end of a track; before, the next song faded in after
@@ -51,3 +69,6 @@ Library
 - Titles read from file names keep words like "Birthday", "Video" or "Clean" that belong to them,
   and titles in any script no longer risk failing the scan.
 - The mini player no longer keeps the last cover for a song without one.
+- Artist photos load again: Wikipedia moved most of them to a new image server that version 1.7.0
+  blocked. Amply now accepts every Wikimedia image server, and if a photo still fails, artist cards
+  fall back to the album cover instead of an initial.

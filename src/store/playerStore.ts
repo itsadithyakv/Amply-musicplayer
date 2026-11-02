@@ -178,6 +178,8 @@ interface PlayerState {
   setVolumeNormalization: (mode: AppSettings['volumeNormalization']) => Promise<void>;
   setLanguageSetting: (language: AppSettings['language']) => Promise<void>;
   setAppTheme: (theme: AppSettings['appTheme']) => Promise<void>;
+  setAccentColor: (accent: AppSettings['accentColor']) => Promise<void>;
+  setTrueBlack: (enabled: boolean) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   /** Merges settings from a backup over the current ones and saves them (applied on next load). */
   restoreSettings: (restored: Partial<AppSettings>) => Promise<void>;
@@ -1495,6 +1497,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ...get().settings,
       appTheme: nextTheme,
     };
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setAccentColor: async (accentColor) => {
+    const settings = { ...get().settings, accentColor };
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setTrueBlack: async (trueBlack) => {
+    const settings = { ...get().settings, trueBlack };
     set({ settings });
     await persistSettings(settings);
   },

@@ -1,3 +1,4 @@
+import { EncoreCard } from './Encore';
 import { useEffect, useMemo, useState } from 'react';
 import { Card, PageHeader, SegmentedTabs } from '@/components/ui';
 import { usePersistedPreference } from '@/hooks/usePersistedPreference';
@@ -112,6 +113,8 @@ const StatsPage = () => {
   return (
     <div className="min-w-0 space-y-5 pb-8">
       <PageHeader title={t('stats.title')} description={t('stats.description')} />
+
+      <EncoreCard />
 
       <SegmentedTabs
         ariaLabel={t('stats.range.label')}

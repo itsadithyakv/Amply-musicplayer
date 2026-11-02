@@ -1,3 +1,4 @@
+import { useRulePlaylists } from '@/hooks/useRulePlaylists';
 import { useThemeSync } from '@/hooks/useThemeSync';
 import { useLanguageSync } from '@/hooks/useLanguageSync';
 import { setFlags } from '@/services/runtimeFlags';
@@ -188,6 +189,7 @@ const AppShell = () => {
   useThemeSync();
   useLanguageSync();
   useProEntitlement();
+  useRulePlaylists();
   useOverlayController(miniNowPlayingOverlay);
   useMediaSession();
   const draggingFiles = useExternalFiles(libraryInitialized);

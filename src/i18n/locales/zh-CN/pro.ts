@@ -53,6 +53,12 @@ const pro = {
   "pro.mixes.unlock": "解锁混音",
   "pro.playlists.banner_one": "Amply Pro 中有 {count} 个流派或心情混音等你开启。",
   "pro.playlists.banner_other": "Amply Pro 中有 {count} 个流派和心情混音等你开启。",
+  "pro.feature.themes.title": "强调色与纯黑",
+  "pro.feature.themes.description": "八种强调色，以及适合 OLED 屏幕的纯黑深色模式。",
+  "pro.feature.smartRules.title": "智能播放列表",
+  "pro.feature.smartRules.description": "按规则自动填充的播放列表，例如播放超过五次的摇滚。",
+  "pro.feature.encore.title": "Amply 安可",
+  "pro.feature.encore.description": "用一组有趣的卡片回放你的音乐年度，还有一份你最爱歌曲的混音。",
 } satisfies Record<keyof typeof source, string>;
 
 export default pro;

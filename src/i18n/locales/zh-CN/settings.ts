@@ -199,6 +199,18 @@ const settings = {
   "settings.shortcuts.track": "上一首或下一首",
   "settings.shortcuts.volume": "降低或提高音量",
   "settings.shortcuts.mute": "静音",
+  "settings.appearance.accent.label": "强调色",
+  "settings.appearance.accent.description": "按钮、高亮和可视化效果的颜色。",
+  "settings.appearance.accent.amber": "琥珀",
+  "settings.appearance.accent.rose": "玫瑰",
+  "settings.appearance.accent.violet": "紫罗兰",
+  "settings.appearance.accent.blue": "蓝色",
+  "settings.appearance.accent.teal": "青绿",
+  "settings.appearance.accent.green": "绿色",
+  "settings.appearance.accent.gold": "金色",
+  "settings.appearance.accent.graphite": "石墨",
+  "settings.appearance.trueBlack.label": "纯黑",
+  "settings.appearance.trueBlack.description": "深色模式下使用纯黑表面，适合 OLED 屏幕。",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

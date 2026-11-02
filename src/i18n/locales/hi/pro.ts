@@ -53,6 +53,12 @@ const pro = {
   "pro.mixes.unlock": "मिक्स अनलॉक करें",
   "pro.playlists.banner_one": "Amply Pro में आपके लिए {count} शैली या मूड मिक्स तैयार है।",
   "pro.playlists.banner_other": "Amply Pro में आपके लिए {count} शैली और मूड मिक्स तैयार हैं।",
+  "pro.feature.themes.title": "एक्सेंट रंग और पूरा काला",
+  "pro.feature.themes.description": "आठ एक्सेंट रंग, और OLED स्क्रीन के लिए पूरी तरह काला डार्क मोड।",
+  "pro.feature.smartRules.title": "स्मार्ट प्लेलिस्ट",
+  "pro.feature.smartRules.description": "नियमों से अपने-आप भरने वाली प्लेलिस्ट, जैसे पाँच से ज़्यादा बार सुना गया रॉक।",
+  "pro.feature.encore.title": "Amply Encore",
+  "pro.feature.encore.description": "संगीत में आपका साल, मज़ेदार कार्ड्स के रूप में, साथ में आपके टॉप गानों का मिक्स।",
 } satisfies Record<keyof typeof source, string>;
 
 export default pro;

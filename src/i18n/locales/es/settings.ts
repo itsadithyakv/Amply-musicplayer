@@ -199,6 +199,18 @@ const settings = {
   "settings.shortcuts.track": "Canción anterior o siguiente",
   "settings.shortcuts.volume": "Bajar o subir el volumen",
   "settings.shortcuts.mute": "Silenciar",
+  "settings.appearance.accent.label": "Color de acento",
+  "settings.appearance.accent.description": "El color de los botones, los resaltados y el visualizador.",
+  "settings.appearance.accent.amber": "Ámbar",
+  "settings.appearance.accent.rose": "Rosa",
+  "settings.appearance.accent.violet": "Violeta",
+  "settings.appearance.accent.blue": "Azul",
+  "settings.appearance.accent.teal": "Turquesa",
+  "settings.appearance.accent.green": "Verde",
+  "settings.appearance.accent.gold": "Dorado",
+  "settings.appearance.accent.graphite": "Grafito",
+  "settings.appearance.trueBlack.label": "Negro puro",
+  "settings.appearance.trueBlack.description": "Superficies negras en el modo oscuro, ideales para pantallas OLED.",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

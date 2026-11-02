@@ -53,6 +53,8 @@ interface OptimizedImageProps {
   loading?: 'lazy' | 'eager';
   decoding?: 'async' | 'sync' | 'auto';
   onLoad?: () => void;
+  /** The image could not be loaded (blocked, gone, offline). */
+  onError?: () => void;
   pulse?: boolean;
 }
 
@@ -72,6 +74,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
   loading = 'lazy',
   decoding = 'async',
   onLoad,
+  onError,
   pulse = true,
 }) => {
   const normalizedSrc = useMemo(
@@ -200,6 +203,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = memo(({
           onError={() => {
             setError(true);
             setIsLoaded(false);
+            onError?.();
           }}
         />
       )}

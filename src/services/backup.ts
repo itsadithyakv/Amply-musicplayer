@@ -1,3 +1,4 @@
+import { parseRules, type PlaylistRules } from '@/services/playlistRules';
 import type { AppSettings, Playlist, Song } from '@/types/music';
 import { songFingerprint } from '@/services/songIdentity';
 import { pathKey } from '@/services/playlistFiles';
@@ -23,6 +24,8 @@ interface BackupPlaylist {
   paths: string[];
   /** Parallel to `paths`. Absent in backups from before 1.8. */
   fingerprints?: string[];
+  /** Smart playlists: the rules, so the restored playlist keeps filling itself. */
+  rules?: PlaylistRules;
 }
 
 export interface AmplyBackup {
@@ -74,6 +77,7 @@ export const buildBackup = (input: {
         description: playlist.description,
         paths: songs.map((song) => song.path),
         fingerprints: songs.map(songFingerprint),
+        ...(playlist.rules ? { rules: playlist.rules } : {}),
       };
     }),
     settings,
@@ -109,7 +113,7 @@ export interface RestorePlan {
   /** Merged history per library song id. */
   activity: Map<string, ActivityRestore>;
   /** Playlists to create (new name) or extend (existing name, missing songs appended). */
-  playlists: Array<{ existingId: string | null; name: string; description: string; songIds: string[] }>;
+  playlists: Array<{ existingId: string | null; name: string; description: string; songIds: string[]; rules?: PlaylistRules }>;
   settings: Partial<AppSettings>;
   matchedSongs: number;
   unmatchedSongs: number;
@@ -154,7 +158,8 @@ export const planRestore = (backup: AmplyBackup, songs: readonly Song[], customP
     const ids = playlist.paths.map((path, index) => resolve(path, playlist.fingerprints?.[index])?.id).filter((id): id is string => Boolean(id));
     const existing = customPlaylists.find((entry) => entry.name.trim().toLowerCase() === playlist.name.trim().toLowerCase());
     const songIds = existing ? [...existing.songIds, ...ids.filter((id) => !existing.songIds.includes(id))] : [...new Set(ids)];
-    return { existingId: existing?.id ?? null, name: playlist.name, description: playlist.description ?? '', songIds };
+    const rules = parseRules(playlist.rules);
+    return { existingId: existing?.id ?? null, name: playlist.name, description: playlist.description ?? '', songIds, ...(rules ? { rules } : {}) };
   });
 
   return { activity, playlists, settings: backup.settings, matchedSongs: activity.size, unmatchedSongs };

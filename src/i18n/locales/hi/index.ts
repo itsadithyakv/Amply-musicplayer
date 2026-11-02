@@ -7,7 +7,8 @@ import player from '@/i18n/locales/hi/player';
 import stats from '@/i18n/locales/hi/stats';
 import messages from '@/i18n/locales/hi/messages';
 import pro from '@/i18n/locales/hi/pro';
+import report from '@/i18n/locales/hi/report';
 
-const catalog: Messages = { ...common, ...settings, ...library, ...playlists, ...player, ...stats, ...messages, ...pro };
+const catalog: Messages = { ...common, ...settings, ...library, ...playlists, ...player, ...stats, ...messages, ...pro, ...report };
 
 export default catalog;

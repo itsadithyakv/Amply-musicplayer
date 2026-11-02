@@ -198,6 +198,18 @@ const settings = {
   "settings.shortcuts.track": "Previous or next song",
   "settings.shortcuts.volume": "Volume down or up",
   "settings.shortcuts.mute": "Mute",
+  "settings.appearance.accent.label": "Accent colour",
+  "settings.appearance.accent.description": "The colour of buttons, highlights and the visualizer.",
+  "settings.appearance.accent.amber": "Amber",
+  "settings.appearance.accent.rose": "Rose",
+  "settings.appearance.accent.violet": "Violet",
+  "settings.appearance.accent.blue": "Blue",
+  "settings.appearance.accent.teal": "Teal",
+  "settings.appearance.accent.green": "Green",
+  "settings.appearance.accent.gold": "Gold",
+  "settings.appearance.accent.graphite": "Graphite",
+  "settings.appearance.trueBlack.label": "True black",
+  "settings.appearance.trueBlack.description": "Pure black surfaces in dark mode, easy on OLED screens.",
 };
 
 export default settings;

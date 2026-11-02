@@ -1,3 +1,4 @@
+import { RulePlaylistEditor } from '@/components/Playlists/RulePlaylistEditor';
 import { lazy, memo, Suspense, useCallback, useMemo, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
@@ -8,7 +9,7 @@ import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { useLibraryStore } from '@/store/libraryStore';
 import { isProMix } from '@/services/proFeatures';
 import { usePlayerStore } from '@/store/playerStore';
-import { useProStore } from '@/store/proStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import type { Playlist } from '@/types/music';
 import { type PlaylistCardView } from '@/services/libraryRepository';
 import { useLibraryTabView, usePlaylistCardsView } from '@/hooks/useLibraryViews';
@@ -42,6 +43,7 @@ const PlaylistCard = memo(({
 }) => {
   const { t, tp } = useT();
   const isSmart = playlist.type !== 'custom';
+  const hasRules = Boolean(playlist.rules);
   const name = localizedPlaylistName(playlist);
   const description = localizedPlaylistDescription(playlist);
 
@@ -82,8 +84,8 @@ const PlaylistCard = memo(({
         </div>
 
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-3 pr-12">
-          <Badge tone={isSmart ? 'accent' : 'neutral'} icon={isSmart ? 'smart-mix' : 'playlist-add'}>
-            {isSmart ? t('playlists.badge.smart') : t('playlists.badge.custom')}
+          <Badge tone={isSmart || hasRules ? 'accent' : 'neutral'} icon={isSmart || hasRules ? 'smart-mix' : 'playlist-add'}>
+            {isSmart ? t('playlists.badge.smart') : hasRules ? t('playlists.badge.rules') : t('playlists.badge.custom')}
           </Badge>
           <Badge>{tp('playlists.tracks', playlist.songIds.length)}</Badge>
         </div>
@@ -135,7 +137,17 @@ const PlaylistsPage = () => {
   }, [playSongById, setQueue]);
 
   const handleOpen = useCallback((playlistId: string) => navigate(`/playlist/${playlistId}`), [navigate]);
-  const openEditor = useCallback((playlist: Playlist) => { setEditingPlaylist(playlist); setShowComposer(true); }, []);
+  const [ruleEditor, setRuleEditor] = useState<{ playlist: Playlist | null } | null>(null);
+  const openEditor = useCallback((playlist: Playlist) => {
+    if (playlist.rules) {
+      if (requirePro('smartRules')) {
+        setRuleEditor({ playlist });
+      }
+      return;
+    }
+    setEditingPlaylist(playlist);
+    setShowComposer(true);
+  }, []);
   const closeComposer = useCallback(() => { setShowComposer(false); setEditingPlaylist(null); }, []);
   const renderCard = useCallback((item: PlaylistCardView) => (
     <PlaylistCard playlist={item.playlist} artworkSet={item.artworkSet} firstSongId={item.firstSongId} onPlay={handlePlay} onOpen={handleOpen} onEdit={openEditor} onDelete={setPendingDelete} />
@@ -161,6 +173,16 @@ const PlaylistsPage = () => {
               }}
             >
               {t('playlists.header.import')}
+            </Button>
+            <Button
+              icon="smart-mix"
+              onClick={() => {
+                if (requirePro('smartRules')) {
+                  setRuleEditor({ playlist: null });
+                }
+              }}
+            >
+              {t('playlists.rules.new')}
             </Button>
             <Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>{t('playlists.header.new')}</Button>
           </div>
@@ -203,6 +225,28 @@ const PlaylistsPage = () => {
             onCancel={closeComposer}
           />
         </Suspense>
+      </Modal>
+
+      <Modal
+        open={ruleEditor !== null}
+        onClose={() => setRuleEditor(null)}
+        size="lg"
+        title={ruleEditor?.playlist ? t('playlists.rules.editTitle') : t('playlists.rules.createTitle')}
+        description={t('playlists.rules.description')}
+      >
+        {ruleEditor ? (
+          <RulePlaylistEditor
+            initial={ruleEditor.playlist}
+            onSave={async (playlist) => {
+              await upsertCustomPlaylist(playlist);
+              setRuleEditor(null);
+              if (!ruleEditor.playlist) {
+                navigate(`/playlist/${playlist.id}`);
+              }
+            }}
+            onCancel={() => setRuleEditor(null)}
+          />
+        ) : null}
       </Modal>
 
       <ConfirmDialog

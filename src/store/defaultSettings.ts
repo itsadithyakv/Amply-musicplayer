@@ -4,6 +4,8 @@ import type { AppSettings, OnlineRecommendationProvider } from '@/types/music';
 export const DEFAULT_SETTINGS: AppSettings = {
   libraryPath: 'music',
   appTheme: 'light',
+  accentColor: 'amber',
+  trueBlack: false,
   crossfadeEnabled: false,
   crossfadeDurationSec: 6,
   gaplessEnabled: true,
@@ -32,6 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoPauseIgnoreFullscreen: true,
 };
 
+const ACCENTS = new Set<AppSettings['accentColor']>(['amber', 'rose', 'violet', 'blue', 'teal', 'green', 'gold', 'graphite']);
 const EQ_PRESETS = new Set<AppSettings['eqPreset']>(['flat', 'warm', 'bass', 'treble', 'vocal', 'club', 'custom']);
 const LYRICS_THEMES = new Set<AppSettings['lyricsVisualTheme']>(['ember', 'aurora', 'mono']);
 const PROVIDERS = new Set<OnlineRecommendationProvider>(['lastfm', 'musicbrainz']);
@@ -71,6 +74,8 @@ export const normalizeSettings = (input: unknown): AppSettings => {
   return {
     libraryPath: str(raw.libraryPath, d.libraryPath),
     appTheme: raw.appTheme === 'dark' ? 'dark' : 'light',
+    accentColor: ACCENTS.has(raw.accentColor as AppSettings['accentColor']) ? (raw.accentColor as AppSettings['accentColor']) : d.accentColor,
+    trueBlack: bool(raw.trueBlack, d.trueBlack),
     language: raw.language === 'system' || isLanguageCode(raw.language) ? (raw.language as AppSettings['language']) : d.language,
     crossfadeEnabled: bool(raw.crossfadeEnabled, d.crossfadeEnabled),
     crossfadeDurationSec: num(raw.crossfadeDurationSec, d.crossfadeDurationSec, 1, 12),

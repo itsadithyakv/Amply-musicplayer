@@ -199,6 +199,18 @@ const settings = {
   "settings.shortcuts.track": "पिछला या अगला गाना",
   "settings.shortcuts.volume": "आवाज़ कम या ज़्यादा",
   "settings.shortcuts.mute": "म्यूट",
+  "settings.appearance.accent.label": "एक्सेंट रंग",
+  "settings.appearance.accent.description": "बटन, हाइलाइट और विज़ुअलाइज़र का रंग।",
+  "settings.appearance.accent.amber": "एम्बर",
+  "settings.appearance.accent.rose": "गुलाबी",
+  "settings.appearance.accent.violet": "बैंगनी",
+  "settings.appearance.accent.blue": "नीला",
+  "settings.appearance.accent.teal": "टील",
+  "settings.appearance.accent.green": "हरा",
+  "settings.appearance.accent.gold": "सुनहरा",
+  "settings.appearance.accent.graphite": "ग्रेफ़ाइट",
+  "settings.appearance.trueBlack.label": "पूरा काला",
+  "settings.appearance.trueBlack.description": "डार्क मोड में पूरी तरह काली सतहें, OLED स्क्रीन के लिए आरामदायक।",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

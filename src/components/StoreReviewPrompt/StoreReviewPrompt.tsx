@@ -5,6 +5,7 @@ import { Button, Card, Icon } from '@/components/ui';
 import {
   isStoreInstall,
   readReviewPromptState,
+  readReviewQuietUntil,
   recordReviewPromptEvent,
   requestStoreReview,
   shouldPromptForReview,
@@ -18,7 +19,9 @@ const PROMPT_DELAY_MS = 3 * 60_000;
 
 /**
  * A one-card ask for a Microsoft Store rating. Shown at most once per session, only to Store
- * installs, and only when `shouldPromptForReview` allows (a week of use, 30 plays, not snoozed).
+ * installs, and only when `shouldPromptForReview` allows (a week of use, 30 plays, not snoozed,
+ * not just after an upgrade dialog). It waits for a change of song, the natural pause, instead of
+ * appearing at a fixed minute in the middle of whatever the user is doing.
  */
 export const StoreReviewPrompt = () => {
   const { t } = useT();
@@ -31,23 +34,46 @@ export const StoreReviewPrompt = () => {
     if (gameMode) {
       return;
     }
-    let alive = true;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        if (!(await isStoreInstall()) || !alive || effectiveSettings(usePlayerStore.getState().settings).gameMode || useProStore.getState().paywall) {
+    const sessionStart = Date.now();
+    let finished = false;
+    let checking = false;
+    const storeInstall = isStoreInstall();
+    const check = async () => {
+      if (finished || checking || Date.now() - sessionStart < PROMPT_DELAY_MS) {
+        return;
+      }
+      checking = true;
+      try {
+        if (!(await storeInstall)) {
+          finished = true;
           return;
         }
-        const totalPlays = useLibraryStore.getState().songs.reduce((sum, song) => sum + (song.playCount ?? 0), 0);
+        if (finished || effectiveSettings(usePlayerStore.getState().settings).gameMode || useProStore.getState().paywall) {
+          return;
+        }
+        // The merged view: `songs` lags the plays made in this session.
+        let totalPlays = 0;
+        for (const song of useLibraryStore.getState().getSongsById().values()) {
+          totalPlays += song.playCount ?? 0;
+        }
         const now = Date.now();
-        if (shouldPromptForReview(readReviewPromptState(now), totalPlays, now)) {
+        if (shouldPromptForReview(readReviewPromptState(now), totalPlays, now, readReviewQuietUntil())) {
+          finished = true;
           recordReviewPromptEvent('shown', now);
           setVisible(true);
         }
-      })();
-    }, PROMPT_DELAY_MS);
+      } finally {
+        checking = false;
+      }
+    };
+    const unsubscribe = usePlayerStore.subscribe((state, previous) => {
+      if (previous.currentSongId && state.currentSongId !== previous.currentSongId) {
+        void check();
+      }
+    });
     return () => {
-      alive = false;
-      window.clearTimeout(timer);
+      finished = true;
+      unsubscribe();
     };
   }, [gameMode]);
 

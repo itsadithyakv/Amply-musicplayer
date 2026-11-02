@@ -8,12 +8,17 @@
     <style>
       html { background: #ece8e1; }
       html[data-theme='dark'] { background: #1c1b19; }
+      html[data-black='true'] { background: #040405; }
     </style>
     <script>
       (function () {
         try {
+          var root = document.documentElement;
           var theme = localStorage.getItem('amply:pref:theme');
-          document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+          var accent = localStorage.getItem('amply:pref:accent');
+          root.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+          if (accent && accent !== 'amber' && /^[a-z]+$/.test(accent)) root.dataset.accent = accent;
+          if (theme === 'dark' && localStorage.getItem('amply:pref:black') === '1') root.dataset.black = 'true';
         } catch (e) {
           document.documentElement.dataset.theme = 'light';
         }
