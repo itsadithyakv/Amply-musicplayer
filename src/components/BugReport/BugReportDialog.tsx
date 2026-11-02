@@ -23,7 +23,7 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useProStore } from '@/store/proStore';
 
-export const PRIVACY_POLICY_URL = 'https://github.com/itsadithyakv/Amply-musicplayer/blob/main/PRIVACY.md';
+export const PRIVACY_POLICY_URL = 'https://itsadithyakv.github.io/Amply-musicplayer/privacy/';
 const CONTACT_EMAIL = 'adithyakrishnan.vinod@gmail.com';
 
 const EMPTY_DRAFT: ReportDraft = { kind: 'bug', summary: '', details: '', steps: '', email: '', includeDiagnostics: true };

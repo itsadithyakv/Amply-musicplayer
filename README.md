@@ -395,8 +395,8 @@ How it is built:
 ## Security model
 
 - **Privacy.** Nothing is uploaded except the title, artist and album sent to the metadata services, and
-  a bug report the user chooses to send; see [PRIVACY.md](PRIVACY.md), which is also the Microsoft Store
-  privacy policy.
+  a bug report the user chooses to send; see [PRIVACY.md](PRIVACY.md). It is published as the Microsoft Store
+  privacy policy at https://itsadithyakv.github.io/Amply-musicplayer/privacy/ by `.github/workflows/pages.yml`.
 - **Content-Security-Policy** is set in `tauri.conf.json`. `img-src` allows the app's own schemes plus
   `*.wikimedia.org` and `*.mzstatic.com`; `connect-src` allows the IPC origin plus
   `ws.audioscrobbler.com`, `musicbrainz.org` and `api.emailjs.com`; `object-src` and `frame-src` are `none`.
