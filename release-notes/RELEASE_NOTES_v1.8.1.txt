@@ -1,4 +1,4 @@
-Amply v1.8.0
+Amply v1.8.1
 Release date: unreleased
 
 Amply is free, with Amply Pro
@@ -53,6 +53,7 @@ Look and feel
 - Softer depth throughout: shadows and highlights are lighter and shorter, so surfaces read as
   gently raised instead of embossed. Switches keep a thin outline so an "off" switch is easy to see.
 - Missing artwork shows a quiet music-note icon instead of the words "No image" or "Amply".
+- The taskbar and Start icon is the full Amply logo again, not a small logo on a coloured square.
 - Song lists have one "Add to playlist" button per row instead of a drop-down in every row, which
   gives titles, albums and genres room to breathe.
 - The Home page is called Home, like its sidebar entry.
