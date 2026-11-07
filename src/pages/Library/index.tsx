@@ -7,6 +7,7 @@ import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { Button, IconButton, PageHeader, ProgressBar, SearchInput, SegmentedTabs, Select, TextInput } from '@/components/ui';
 import { LibraryLimitBanner } from '@/components/Pro/LibraryLimitBanner';
 import { useLibraryStore } from '@/store/libraryStore';
+import { requireFolderRoom } from '@/services/collectionLimits';
 import { usePlayerStore } from '@/store/playerStore';
 import type { LibraryTab, Song } from '@/types/music';
 import { getPrimaryArtistName } from '@/utils/artists';
@@ -319,6 +320,9 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
               name="add"
               label={t('library.folder.add')}
               onClick={async () => {
+                if (!requireFolderRoom(libraryPaths)) {
+                  return;
+                }
                 if (localPath.trim()) {
                   await addLibraryPath(localPath.trim());
                   setLocalPath('');

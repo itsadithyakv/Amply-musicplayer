@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { LockedRow } from '@/components/Pro/ProGate';
 import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { usePlayerStore } from '@/store/playerStore';
-import { requirePro, useProStore } from '@/store/proStore';
+import { useProStore } from '@/store/proStore';
 import { Select, Slider, Toggle } from '@/components/ui';
 import { isTauri } from '@/services/storageService';
 import { listOutputDevices, type OutputDeviceInfo } from '@/services/audioDeviceService';
@@ -54,7 +54,7 @@ export const PlaybackSection = () => {
   return (
     <SettingsSection icon="volume" title={t('settings.playback.title')} description={t('settings.playback.description')}>
       <div className="grid gap-1">
-        {isTauri() ? (
+        {isPro && isTauri() ? (
           <SettingField label={t('settings.playback.outputDevice')}>
             <Select
               label={t('settings.playback.device')}
@@ -102,6 +102,7 @@ export const PlaybackSection = () => {
         </SettingField>
         </>}
 
+        {!isPro ? <LockedRow feature="audiophile" /> : <>
         <Toggle
           label={t('settings.playback.gapless.label')}
           description={t('settings.playback.gapless.description')}
@@ -120,17 +121,19 @@ export const PlaybackSection = () => {
             value={volumeNormalization}
             onChange={(event) => {
               const next = event.target.value;
-              if (next === 'off' || next === 'track' || (next === 'album' && requirePro('albumNormalization'))) {
+              if (next === 'off' || next === 'track' || next === 'album') {
                 void setVolumeNormalization(next);
               }
             }}
           >
             <option value="track">{t('settings.playback.normalization.track')}</option>
-            <option value="album">{isPro ? t('settings.playback.normalization.album') : t('pro.option', { name: t('settings.playback.normalization.album') })}</option>
+            <option value="album">{t('settings.playback.normalization.album')}</option>
             <option value="off">{t('settings.playback.normalization.off')}</option>
           </Select>
         </SettingField>
+        </>}
 
+        {!isPro ? <LockedRow feature="timerAndSpeed" /> : (
         <SettingField label={t('settings.playback.speed.label')} trailing={formatSpeed(playbackSpeed)}>
           <Slider
             value={playbackSpeed}
@@ -144,6 +147,7 @@ export const PlaybackSection = () => {
             }}
           />
         </SettingField>
+        )}
       </div>
     </SettingsSection>
   );

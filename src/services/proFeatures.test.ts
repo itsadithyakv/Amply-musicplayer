@@ -22,32 +22,40 @@ const everyProSetting: AppSettings = {
 
 describe('limitSettings', () => {
   it('leaves free settings as the very same object', () => {
-    expect(limitSettings(DEFAULT_SETTINGS)).toBe(DEFAULT_SETTINGS);
-    const bass: AppSettings = { ...DEFAULT_SETTINGS, eqPreset: 'bass', eqBands: [4, 2, 0, 0, 0] };
+    const plain: AppSettings = { ...DEFAULT_SETTINGS, gaplessEnabled: false, volumeNormalization: 'off' };
+    expect(limitSettings(plain)).toBe(plain);
+    const bass: AppSettings = { ...plain, eqPreset: 'bass', eqBands: [4, 2, 0, 0, 0] };
     expect(limitSettings(bass)).toBe(bass);
+  });
+
+  it('plays plain on the free plan: no gapless, levelling, chosen device or speed', () => {
+    const limited = limitSettings({ ...DEFAULT_SETTINGS, outputDeviceName: 'USB DAC', playbackSpeed: 1.25 });
+    expect(limited.gaplessEnabled).toBe(false);
+    expect(limited.volumeNormalization).toBe('off');
+    expect(limited.outputDeviceName).toBeUndefined();
+    expect(limited.playbackSpeed).toBe(1);
   });
 
   it('runs a free install on free behaviour', () => {
     const limited = limitSettings(everyProSetting);
     expect(limited.crossfadeEnabled).toBe(false);
-    // Crossfade had switched gapless off; without it, playback must not fall back to neither.
-    expect(limited.gaplessEnabled).toBe(true);
+    expect(limited.gaplessEnabled).toBe(false);
     expect(limited.eqPreset).toBe('flat');
     expect(limited.eqBands).toEqual([0, 0, 0, 0, 0]);
     expect(limited.gameMode).toBe(false);
     expect(limited.miniNowPlayingOverlay).toBe(false);
     expect(limited.onlineRecommendationsEnabled).toBe(false);
-    expect(limited.volumeNormalization).toBe('track');
+    expect(limited.volumeNormalization).toBe('off');
     expect(limited.lyricsVisualTheme).toBe('ember');
     expect(limited.discoveryIntensity).toBe(DEFAULT_SETTINGS.discoveryIntensity);
     expect(limited.randomnessIntensity).toBe(DEFAULT_SETTINGS.randomnessIntensity);
   });
 
   it('keeps the free choices that sit beside locked ones', () => {
-    const limited = limitSettings({ ...everyProSetting, volumeNormalization: 'off', playbackSpeed: 1.25, appTheme: 'dark' });
-    expect(limited.volumeNormalization).toBe('off');
-    expect(limited.playbackSpeed).toBe(1.25);
+    const limited = limitSettings({ ...everyProSetting, eqPreset: 'vocal', appTheme: 'dark', crossfadeDurationSec: 4 });
+    expect(limited.eqPreset).toBe('vocal');
     expect(limited.appTheme).toBe('dark');
+    expect(limited.crossfadeDurationSec).toBe(4);
   });
 
   it('never changes what was saved', () => {
@@ -57,13 +65,16 @@ describe('limitSettings', () => {
   });
 
   it('is stable, so a selector reading through it settles', () => {
-    expect(limitSettings(everyProSetting).eqBands).toBe(limitSettings(everyProSetting).eqBands);
+    expect(limitSettings(everyProSetting)).toBe(limitSettings(everyProSetting));
   });
 });
 
 describe('the free and Pro line', () => {
   it('reports only the Pro features actually in use', () => {
+    // Gapless and track levelling are on out of the box, so a fresh install has nothing "in use".
     expect(proFeaturesInUse(DEFAULT_SETTINGS)).toEqual([]);
+    expect(proFeaturesInUse({ ...DEFAULT_SETTINGS, outputDeviceName: 'USB DAC' })).toEqual(['audiophile']);
+    expect(proFeaturesInUse({ ...DEFAULT_SETTINGS, playbackSpeed: 1.5 })).toEqual(['timerAndSpeed']);
     expect(proFeaturesInUse({ ...DEFAULT_SETTINGS, miniNowPlayingOverlay: true })).toEqual(['miniPlayer']);
     // A chosen style with the visualizer off is not something the user would miss.
     expect(proFeaturesInUse({ ...DEFAULT_SETTINGS, lyricsVisualTheme: 'mono', lyricsVisualsEnabled: false })).toEqual([]);

@@ -20,7 +20,11 @@ export const FEATURE_TITLES: Record<ProFeature, MessageKey> = {
   duplicateFinder: 'pro.feature.duplicateFinder.title',
   gameMode: 'pro.feature.gameMode.title',
   mixTuning: 'pro.feature.mixTuning.title',
-  albumNormalization: 'pro.feature.albumNormalization.title',
+  unlimitedPlaylists: 'pro.feature.unlimitedPlaylists.title',
+  libraryFolders: 'pro.feature.libraryFolders.title',
+  audiophile: 'pro.feature.audiophile.title',
+  timerAndSpeed: 'pro.feature.timerAndSpeed.title',
+  lyricsTools: 'pro.feature.lyricsTools.title',
   visualizerStyles: 'pro.feature.visualizerStyles.title',
 };
 
@@ -41,7 +45,11 @@ export const FEATURE_DESCRIPTIONS: Record<ProFeature, MessageKey> = {
   duplicateFinder: 'pro.feature.duplicateFinder.description',
   gameMode: 'pro.feature.gameMode.description',
   mixTuning: 'pro.feature.mixTuning.description',
-  albumNormalization: 'pro.feature.albumNormalization.description',
+  unlimitedPlaylists: 'pro.feature.unlimitedPlaylists.description',
+  libraryFolders: 'pro.feature.libraryFolders.description',
+  audiophile: 'pro.feature.audiophile.description',
+  timerAndSpeed: 'pro.feature.timerAndSpeed.description',
+  lyricsTools: 'pro.feature.lyricsTools.description',
   visualizerStyles: 'pro.feature.visualizerStyles.description',
 };
 
@@ -62,7 +70,11 @@ export const FEATURE_ICONS: Record<ProFeature, IconName> = {
   duplicateFinder: 'list',
   gameMode: 'play',
   mixTuning: 'settings',
-  albumNormalization: 'volume',
+  unlimitedPlaylists: 'playlists',
+  libraryFolders: 'folder',
+  audiophile: 'volume',
+  timerAndSpeed: 'speed',
+  lyricsTools: 'clock',
   visualizerStyles: 'eq',
 };
 

@@ -363,16 +363,17 @@ Amply is free, with one optional durable Microsoft Store add-on: **Amply Pro** (
 | Free | Pro |
 |---|---|
 | Light and dark themes in amber | Seven more accent colours, true black for OLED |
-| Custom playlists | Smart playlists that fill themselves from rules (`playlistRules.ts`) |
+| 5 custom playlists | Unlimited playlists, and smart playlists that fill themselves from rules (`playlistRules.ts`) |
 | Listening history, always recorded | Amply Encore: the year played back as a story deck, a share card and a mix |
-| The first 200 songs added, every format, folder watching | The whole library; tag editor, duplicate finder |
-| All playback, gapless, speed, output device, sleep timer, per-song normalization | Crossfade, per-album normalization |
+| The first 200 songs added from one folder, every format, picked up at launch or on Rescan | The whole library from every folder, new music added as it arrives; tag editor, duplicate finder |
+| Playback, queue, shuffle, repeat, sleep timer presets | Audiophile playback (gapless, volume levelling per song or album, output device), crossfade, 0.5×–2× speed, any sleep timer length |
 | EQ presets Flat, Bass, Treble, Vocal | Custom 5-band curve, Warm and Club presets |
 | Twelve core smart mixes, refreshed weekly | Genre and mood mixes, refresh on demand, mix tuning, Last.fm and MusicBrainz signals |
-| Lyrics for 10 songs a day, artwork, artist photos, recommendations from listening history | Lyrics for every song, artist stories |
+| Lyrics for 10 songs a day, artwork, artist photos, recommendations from listening history | Lyrics for every song, picking another lyrics match and adjusting timing, artist stories |
 | Listening stats, last 7 days (history always records) | Last 30 days and all time |
 | Themes, languages, media controls, Ember visualizer | Mini player, Game Mode, Aurora and Mono visualizers |
-| Custom playlists, M3U import and export, backup and restore | |
+| M3U export, backup and restore | |
+| A 7-day trial of everything, once per Windows account | |
 
 How it is built:
 
@@ -393,6 +394,22 @@ How it is built:
 - **Lyrics a day** (`services/lyricsAllowance.ts`). Free shows lyrics for 10 different songs a day,
   counted when they are on screen; reopening one is free and the count resets at local midnight.
   Fetching and caching lyrics is never limited.
+- **Playlists and folders** (`services/collectionLimits.ts`). Free keeps 5 playlists of its own and
+  1 library folder; more made earlier are kept. Every way in checks first, and `upsertCustomPlaylist`
+  and `setLibraryPaths` refuse a new one past the limit as a backstop. Folder watching rescans only
+  with Pro.
+- **The 7-day trial** (`platform/trial.rs`). Started once per Windows account. The start is kept in
+  Amply's storage and in Windows Credential Manager: uninstalling an MSIX deletes everything the
+  package wrote, but credentials are written by the system's credential service, so a reinstall
+  finds the trial already used. The earliest start of the two copies wins, and a clock moved back
+  by more than a day ends the trial instead of stretching it. `isPro` in `proStore` is "bought or
+  trying", so every lock just works; `owned` says whether it was bought. The trial is offered once
+  after a day of use, and as the main button of the upgrade dialog until it is used.
+- **Can't afford it?** After the trial, the upgrade dialog has a quiet link to ask for a free code
+  (`components/Pro/HardshipRequest.tsx`): an email address and a sentence about the situation, sent
+  through the bug report EmailJS template, once a month per PC. The developer answers with a
+  single-use promotional code from Partner Center (Attract > Promo codes; up to 1,600 per six
+  months for an add-on), redeemed at redeem.microsoft.com and picked up by Restore purchase.
 - **One dialog.** Every lock calls `requirePro(feature)` or `openPaywall(feature)`; `ProPaywall` leads
   with that feature. Someone already using a feature that became Pro is told so, once.
 - **Testing.** A debug build run with `AMPLY_DEV_PRO=1` behaves as Pro. Release builds ignore it.

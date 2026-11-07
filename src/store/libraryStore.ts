@@ -45,6 +45,8 @@ import {
   releaseMetadata,
 } from '@/services/metadataAttemptService';
 import { decideLibraryGrant, playableSongs } from '@/services/libraryAccess';
+import { allowedLibraryPaths, hasPlaylistRoom } from '@/services/collectionLimits';
+import { requirePro, useProStore } from '@/store/proStore';
 import { isMetadataActivityPaused } from '@/services/metadataActivityGate';
 import { getArtistLookupContext, getDisplayTitleRepair, getMetadataArtistName, getPrimaryArtistName, normalizeArtistLookupText } from '@/utils/artists';
 import {
@@ -678,6 +680,10 @@ const watchLibraryFolders = (): void => {
   }
   libraryWatchStarted = true;
   void listen('amply://library-changed', () => {
+    // New music shows up on its own with Pro; the free plan picks it up on the next launch or Rescan.
+    if (!useProStore.getState().isPro) {
+      return;
+    }
     const state = useLibraryStore.getState();
     if (state.isScanning) {
       libraryRescanQueued = true;
@@ -2353,7 +2359,15 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   setLibraryPaths: async (paths) => {
-    const normalized = normalizeLibraryPaths(paths);
+    const { paths: allowed, dropped } = allowedLibraryPaths(get().libraryPaths, normalizeLibraryPaths(paths), useProStore.getState().isPro);
+    if (dropped) {
+      requirePro('libraryFolders');
+    }
+    const normalized = normalizeLibraryPaths(allowed);
+    // Nothing new fit: leave the library exactly as it was, without a rescan.
+    if (dropped && normalized.join('|') === get().libraryPaths.join('|')) {
+      return;
+    }
     set({ libraryPaths: normalized });
 
     await writeStorageJson('settings.json', {
@@ -2744,6 +2758,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const existing = get().customPlaylists;
     const index = existing.findIndex((entry) => entry.id === playlist.id);
     let updated: Playlist[];
+    // Every way in checks first; this is the backstop, so a new playlist past the free limit never lands.
+    if (index < 0 && !playlist.rules && !hasPlaylistRoom(existing, useProStore.getState().isPro)) {
+      requirePro('unlimitedPlaylists');
+      return;
+    }
 
     if (index >= 0) {
       updated = [...existing];

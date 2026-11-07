@@ -101,9 +101,11 @@ const OverlayQuickToggle = () => {
 /** Which plan this install is on, at a glance. Free opens the upgrade dialog; Pro is just a label. */
 const PlanChip = () => {
   const { t } = useT();
-  const isPro = useProStore((state) => state.isPro);
+  // A trial reads as a trial, and stays a way to buy.
+  const isPro = useProStore((state) => state.owned);
+  const trying = useProStore((state) => state.trial.active && !state.owned);
   const openPaywall = useProStore((state) => state.openPaywall);
-  const plan = isPro ? t('pro.plan.pro') : t('pro.plan.free');
+  const plan = isPro ? t('pro.plan.pro') : trying ? t('pro.plan.trial') : t('pro.plan.free');
   const chipClass = clsx(
     'hidden min-h-6 items-center rounded-full px-2.5 text-[10px] font-bold uppercase leading-none tracking-[0.14em] lg:inline-flex',
     isPro ? 'neu-pressed-sm text-amply-accent' : 'neu-raised-sm neu-interactive text-amply-textSecondary hover:text-amply-textPrimary',

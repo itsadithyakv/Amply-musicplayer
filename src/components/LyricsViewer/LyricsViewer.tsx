@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { Song } from '@/types/music';
 import { Badge, Button, Card, Icon, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
 import { FREE_LYRICS_PER_DAY, useLyricsAllowance } from '@/services/lyricsAllowance';
-import { useProStore } from '@/store/proStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import {
   loadLyrics,
   saveLyricsSelection,
@@ -281,7 +281,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   }, [offsetMs]);
 
   const handleOffsetChange = useCallback(async (deltaMs: number) => {
-    if (!songId) {
+    if (!songId || !requirePro('lyricsTools')) {
       return;
     }
     const next = Math.max(-8000, Math.min(8000, offsetRef.current + deltaMs));
@@ -294,7 +294,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   }, [songId]);
 
   const handleManualChoose = useCallback(async () => {
-    if (!songId || loading) {
+    if (!songId || loading || !requirePro('lyricsTools')) {
       return;
     }
     setSavingChoiceId(null);

@@ -8,6 +8,7 @@ pub mod media_controls;
 pub mod startup;
 pub mod store_license;
 pub mod store_review;
+pub mod trial;
 mod taskbar;
 
 pub(crate) use self::taskbar::init as taskbar_init;

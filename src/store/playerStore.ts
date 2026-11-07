@@ -464,7 +464,7 @@ const startDefaultOutputWatcher = (): void => {
   const poll = async () => {
     try {
       const state = usePlayerStore.getState();
-      if (state.settings.outputDeviceName) {
+      if (effectiveSettings(state.settings).outputDeviceName) {
         return;
       }
       if (isSchedulerBackgroundHidden()) {

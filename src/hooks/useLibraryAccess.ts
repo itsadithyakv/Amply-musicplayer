@@ -18,8 +18,8 @@ export const useLockedSongIds = (): ReadonlySet<string> => {
 };
 
 /**
- * Mixes on a capped library use only the songs it can play; when the cap lifts (Amply Pro), rebuild
- * them from the whole library.
+ * Mixes on a capped library use only the songs it can play. Rebuild them when the cap lifts (Amply
+ * Pro or a trial) and when it comes back (a trial ending), so a mix never leans on locked songs.
  */
 export const useRegenerateMixesOnUnlock = () => {
   useEffect(() => {
@@ -28,7 +28,7 @@ export const useRegenerateMixesOnUnlock = () => {
     const check = () => {
       const now = unlimitedNow();
       const library = useLibraryStore.getState();
-      if (now && !was && library.initialized && library.songs.length) {
+      if (now !== was && library.initialized && library.songs.length) {
         void library.regenerateSmartPlaylists();
       }
       was = now;

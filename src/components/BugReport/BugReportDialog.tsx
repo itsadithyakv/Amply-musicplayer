@@ -43,7 +43,7 @@ const SEND_ERROR_KEYS: Record<Exclude<SendResult, 'sent'>, MessageKey> = {
   failed: 'report.error.failed',
 };
 
-const TextArea = ({
+export const TextArea = ({
   label,
   value,
   onValueChange,

@@ -1,11 +1,12 @@
 # Amply Privacy Policy
 
-Effective 6 November 2026. Applies to Amply Music Player 1.8 and later for Windows and to Amply for
+Effective 7 November 2026. Applies to Amply Music Player 1.8 and later for Windows and to Amply for
 Android, both published by PaperKite.
 
 Amply plays music files that are already on your PC or phone. It has no accounts, no analytics, no
 advertising and no servers of its own. Amply does not collect, sell or share personal information. The
-only thing that ever reaches the developer is a bug report you choose to send (see below).
+only things that ever reach the developer are a bug report or a request for a free Pro code that you
+choose to send (see below).
 
 ## What stays on your device
 
@@ -57,6 +58,12 @@ purchase result on your device so Pro keeps working offline.
 - **On Android**, Amply Pro is an in-app purchase sold through Google Play. Amply asks Google Play
   whether your Google account owns Amply Pro, and Google Play handles the purchase. Google processes
   this under the Google Privacy Policy: https://policies.google.com/privacy.
+- **The 7-day free trial** (Windows) can be started once per Windows account. Amply records when it
+  started, and the last time Amply saw the clock, in its own storage and in Windows Credential Manager
+  on your PC, so that reinstalling Amply does not start a new trial. This record never leaves your PC.
+  You can see it in Credential Manager as "Amply Music Player/Pro trial".
+- **A promotional code** for Amply Pro is redeemed with Microsoft at https://redeem.microsoft.com, the
+  same way as a purchase; Amply only learns that your account now owns Amply Pro.
 
 ## Android permissions and system features
 
@@ -100,6 +107,14 @@ order to send it: https://www.emailjs.com/legal/privacy-policy/. The email arriv
 inbox, is used only to fix the problem or answer you, and is deleted once it is no longer needed. Ask
 at the address below to have a report you sent deleted.
 
+## Asking for a free Pro code
+
+If you have used the trial and can't afford Amply Pro, the upgrade dialog lets you ask the developer
+for a free promotional code. The request contains your email address, so the code can be sent to you,
+a short note about your situation in your own words, and Amply's version and language. Nothing else
+is included. It is delivered by EmailJS in the same way as a bug report, is used only to reply to you
+with a code, and is deleted once it has been answered.
+
 ## Your choices
 
 - On Windows, turn on **Settings > Library Data > Pause Metadata Lookups** to stop all online lookups.
@@ -111,6 +126,7 @@ at the address below to have a report you sent deleted.
   details. On Android, clear Amply's storage in your phone's app settings.
 - Uninstall Amply to remove all of its data from your device.
 - Send a bug report without technical details or an email address, or don't send one at all.
+- Delete the trial record in Windows Credential Manager if you uninstall Amply for good.
 
 ## Children
 

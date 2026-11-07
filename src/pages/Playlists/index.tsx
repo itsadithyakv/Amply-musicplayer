@@ -5,6 +5,7 @@ import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-windo
 import { useNavigate } from 'react-router-dom';
 import { Badge, Button, ConfirmDialog, IconButton, Modal, PageHeader, Surface } from '@/components/ui';
 import { importPlaylistFile } from '@/services/playlistImport';
+import { requirePlaylistRoom } from '@/services/collectionLimits';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { useLibraryStore } from '@/store/libraryStore';
 import { isProMix } from '@/services/proFeatures';
@@ -163,6 +164,9 @@ const PlaylistsPage = () => {
             <Button
               icon="folder"
               onClick={() => {
+                if (!requirePlaylistRoom(useLibraryStore.getState().customPlaylists)) {
+                  return;
+                }
                 void importPlaylistFile().then((result) => {
                   if (!result) {
                     return;
@@ -184,7 +188,12 @@ const PlaylistsPage = () => {
             >
               {t('playlists.rules.new')}
             </Button>
-            <Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>{t('playlists.header.new')}</Button>
+            <Button variant="primary" icon="add" onClick={() => {
+              if (requirePlaylistRoom(useLibraryStore.getState().customPlaylists)) {
+                setEditingPlaylist(null);
+                setShowComposer(true);
+              }
+            }}>{t('playlists.header.new')}</Button>
           </div>
         }
       />
