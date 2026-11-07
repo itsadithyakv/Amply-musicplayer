@@ -1,6 +1,16 @@
 import type source from '@/i18n/locales/en/settings';
 
 const settings = {
+  "settings.moreApps.title": "我们的更多应用",
+  "settings.moreApps.description": "PaperKite 的其他应用，也就是制作 Amply 的小工作室。",
+  "settings.moreApps.open": "在 Microsoft Store 中打开 {name}",
+  "settings.moreApps.app.juicebar": "在任务栏里查看各种设备的电量。",
+  "settings.moreApps.app.papery": "安静好用的 PDF 编辑器：阅读、合并、签名和填写。",
+  "settings.moreApps.app.twinly": "找出重复的照片和文件，一键清理。",
+  "settings.moreApps.app.tachy": "在时钟旁实时显示网速。",
+  "settings.moreApps.app.framecap": "录制屏幕，无水印，无时长限制。",
+  "settings.moreApps.app.dumbtop": "专注计时器，让你的笔记本安静、不受打扰。",
+  "settings.moreApps.app.leaflet": "为你已有的 EPUB、PDF 和漫画打造的阅读器。",
   "settings.language.label": "语言",
   "settings.language.description": "Amply 菜单和提示使用的语言。",
   "settings.language.system": "跟随 Windows（{language}）",

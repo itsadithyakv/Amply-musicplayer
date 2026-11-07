@@ -181,6 +181,7 @@ fn main() {
             platform::store_license::pro_purchase,
             platform::trial::pro_trial_status,
             platform::trial::pro_trial_start,
+            platform::more_apps::open_store_product,
             platform::diagnostics::bug_report_context,
             platform::store_review::is_store_install_rust,
             platform::store_review::request_store_review_rust,

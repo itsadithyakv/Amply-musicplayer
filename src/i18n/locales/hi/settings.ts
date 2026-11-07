@@ -1,6 +1,16 @@
 import type source from '@/i18n/locales/en/settings';
 
 const settings = {
+  "settings.moreApps.title": "हमारे और ऐप",
+  "settings.moreApps.description": "PaperKite के दूसरे ऐप, वही छोटा स्टूडियो जो Amply बनाता है।",
+  "settings.moreApps.open": "{name} को Microsoft Store में खोलें",
+  "settings.moreApps.app.juicebar": "आपके गैजेट्स की बैटरी, सीधे टास्कबार में।",
+  "settings.moreApps.app.papery": "एक सुकून भरा PDF एडिटर: पढ़ें, जोड़ें, साइन करें और भरें।",
+  "settings.moreApps.app.twinly": "डुप्लिकेट फ़ोटो और फ़ाइलें ढूँढें और हटाएँ।",
+  "settings.moreApps.app.tachy": "आपकी लाइव इंटरनेट स्पीड, घड़ी के ठीक बगल में।",
+  "settings.moreApps.app.framecap": "बिना वॉटरमार्क और समय सीमा के अपनी स्क्रीन रिकॉर्ड करें।",
+  "settings.moreApps.app.dumbtop": "एक फ़ोकस टाइमर जो आपके लैपटॉप को शांत और ध्यान भटकाने वाली चीज़ों से दूर रखता है।",
+  "settings.moreApps.app.leaflet": "आपकी EPUB, PDF और कॉमिक्स के लिए एक रीडर।",
   "settings.language.label": "भाषा",
   "settings.language.description": "Amply के मेनू और संदेशों की भाषा।",
   "settings.language.system": "Windows के अनुसार ({language})",

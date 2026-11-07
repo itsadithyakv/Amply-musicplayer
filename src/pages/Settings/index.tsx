@@ -7,6 +7,7 @@ import { LibraryToolsSection } from '@/pages/Settings/LibraryToolsSection';
 import { PlaybackSection } from '@/pages/Settings/PlaybackSection';
 import { EqualizerSection } from '@/pages/Settings/EqualizerSection';
 import { AppVersionSection } from '@/pages/Settings/AppVersionSection';
+import { MoreAppsSection } from '@/pages/Settings/MoreAppsSection';
 import { AppearanceSection } from '@/pages/Settings/AppearanceSection';
 import { AppBehaviorSection } from '@/pages/Settings/AppBehaviorSection';
 import { OverlaySection } from '@/pages/Settings/OverlaySection';
@@ -30,6 +31,7 @@ const SettingsPage = () => {
           <PlaybackSection />
           <EqualizerSection />
           <AppVersionSection />
+          <MoreAppsSection />
         </div>
 
         <div className="anim-stagger grid gap-4">

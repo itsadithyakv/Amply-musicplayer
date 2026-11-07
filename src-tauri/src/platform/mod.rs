@@ -5,6 +5,7 @@ use std::{
 
 pub mod diagnostics;
 pub mod media_controls;
+pub mod more_apps;
 pub mod startup;
 pub mod store_license;
 pub mod store_review;

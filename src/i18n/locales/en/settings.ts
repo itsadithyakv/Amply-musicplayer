@@ -1,5 +1,15 @@
 /** English source strings for the `settings` namespace. Keys are `settings.*`; other languages must translate every key. */
 const settings = {
+  "settings.moreApps.title": "More apps from us",
+  "settings.moreApps.description": "Other apps by PaperKite, the small studio that makes Amply.",
+  "settings.moreApps.open": "Open {name} in the Microsoft Store",
+  "settings.moreApps.app.juicebar": "Your gadgets' battery levels, right in the taskbar.",
+  "settings.moreApps.app.papery": "A calm PDF editor: read, merge, sign and fill.",
+  "settings.moreApps.app.twinly": "Find duplicate photos and files, and clear them out.",
+  "settings.moreApps.app.tachy": "Your live internet speed, right by the clock.",
+  "settings.moreApps.app.framecap": "Record your screen, with no watermark or time limit.",
+  "settings.moreApps.app.dumbtop": "A focus timer that turns your laptop calm and distraction-free.",
+  "settings.moreApps.app.leaflet": "A reader for the EPUBs, PDFs and comics you own.",
   "settings.language.label": "Language",
   "settings.language.description": "The language Amply's menus and messages use.",
   "settings.language.system": "Same as Windows ({language})",

@@ -1,6 +1,16 @@
 import type source from '@/i18n/locales/en/settings';
 
 const settings = {
+  "settings.moreApps.title": "Más apps nuestras",
+  "settings.moreApps.description": "Otras apps de PaperKite, el pequeño estudio que hace Amply.",
+  "settings.moreApps.open": "Abrir {name} en Microsoft Store",
+  "settings.moreApps.app.juicebar": "La batería de tus dispositivos, en la barra de tareas.",
+  "settings.moreApps.app.papery": "Un editor de PDF tranquilo: lee, une, firma y rellena.",
+  "settings.moreApps.app.twinly": "Encuentra fotos y archivos duplicados y despéjalos.",
+  "settings.moreApps.app.tachy": "Tu velocidad de internet en directo, junto al reloj.",
+  "settings.moreApps.app.framecap": "Graba tu pantalla sin marca de agua ni límite de tiempo.",
+  "settings.moreApps.app.dumbtop": "Un temporizador de concentración que deja tu portátil libre de distracciones.",
+  "settings.moreApps.app.leaflet": "Un lector para los EPUB, PDF y cómics que ya tienes.",
   "settings.language.label": "Idioma",
   "settings.language.description": "El idioma de los menús y mensajes de Amply.",
   "settings.language.system": "Igual que Windows ({language})",
