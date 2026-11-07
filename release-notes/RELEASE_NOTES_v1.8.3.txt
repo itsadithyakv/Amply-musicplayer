@@ -1,4 +1,4 @@
-Amply v1.8.2
+Amply v1.8.3
 Release date: unreleased
 
 Amply is free, with Amply Pro
@@ -69,6 +69,8 @@ Look and feel
 - Playback speed goes from 0.5x to 2x.
 
 Library
+- Smaller libraries get mixes that make sense: no two mixes of the same songs, no mixes of one
+  or two songs, Favorites holds every favourite, and more mixes appear as the library grows.
 - Clear Cache only clears caches. It used to also erase playlists, favourites, play counts,
   settings and library folders.
 - Backups and restores include this session's plays and favourites, and restored playlists follow

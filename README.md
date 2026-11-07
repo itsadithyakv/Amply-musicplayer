@@ -8,7 +8,7 @@ soft neumorphic interface with light and dark themes.
 Nothing about your library leaves the machine except the metadata lookups you can switch off.
 
 - **Runtime**: Tauri 2 (WebView2 on Windows), React 18 + TypeScript frontend, Rust backend
-- **Version**: 1.8.2
+- **Version**: 1.8.3
 - **Platform**: Windows (the audio and metadata layers are portable; the focus watcher and media-key
   hook are Windows-only and compile to no-ops elsewhere)
 
