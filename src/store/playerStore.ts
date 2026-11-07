@@ -1,6 +1,7 @@
 import { shouldStartCrossfade } from '@/services/crossfade';
 import { readPreference, writePreference } from '@/services/preferences';
-import { effectiveSettings, useProStore } from '@/store/proStore';
+import { FREE_SONG_LIMIT, freeSongIds, isLibraryUnlimited } from '@/services/libraryAccess';
+import { effectiveSettings, requirePro, useProStore } from '@/store/proStore';
 import { DEFAULT_SETTINGS, normalizeSettings } from '@/store/defaultSettings';
 import { getFlag, setFlags } from '@/services/runtimeFlags';
 import { t } from '@/i18n';
@@ -697,6 +698,13 @@ const buildUpcomingSongIds = (state: PlayerState, count = 3): string[] => {
   return upcoming;
 };
 
+/** Songs past the free library limit stay listed but do not play or join a queue. */
+const isLockedSong = (songId: string): boolean => {
+  if (isLibraryUnlimited()) return false;
+  const { songs } = useLibraryStore.getState();
+  return songs.length > FREE_SONG_LIMIT && !freeSongIds(songs).has(songId);
+};
+
 const ensureCurrentSongPrepared = async (
   songId: string,
   startAtSec: number,
@@ -1004,12 +1012,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         return false;
       }
       const song = library.getSongById(persistedPlayback.songId);
-      if (!song) {
+      if (!song || isLockedSong(song.id)) {
         return true;
       }
       const filteredQueue = (persistedPlayback.queueSongIds || [])
         .map((id) => library.getSongById(id))
-        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry) && !isLockedSong(entry!.id))
         .map((entry) => entry.id);
       const queue = filteredQueue.length ? filteredQueue : [song.id];
       let queueCursor = queue.indexOf(song.id);
@@ -1017,7 +1025,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queueCursor = Math.max(0, Math.min(queue.length - 1, persistedPlayback.queueCursor ?? 0));
       }
       const resumeAt = Math.max(0, Math.min(song.duration || 0, persistedPlayback.positionSec || 0));
-      const manualQueue = (persistedQueue?.manualQueueSongIds ?? []).filter((id) => Boolean(library.getSongById(id)));
+      const manualQueue = (persistedQueue?.manualQueueSongIds ?? []).filter((id) => Boolean(library.getSongById(id)) && !isLockedSong(id));
       const repeatMode = persistedQueue?.repeatMode ?? state.repeatMode;
       audioEngine.setLoop(repeatMode === 'one');
       setGlobalPlayingFlag(false);
@@ -1029,7 +1037,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         manualQueueSongIds: manualQueue,
         shuffleEnabled: Boolean(persistedQueue?.shuffleEnabled),
         unshuffledQueueSongIds: persistedQueue?.shuffleEnabled && Array.isArray(persistedQueue.unshuffledQueueSongIds)
-          ? persistedQueue.unshuffledQueueSongIds.filter((id) => Boolean(library.getSongById(id)))
+          ? persistedQueue.unshuffledQueueSongIds.filter((id) => Boolean(library.getSongById(id)) && !isLockedSong(id))
           : null,
         repeatMode,
         isPlaying: false,
@@ -1053,7 +1061,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  setQueue: (songIds, startSongId, options) => {
+  setQueue: (allSongIds, startSongId, options) => {
+    if (startSongId && isLockedSong(startSongId)) {
+      // playSongById explains the limit; the queue that is playing stays as it is.
+      return;
+    }
+    const songIds = allSongIds.filter((id) => !isLockedSong(id));
     const startIndex = startSongId ? Math.max(0, songIds.indexOf(startSongId)) : 0;
     const order = get().shuffleEnabled
       ? shuffledQueue(songIds, songIds[startIndex] ?? null)
@@ -1104,6 +1117,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         setGlobalPlayingFlag(false);
         set({ isPlaying: false });
       }
+      return;
+    }
+    if (isLockedSong(songId)) {
+      requirePro('unlimitedLibrary');
       return;
     }
 
@@ -1872,6 +1889,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   enqueueSong: (songId) => {
+    if (isLockedSong(songId)) {
+      requirePro('unlimitedLibrary');
+      return;
+    }
     schedulePlaybackCritical(() => {
       void useLibraryStore.getState().recordQueueAdd(songId);
     }, { reason: 'record-queue-add', groupKey: 'playback-activity' });

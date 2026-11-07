@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
 import AlbumCard from '@/components/AlbumCard/AlbumCard';
 import { Button, IconButton, PageHeader, ProgressBar, SearchInput, SegmentedTabs, Select, TextInput } from '@/components/ui';
+import { LibraryLimitBanner } from '@/components/Pro/LibraryLimitBanner';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import type { LibraryTab, Song } from '@/types/music';
@@ -292,6 +293,8 @@ const LibraryPage = ({ initialTab = 'songs' }: LibraryPageProps) => {
   return (
     <div className="space-y-5 pb-8">
       <PageHeader title={t('library.title')} description={tp('library.songsIndexed', deferredSongs.length)} />
+
+      <LibraryLimitBanner />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between" aria-busy={isTabPending}>
         <SegmentedTabs

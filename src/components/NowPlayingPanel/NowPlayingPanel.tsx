@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button, Divider, Kicker, Spinner } from '@/components/ui';
+import { useProStore } from '@/store/proStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { getSongsByIds } from '@/store/libraryDataStore';
@@ -74,6 +75,8 @@ const scheduleDeferredIdle = (task: () => void, delayMs = 1200, idleTimeoutMs = 
 
 const NowPlayingPanel = () => {
   const { t } = useT();
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
   const gameMode = useEffectiveSetting((settings) => settings.gameMode);
   const metadataFetchPaused = usePlayerStore((state) => state.settings.metadataFetchPaused);
   const fetchMissingMetadataForSong = useLibraryStore((state) => state.fetchMissingMetadataForSong);
@@ -603,14 +606,32 @@ const NowPlayingPanel = () => {
                     </div>
                   )}
                 </div>
+                {!isPro ? (
+                  // Artist stories are Pro: the photo stays, the story shows as a faded first line.
+                  <div className="flex flex-col gap-2">
+                    <p aria-hidden className="line-clamp-2 select-none text-[12px] leading-relaxed text-amply-textSecondary [mask-image:linear-gradient(to_bottom,black,transparent)]">
+                      {artistProfile.summary}
+                    </p>
+                    <p className="text-[12px] leading-relaxed text-amply-textSecondary">
+                      {t('pro.artist.teaser', { artist: primaryArtist ?? getPrimaryArtistName(song.artist) })}
+                    </p>
+                    <Button variant="secondary" size="sm" icon="lock" className="w-fit" onClick={() => openPaywall('artistInfo')}>
+                      {t('pro.artist.unlock')}
+                    </Button>
+                  </div>
+                ) : null}
+                {isPro ? (
                 <div className="min-h-0 flex-1">
                   <p className={summaryExpanded ? 'text-[12px] leading-relaxed text-amply-textSecondary' : 'line-clamp-4 text-[12px] leading-relaxed text-amply-textSecondary'}>{artistProfile.summary}</p>
                 </div>
+                ) : null}
+                {isPro ? (
                 <div className="flex flex-wrap items-center gap-2 text-[12px] text-amply-textMuted">
                   <button type="button" onClick={() => setSummaryExpanded((current) => !current)} className="font-medium text-amply-textPrimary">{summaryExpanded ? t('player.artist.showLess') : t('player.artist.readMore')}</button>
                   {isOffline ? <span>· {t('player.artist.offline')}</span> : null}
                 </div>
-                {artistProfile.sourceUrl ? (
+                ) : null}
+                {isPro && artistProfile.sourceUrl ? (
                   <Button
                     variant="ghost"
                     size="sm"

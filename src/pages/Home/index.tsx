@@ -327,6 +327,10 @@ const HomePage = () => {
   };
 
   const handleRegenerate = async () => {
+    // Mixes refresh on their own each week; refreshing them on demand is Pro.
+    if (!requirePro('mixRefresh')) {
+      return;
+    }
     setRegenMessage(null);
     try {
       await regenerateSmartPlaylists();

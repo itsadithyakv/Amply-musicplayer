@@ -365,11 +365,11 @@ Amply is free, with one optional durable Microsoft Store add-on: **Amply Pro** (
 | Light and dark themes in amber | Seven more accent colours, true black for OLED |
 | Custom playlists | Smart playlists that fill themselves from rules (`playlistRules.ts`) |
 | Listening history, always recorded | Amply Encore: the year played back as a story deck, a share card and a mix |
-| Whole library, every format, folder watching | Tag editor, duplicate finder |
+| The first 200 songs added, every format, folder watching | The whole library; tag editor, duplicate finder |
 | All playback, gapless, speed, output device, sleep timer, per-song normalization | Crossfade, per-album normalization |
 | EQ presets Flat, Bass, Treble, Vocal | Custom 5-band curve, Warm and Club presets |
-| Twelve core smart mixes | Genre and mood mixes, mix tuning, Last.fm and MusicBrainz signals |
-| Lyrics, artwork, artist info, recommendations from listening history | |
+| Twelve core smart mixes, refreshed weekly | Genre and mood mixes, refresh on demand, mix tuning, Last.fm and MusicBrainz signals |
+| Lyrics for 10 songs a day, artwork, artist photos, recommendations from listening history | Lyrics for every song, artist stories |
 | Listening stats, last 7 days (history always records) | Last 30 days and all time |
 | Themes, languages, media controls, Ember visualizer | Mini player, Game Mode, Aurora and Mono visualizers |
 | Custom playlists, M3U import and export, backup and restore | |
@@ -384,6 +384,15 @@ How it is built:
   (`services/proFeatures.ts`) gives what a free install runs on, and `audioEngine.applySettings` and
   `useEffectiveSetting` apply it, so a Pro setting is never overwritten and returns on purchase.
 - **Plan status.** The sidebar shows FREE or PRO beside the logo, and the Settings card says which plan is active.
+- **The song limit** (`services/libraryAccess.ts`). Free plays the first 200 songs added, earliest
+  `addedAt` first with ties broken by path, so the set does not move on a rescan. The rest stay
+  listed with a lock: `setQueue`, `enqueueSong` and `playSongById` leave them out or open the offer,
+  and mixes are built from playable songs only, rebuilt when Pro arrives. An install that had a
+  library before the limit keeps all of it: `decideLibraryGrant` decides once at startup and stores
+  the answer in `entitlement/library_grant.json`, beside the licence and out of reach of Clear Cache.
+- **Lyrics a day** (`services/lyricsAllowance.ts`). Free shows lyrics for 10 different songs a day,
+  counted when they are on screen; reopening one is free and the count resets at local midnight.
+  Fetching and caching lyrics is never limited.
 - **One dialog.** Every lock calls `requirePro(feature)` or `openPaywall(feature)`; `ProPaywall` leads
   with that feature. Someone already using a feature that became Pro is told so, once.
 - **Testing.** A debug build run with `AMPLY_DEV_PRO=1` behaves as Pro. Release builds ignore it.

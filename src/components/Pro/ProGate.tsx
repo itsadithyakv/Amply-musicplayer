@@ -4,6 +4,10 @@ import type { ProFeature } from '@/services/proFeatures';
 import { useProStore } from '@/store/proStore';
 
 export const FEATURE_TITLES: Record<ProFeature, MessageKey> = {
+  unlimitedLibrary: 'pro.feature.unlimitedLibrary.title',
+  unlimitedLyrics: 'pro.feature.unlimitedLyrics.title',
+  artistInfo: 'pro.feature.artistInfo.title',
+  mixRefresh: 'pro.feature.mixRefresh.title',
   themes: 'pro.feature.themes.title',
   smartRules: 'pro.feature.smartRules.title',
   encore: 'pro.feature.encore.title',
@@ -21,6 +25,10 @@ export const FEATURE_TITLES: Record<ProFeature, MessageKey> = {
 };
 
 export const FEATURE_DESCRIPTIONS: Record<ProFeature, MessageKey> = {
+  unlimitedLibrary: 'pro.feature.unlimitedLibrary.description',
+  unlimitedLyrics: 'pro.feature.unlimitedLyrics.description',
+  artistInfo: 'pro.feature.artistInfo.description',
+  mixRefresh: 'pro.feature.mixRefresh.description',
   themes: 'pro.feature.themes.description',
   smartRules: 'pro.feature.smartRules.description',
   encore: 'pro.feature.encore.description',
@@ -38,6 +46,10 @@ export const FEATURE_DESCRIPTIONS: Record<ProFeature, MessageKey> = {
 };
 
 export const FEATURE_ICONS: Record<ProFeature, IconName> = {
+  unlimitedLibrary: 'library',
+  unlimitedLyrics: 'lyrics',
+  artistInfo: 'info',
+  mixRefresh: 'refresh',
   themes: 'sun',
   smartRules: 'smart-mix',
   encore: 'sparkle',

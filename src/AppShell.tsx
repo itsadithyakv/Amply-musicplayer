@@ -22,6 +22,7 @@ import { SongEditor } from '@/components/SongEditor/SongEditor';
 import { ProPaywall } from '@/components/Pro/ProPaywall';
 import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { useProEntitlement } from '@/hooks/useProEntitlement';
+import { useRegenerateMixesOnUnlock } from '@/hooks/useLibraryAccess';
 const Sidebar = lazy(() => import('@/components/Sidebar/Sidebar'));
 const PlayerBar = lazy(() => import('@/components/Player/PlayerBar'));
 const NowPlayingPanel = lazy(() => import('@/components/NowPlayingPanel/NowPlayingPanel'));
@@ -190,6 +191,7 @@ const AppShell = () => {
   useLanguageSync();
   useProEntitlement();
   useRulePlaylists();
+  useRegenerateMixesOnUnlock();
   useOverlayController(miniNowPlayingOverlay);
   useMediaSession();
   const draggingFiles = useExternalFiles(libraryInitialized);

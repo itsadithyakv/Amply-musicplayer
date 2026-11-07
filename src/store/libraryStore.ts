@@ -44,6 +44,7 @@ import {
   tryAcquireMetadata,
   releaseMetadata,
 } from '@/services/metadataAttemptService';
+import { decideLibraryGrant, playableSongs } from '@/services/libraryAccess';
 import { isMetadataActivityPaused } from '@/services/metadataActivityGate';
 import { getArtistLookupContext, getDisplayTitleRepair, getMetadataArtistName, getPrimaryArtistName, normalizeArtistLookupText } from '@/utils/artists';
 import {
@@ -973,6 +974,8 @@ const refreshSmartPlaylists = async (
   } = {},
 ): Promise<Playlist[]> => {
   const { force = false, persist = true } = options;
+  // A free library over the song limit mixes only the songs it can play.
+  songs = playableSongs(songs);
   const weekKey = isoWeekKey();
   const weeklySeed = seedFromKey(weekKey);
   const cachedSmart = useLibraryStore.getState().smartPlaylists;
@@ -1047,6 +1050,7 @@ const refreshSmartPlaylistsLite = async (
   } = {},
 ): Promise<Playlist[]> => {
   const { persist = false } = options;
+  songs = playableSongs(songs);
   const [input, onlineSignals] = await Promise.all([buildMixEngineInput(songs), loadOnlineSignalsForSmartPlaylists()]);
   const output = generateMixesLite(input);
   storeMixHistory(output.history);
@@ -2026,6 +2030,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         loadMixHistory(),
         loadListeningEvents(),
       ]);
+      // Decided once, before anything is scanned: an install that already had a library keeps all of it.
+      await decideLibraryGrant(cache.songs.length > 0 || getListeningEvents().length > 0);
       const customPlaylists = storedCustomPlaylists.map(withValidRules);
       const hydratedSongs = applySongActivity(cache.songs, songActivity);
       const libraryPaths = normalizeLibraryPaths([

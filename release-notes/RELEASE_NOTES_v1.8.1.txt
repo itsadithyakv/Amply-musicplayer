@@ -2,11 +2,14 @@ Amply v1.8.1
 Release date: unreleased
 
 Amply is free, with Amply Pro
-- Amply stays free: your whole library, every format, all playback, lyrics, artwork, artist info,
-  playlists, twelve smart mixes, a week of listening stats, backups and M3U import and export.
-  No ads and no limits on library size.
-- Amply Pro is a one-time purchase in the Microsoft Store (no subscription). It adds accent colours
-  and a true black theme, smart playlists that fill themselves from rules, Amply Encore, the mini
+- Amply is free: up to 200 songs, every format, all playback, lyrics for 10 songs a day, artwork,
+  artist photos, playlists, twelve smart mixes refreshed weekly, a week of listening stats, backups
+  and M3U import and export. No ads.
+- Already using Amply? Your whole library keeps playing; the song limit is only for new installs.
+- Songs past the limit stay in your library with a lock, and Amply tells you how many are waiting.
+- Amply Pro is a one-time purchase in the Microsoft Store (no subscription). It plays your whole
+  library, shows lyrics for every song and artist stories, refreshes mixes whenever you like, and
+  adds accent colours and a true black theme, smart playlists that fill themselves from rules, Amply Encore, the mini
   player, crossfade, the full equalizer (your own curve plus the Warm and Club presets), per-album
   volume normalization, genre and mood mixes, mix tuning with Last.fm and MusicBrainz suggestions,
   30-day and all-time stats, the tag editor, the duplicate finder, Game Mode and the Aurora and

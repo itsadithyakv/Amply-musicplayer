@@ -2,13 +2,17 @@ import { isMoreMixPlaylistId } from '@/services/mixEngine';
 import type { AppSettings } from '@/types/music';
 
 /**
- * What Amply Pro adds. The line: anything needed to own and play a library stays free, including
- * getting your data out (M3U, backups); Pro is for fine control, extra discovery and desktop extras.
+ * What Amply Pro adds. Free plays a library of up to 200 songs (an older, bigger library keeps all of
+ * it), shows lyrics for 10 songs a day and always lets you get your data out (M3U, backups); Pro
+ * lifts those limits and adds fine control, extra discovery and desktop extras.
  *
  * Saved settings always hold what the user chose. Free installs run on `limitSettings`, so a Pro
  * choice is never overwritten and comes back as it was when Pro is bought.
  */
 export const PRO_FEATURES = [
+  'unlimitedLibrary',
+  'unlimitedLyrics',
+  'artistInfo',
   'themes',
   'smartRules',
   'encore',
@@ -16,6 +20,7 @@ export const PRO_FEATURES = [
   'equalizer',
   'crossfade',
   'moreMixes',
+  'mixRefresh',
   'fullStats',
   'tagEditor',
   'duplicateFinder',

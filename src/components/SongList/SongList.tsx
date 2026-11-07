@@ -11,6 +11,7 @@ import { ArtworkImage } from "@/components/ArtworkImage/ArtworkImage";
 import {
   Card,
   Divider,
+  Icon,
   IconButton,
   Kicker,
   Select,
@@ -26,6 +27,7 @@ import { useStructuralSongsSnapshot } from "@/hooks/useLibraryViews";
 import { isUnknownGenre } from "@/services/songMetadataService";
 import { useSongEditor } from "@/components/SongEditor/SongEditor";
 import { useT, type MessageKey } from "@/i18n";
+import { useLockedSongIds } from "@/hooks/useLibraryAccess";
 
 interface SongListProps {
   songs: Song[];
@@ -124,6 +126,8 @@ const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
 
 interface SongRowData {
   songs: Song[];
+  /** Past the free library limit: listed, but playing one opens the Amply Pro offer. */
+  lockedIds: ReadonlySet<string>;
   queueIds: string[];
   currentSongId: string | null;
   playSongById: (songId: string, fromQueue?: boolean) => Promise<void>;
@@ -145,6 +149,7 @@ const SongRow = memo(
   ({ index, style, data }: ListChildComponentProps<SongRowData>) => {
     const {
       songs,
+      lockedIds,
       queueIds,
       currentSongId,
       playSongById,
@@ -197,6 +202,7 @@ const SongRow = memo(
 
     const isUnknown = isUnknownGenre(song.genre);
     const isEditing = editingSongId === song.id;
+    const isLocked = lockedIds.has(song.id);
 
     const commitGenreDraft = () => {
       const nextGenre = genreDraft.trim();
@@ -227,7 +233,8 @@ const SongRow = memo(
               void playSongById(song.id, false);
             }
           }}
-          className={`${ROW_GRID} h-12 px-3 text-[13px] ${isCurrent ? "text-amply-textPrimary" : "text-amply-textSecondary"}`}
+          title={isLocked ? t("pro.library.lockedSong") : undefined}
+          className={`${ROW_GRID} h-12 px-3 text-[13px] ${isCurrent ? "text-amply-textPrimary" : "text-amply-textSecondary"} ${isLocked ? "opacity-50" : ""}`}
         >
           <span className="text-center text-xs text-amply-textMuted">
             {index + 1}
@@ -242,9 +249,10 @@ const SongRow = memo(
             />
             <div className="min-w-0">
               <p
-                className={`truncate text-[18px] font-bold ${isCurrent ? "text-amply-accent" : "text-amply-textPrimary"}`}
+                className={`flex items-center gap-1.5 truncate text-[18px] font-bold ${isCurrent ? "text-amply-accent" : "text-amply-textPrimary"}`}
               >
-                {song.title}
+                {isLocked ? <Icon name="lock" size={12} className="shrink-0 text-amply-textMuted" /> : null}
+                <span className="truncate">{song.title}</span>
               </p>
               <p className="truncate text-[14px] font-medium text-amply-textSecondary">
                 {song.artist}
@@ -410,6 +418,7 @@ const SongList = ({
   const { t } = useT();
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const playSongById = usePlayerStore((state) => state.playSongById);
+  const lockedIds = useLockedSongIds();
   const setQueue = usePlayerStore((state) => state.setQueue);
   const enqueueSong = usePlayerStore((state) => state.enqueueSong);
   const customPlaylists = useLibraryStore((state) => state.customPlaylists);
@@ -463,6 +472,7 @@ const SongList = ({
   const rowData = useMemo<SongRowData>(
     () => ({
       songs: sortedSongs,
+      lockedIds,
       queueIds,
       currentSongId,
       playSongById,
@@ -478,6 +488,7 @@ const SongList = ({
     }),
     [
       sortedSongs,
+      lockedIds,
       queueIds,
       currentSongId,
       playSongById,

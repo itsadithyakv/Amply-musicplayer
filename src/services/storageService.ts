@@ -238,7 +238,8 @@ export const hasPendingDebouncedWrites = (): boolean => debouncedJsonWrites.size
  * Preferences that are memory, not cache: clearing them would ask for a rating again, repeat the
  * one-time Pro notice and reset the volume.
  */
-const DURABLE_PREFERENCES = [PROMPT_STATE_KEY, REVIEW_QUIET_KEY, 'pro.introSeen', 'player.volume'];
+// 'lyrics.shown' is today's free lyrics count (services/lyricsAllowance.ts): clearing the cache must not reset it.
+const DURABLE_PREFERENCES = [PROMPT_STATE_KEY, REVIEW_QUIET_KEY, 'pro.introSeen', 'player.volume', 'lyrics.shown'];
 
 export const clearStorageCache = async (): Promise<void> => {
   if (isTauri()) {
