@@ -56,6 +56,7 @@ const library = {
   "library.home.title": "Inicio",
   "library.home.refreshMixes": "Actualizar mixes",
   "library.home.smartPlaylists": "Listas inteligentes",
+  "library.home.fewMixes": "Aparecerán más mezclas a medida que escuches y añadas música.",
   "library.home.refreshing": "Actualizando listas…",
   "library.home.noSmartPlaylists": "Aún no hay listas inteligentes. Añade más música o actualiza tu biblioteca para generar mixes.",
   "library.home.allMixes": "Todos los mixes",

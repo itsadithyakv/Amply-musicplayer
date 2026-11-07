@@ -56,6 +56,7 @@ const library = {
   "library.home.title": "首页",
   "library.home.refreshMixes": "刷新合辑",
   "library.home.smartPlaylists": "智能播放列表",
+  "library.home.fewMixes": "随着你收听和添加音乐，会出现更多混音。",
   "library.home.refreshing": "正在刷新播放列表…",
   "library.home.noSmartPlaylists": "还没有智能播放列表。添加更多音乐或刷新音乐库即可生成合辑。",
   "library.home.allMixes": "全部合辑",

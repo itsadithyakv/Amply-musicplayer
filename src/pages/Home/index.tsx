@@ -239,7 +239,7 @@ const HomePage = () => {
 
   const smartPlaylistItems = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
-    const smartPlaylists = frozenPlaylists.filter((playlist) => playlist.type === 'smart');
+    const smartPlaylists = frozenPlaylists.filter((playlist) => playlist.type === 'smart' || playlist.type === 'daily');
     if (smartPlaylistCoverCache.size > COVER_CACHE_LIMIT) {
       smartPlaylistCoverCache.clear();
     }
@@ -270,6 +270,7 @@ const HomePage = () => {
           songIds: playlist.songIds,
           kind: 'smart' as const,
           isMoreMix: isMoreMixPlaylistId(playlist.id),
+          isDaily: playlist.type === 'daily',
         };
       })
       .filter((entry) => entry.songIds.length);
@@ -279,10 +280,13 @@ const HomePage = () => {
   // them under the pointer, so the section is stable until a manual regenerate.
   const smartHighlightCards = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
-    return smartPlaylistItems
-      .filter((entry) => !entry.isMoreMix)
+    const cards = smartPlaylistItems
+      .filter((entry) => !entry.isMoreMix && !entry.isDaily)
       .sort((a, b) => hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`))
       .slice(0, 7);
+    // A small library may make only a few mixes besides the Daily Mix; then it leads the section.
+    const daily = smartPlaylistItems.find((entry) => entry.isDaily);
+    return cards.length < 4 && daily ? [daily, ...cards] : cards;
   }, [smartPlaylistItems, smartPlaylistRenderSeed]);
 
   const smartMixesAll = useMemo(() => {
@@ -421,6 +425,9 @@ const HomePage = () => {
 
         {!smartHighlightCards.length ? (
           <EmptyNote>{t('library.home.noSmartPlaylists')}</EmptyNote>
+        ) : smartHighlightCards.length < 4 ? (
+          // A small or new library makes only a few mixes; say more are coming rather than missing.
+          <p className="px-2 text-[12px] text-amply-textSecondary">{t('library.home.fewMixes')}</p>
         ) : null}
 
         {showMoreMixes && isPro ? (

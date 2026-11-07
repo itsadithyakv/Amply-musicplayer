@@ -132,7 +132,7 @@ describe('mix engine on a warm library', () => {
     expect(byId.has('smart_genre_mix_unknown-genre')).toBe(false);
   });
 
-  it('puts every song in at most two mixes and never in two of one family', () => {
+  it('puts every song in at most two mixes besides Favorites, and never in two of one family', () => {
     const uses = new Map<string, string[]>();
     for (const playlist of output.playlists) {
       for (const id of playlist.songIds) {
@@ -147,7 +147,8 @@ describe('mix engine on a warm library', () => {
       ['smart_recently_played', 'smart_on_repeat'],
     ];
     for (const [, mixes] of uses) {
-      expect(mixes.length).toBeLessThanOrEqual(2);
+      // Favorites always holds every favourite; the limit is about Amply's own picks.
+      expect(mixes.filter((mix) => mix !== 'smart_favorites').length).toBeLessThanOrEqual(2);
       for (const family of families) {
         expect(mixes.filter((mix) => family.includes(mix)).length).toBeLessThanOrEqual(1);
       }

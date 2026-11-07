@@ -56,6 +56,7 @@ const library = {
   "library.home.title": "होम",
   "library.home.refreshMixes": "मिक्स रीफ़्रेश करें",
   "library.home.smartPlaylists": "स्मार्ट प्लेलिस्ट",
+  "library.home.fewMixes": "जैसे-जैसे आप सुनेंगे और संगीत जोड़ेंगे, और मिक्स दिखेंगे।",
   "library.home.refreshing": "प्लेलिस्ट रीफ़्रेश हो रही हैं…",
   "library.home.noSmartPlaylists": "अभी कोई स्मार्ट प्लेलिस्ट नहीं है। मिक्स बनाने के लिए और म्यूज़िक जोड़ें या लाइब्रेरी रीफ़्रेश करें।",
   "library.home.allMixes": "सभी मिक्स",
