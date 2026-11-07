@@ -14,5 +14,5 @@ interface ArtistCardProps {
 export const ArtistCard = ({ name, songCount, fallbackArtwork, onClick }: ArtistCardProps) => {
   const { tp } = useT();
   const photo = useArtistImage(name);
-  return <AlbumCard title={name} subtitle={tp('library.songCount', songCount)} artwork={photo ?? fallbackArtwork} onClick={onClick} />;
+  return <AlbumCard title={name} subtitle={tp('library.songCount', songCount)} artwork={photo ?? fallbackArtwork} fallbackArtwork={fallbackArtwork} onClick={onClick} />;
 };

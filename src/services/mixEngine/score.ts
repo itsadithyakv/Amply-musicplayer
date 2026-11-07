@@ -1,7 +1,7 @@
 import { type CanonicalGenre, genreSlug } from './genres';
 import { moodMixId } from './moods';
 import type { LibraryStats, SongSignals } from './signals';
-import type { MixDefinition, MoodDefinition } from './types';
+import type { MixDefinition, MixKind, MoodDefinition } from './types';
 
 /**
  * The mix table. `exploitShare` is the percentage drawn from the familiar pool; the remainder
@@ -193,8 +193,61 @@ export const librarySizeScale = (librarySize: number): number => clamp(librarySi
 export const scaledTarget = (base: number, librarySize: number): number =>
   Math.max(MIN_SCALED_TARGET, Math.round(base * librarySizeScale(librarySize)));
 
+/**
+ * The Daily Mix is the whole library up to 25 songs, then half of it up to its usual 60, so that in
+ * a small library it is a day's listening rather than "everything, shuffled" next to other mixes.
+ */
+export const dailyTargetFor = (base: number, librarySize: number): number =>
+  librarySize <= 25 ? Math.max(1, librarySize) : clamp(Math.round(librarySize / 2), 25, base);
+
 export const effectiveTarget = (def: MixDefinition, librarySize: number): number =>
-  def.kind === 'daily' ? def.target : scaledTarget(def.target, librarySize);
+  def.kind === 'daily' ? dailyTargetFor(def.target, librarySize) : scaledTarget(def.target, librarySize);
+
+/**
+ * The smallest library each kind of mix makes sense in. Exploring, digging out deep cuts or
+ * rediscovering the forgotten needs songs to find; a 30-song library has none to spare.
+ */
+export const MIN_LIBRARY_FOR: Partial<Record<MixKind, number>> = {
+  explore: 100,
+  deep_cuts: 100,
+  rediscover: 100,
+  quick_hits: 60,
+  long_sessions: 60,
+  genre: 50,
+  mood: 50,
+  // Below this, "favourites you also play" is most of Favorites; Favorites says it on its own.
+  loved_played: 300,
+};
+
+export const isMixPossible = (kind: MixKind, librarySize: number): boolean => librarySize >= (MIN_LIBRARY_FOR[kind] ?? 0);
+
+/** Mixes about the user's own listening still make sense small; the rest need a few more songs. */
+const PERSONAL_KINDS: ReadonlySet<MixKind> = new Set(['on_repeat', 'recently_played', 'most_played', 'favorites', 'loved_played']);
+export const MIN_MIX_SONGS = 8;
+export const MIN_PERSONAL_MIX_SONGS = 5;
+
+/** Fewest songs a mix may show. The Daily Mix always shows, whatever its size. */
+export const minSongsFor = (kind: MixKind): number =>
+  kind === 'daily' ? 1 : PERSONAL_KINDS.has(kind) ? MIN_PERSONAL_MIX_SONGS : MIN_MIX_SONGS;
+
+/** Recently Added in a library under 240 songs: what arrived in the last month. */
+export const SMALL_LIBRARY_RECENT_DAYS = 30;
+/** When this share of the library counts as "recently added", the mix says nothing and is left out. */
+export const ALL_NEW_SHARE = 0.75;
+
+/**
+ * A mix this close to one already shown is the same mix twice: most of its songs are in the other,
+ * and it is nearly as big.
+ */
+export const TWIN_OVERLAP = 0.8;
+export const TWIN_SIZE_RATIO = 0.7;
+
+export const isTwinOf = (songs: readonly string[], shown: ReadonlySet<string>): boolean => {
+  if (!songs.length || songs.length < shown.size * TWIN_SIZE_RATIO) return false;
+  let shared = 0;
+  for (const id of songs) if (shown.has(id)) shared += 1;
+  return shared / songs.length >= TWIN_OVERLAP;
+};
 
 export const maxGenreMixesFor = (librarySize: number): number => clamp(Math.floor(librarySize / 100), 2, MAX_GENRE_MIXES);
 export const maxMoodMixesFor = (librarySize: number): number => clamp(Math.floor(librarySize / 100), 3, 12);
@@ -273,8 +326,9 @@ export const isEligible = (def: MixDefinition, signal: SongSignals, ctx: RankCon
     case 'most_played':
       return signal.playCount > 0 && signal.decayedPlays >= ctx.stats.mostPlayedThreshold;
     case 'rediscover':
+      // Before there is any history: songs kept for a while and never played, not yesterday's arrivals.
       return ctx.rediscoverFallback
-        ? signal.playCount === 0
+        ? signal.playCount === 0 && signal.daysSinceAdded > 45
         : signal.playCount > 0 && signal.daysSincePlayed > 45;
     case 'favorites':
       return signal.favorite;

@@ -7,11 +7,8 @@ type VisualTheme = AppSettings['lyricsVisualTheme'];
 
 interface AudioVisualizerProps {
   active: boolean;
-  /** Minimal bar strip anchored to the bottom edge (player bar) instead of a full scene. */
-  compact?: boolean;
   isPlaying: boolean;
   theme: VisualTheme;
-  tint?: string | null;
 }
 
 interface AudioSpectrumEvent {
@@ -20,343 +17,240 @@ interface AudioSpectrumEvent {
 
 const BAND_COUNT = 8;
 
-/** "r,g,b" triplet ready for `rgba(...)`. */
-type Triplet = string;
-interface Palette {
-  /** Low → high energy colour ramp (4 stops). */
-  ramp: [Triplet, Triplet, Triplet, Triplet];
-  /** Whether additive blending looks right on this background (dark theme). */
-  additive: boolean;
+type Rgb = [number, number, number];
+
+/** What the styles draw with, read from the live design tokens so they follow theme and accent. */
+interface Colors {
+  dark: boolean;
+  accent: Rgb;
+  ink: Rgb;
+  edge: Rgb;
 }
-type Palettes = Record<VisualTheme, Palette>;
 
-const NEUTRAL: Triplet = '128,128,128';
-const FALLBACK: Palettes = {
-  ember: { ramp: [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL], additive: false },
-  aurora: { ramp: [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL], additive: false },
-  mono: { ramp: [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL], additive: false },
+const readRgb = (styles: CSSStyleDeclaration, token: string, fallback: Rgb): Rgb => {
+  const parts = styles.getPropertyValue(token).trim().split(/[\s,]+/).map(Number);
+  return parts.length === 3 && parts.every(Number.isFinite) ? (parts as Rgb) : fallback;
 };
 
-const readTriplet = (styles: CSSStyleDeclaration, token: string): Triplet => {
-  const parts = styles.getPropertyValue(token).trim().split(/[\s,]+/).filter(Boolean);
-  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(Number(part)))) {
-    return NEUTRAL;
-  }
-  return parts.map((part) => Math.round(Number(part))).join(',');
-};
-
-const mixTriplet = (a: Triplet, b: Triplet, t: number): Triplet => {
-  const pa = a.split(',').map(Number);
-  const pb = b.split(',').map(Number);
-  return pa.map((channel, index) => Math.round(channel + (pb[index] - channel) * t)).join(',');
-};
-
-const lighten = (triplet: Triplet, amount: number): Triplet => mixTriplet(triplet, '255,255,255', amount);
-
-/** Palettes derived from the live design tokens so every scene follows the light/dark theme. */
-const readPalettes = (): Palettes => {
+const readColors = (): Colors => {
   if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
-    return FALLBACK;
+    return { dark: false, accent: [235, 126, 35], ink: [35, 31, 27], edge: [120, 105, 88] };
   }
   const styles = getComputedStyle(document.documentElement);
-  const dark = document.documentElement.dataset.theme === 'dark';
-  const accent = readTriplet(styles, '--amply-accent');
-  const danger = readTriplet(styles, '--amply-danger');
-  const info = readTriplet(styles, '--amply-info');
-  const success = readTriplet(styles, '--amply-success');
-  const muted = readTriplet(styles, '--amply-text-muted');
-  const primary = readTriplet(styles, '--amply-text-primary');
   return {
-    ember: { ramp: [mixTriplet(danger, accent, 0.5), accent, lighten(accent, 0.35), lighten(accent, 0.75)], additive: dark },
-    aurora: { ramp: [info, success, mixTriplet(success, accent, 0.5), lighten(info, 0.4)], additive: dark },
-    mono: { ramp: [muted, mixTriplet(muted, primary, 0.4), mixTriplet(muted, primary, 0.75), primary], additive: false },
+    dark: document.documentElement.dataset.theme === 'dark',
+    accent: readRgb(styles, '--amply-accent', [235, 126, 35]),
+    ink: readRgb(styles, '--amply-text-primary', [35, 31, 27]),
+    edge: readRgb(styles, '--amply-edge', [120, 105, 88]),
   };
 };
 
-const rgba = (color: Triplet, alpha: number): string => `rgba(${color},${Math.max(0, Math.min(1, alpha))})`;
+const rgba = ([r, g, b]: Rgb, alpha: number): string => `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+const mix = (a: Rgb, b: Rgb, t: number): Rgb => [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * t)) as Rgb;
+const WHITE: Rgb = [255, 255, 255];
 
-/** Interpolated band level at a 0..1 position across the spectrum. */
-const levelAt = (bands: Float32Array, ratio: number): number => {
-  const position = Math.max(0, Math.min(1, ratio)) * (BAND_COUNT - 1);
-  const low = Math.floor(position);
+/**
+ * Spectrum level at `position` (0 = centre, 1 = edge). The bass sits in the middle, where the eye
+ * rests, and the spectrum fans out symmetrically to the treble at both ends.
+ */
+const levelAt = (bands: Float32Array, position: number): number => {
+  const scaled = Math.max(0, Math.min(1, position)) * (BAND_COUNT - 1);
+  const low = Math.floor(scaled);
   const high = Math.min(BAND_COUNT - 1, low + 1);
-  const mix = position - low;
-  return bands[low] * (1 - mix) + bands[high] * mix;
+  return bands[low] + (bands[high] - bands[low]) * (scaled - low);
 };
 
-/* ------------------------------------------------------------------ */
-/* Scene 1 — Ember: mirrored flame bars rising from a glowing floor,   */
-/* with drifting sparks whose spawn rate follows the energy.           */
-/* ------------------------------------------------------------------ */
-interface Spark {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  ttl: number;
-  size: number;
-}
+/**
+ * Per-column movement on top of the 8 bands. Spread smoothly over a hundred columns, 8 bands make
+ * a flat plateau; a slow, deterministic ripple gives each column its own life, as on a real
+ * analyser. Scales with the level, so silence stays still.
+ */
+const ripple = (index: number, time: number): number =>
+  0.62 + 0.38 * (0.5 + 0.5 * Math.sin(index * 1.73 + time * 0.0042) * Math.cos(index * 0.61 - time * 0.0027));
 
-interface EmberState {
-  sparks: Spark[];
-}
+/** Centre-out position of column `index` of `count`. */
+const centred = (index: number, count: number): number => Math.abs(index - (count - 1) / 2) / ((count - 1) / 2);
 
-const drawEmber = (
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  bands: Float32Array,
-  palette: Palette,
-  energy: number,
-  dt: number,
-  state: EmberState,
-  reduceMotion: boolean,
-): void => {
-  const floorY = h * 0.86;
-  const count = 24;
-  const gap = Math.max(4, w / 140);
-  const barW = (w * 0.78 - gap * (count - 1)) / count;
-  const startX = (w - (barW * count + gap * (count - 1))) / 2;
+/**
+ * The strip runs edge to edge, so it tapers instead of stopping: full height across the middle,
+ * easing down to nothing over the outer 18% on each side.
+ */
+const taper = (position: number): number => {
+  const edge = Math.max(0, Math.min(1, (1 - position) / 0.18));
+  return edge * edge * (3 - 2 * edge);
+};
 
-  // floor glow
-  const glow = ctx.createLinearGradient(0, floorY - h * 0.35, 0, floorY);
-  glow.addColorStop(0, rgba(palette.ramp[0], 0));
-  glow.addColorStop(1, rgba(palette.ramp[1], 0.08 + energy * 0.18));
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, floorY - h * 0.35, w, h * 0.35);
+/** Level of column `index` of `count`, with the edge taper applied. */
+const columnLevel = (bands: Float32Array, index: number, count: number): number => {
+  const position = centred(index, count);
+  return levelAt(bands, position) * taper(position);
+};
 
-  ctx.save();
-  if (palette.additive) {
-    ctx.globalCompositeOperation = 'lighter';
-  }
+/* Ember: rounded bars in the accent colour, warming to a lighter tip, with peak caps that hang a
+   moment and fall. The classic, made soft. */
+const EMBER_BAR = 4;
+const EMBER_GAP = 3;
+/** Upper bound for the peak-cap memory; a 4K-wide strip still fits. */
+const MAX_BARS = 640;
+
+const drawEmber = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, colors: Colors, peaks: Float32Array, dt: number, time: number): void => {
+  // Thin bars at a fixed width, as many as fit: wide ones read as a row of bubbles.
+  const count = Math.min(MAX_BARS, Math.max(8, Math.floor((w + EMBER_GAP) / (EMBER_BAR + EMBER_GAP))));
+  const barW = EMBER_BAR;
+  const gap = (w - count * barW) / Math.max(1, count - 1);
+  const usable = h - 6;
+  const fill = ctx.createLinearGradient(0, h, 0, 0);
+  fill.addColorStop(0, rgba(colors.accent, 0.95));
+  fill.addColorStop(1, rgba(mix(colors.accent, colors.dark ? WHITE : colors.ink, colors.dark ? 0.45 : 0.15), 0.9));
+  const capColor = rgba(colors.dark ? mix(colors.accent, WHITE, 0.6) : colors.accent, 0.9);
+
   for (let index = 0; index < count; index += 1) {
-    const centered = Math.abs(index - (count - 1) / 2) / ((count - 1) / 2); // 0 centre → 1 edge
-    const level = levelAt(bands, centered);
-    const eased = Math.pow(level, 0.7);
-    const barH = 6 + eased * h * 0.55 * (1 - centered * 0.35);
-    const x = startX + index * (barW + gap);
-    const gradient = ctx.createLinearGradient(0, floorY, 0, floorY - barH);
-    gradient.addColorStop(0, rgba(palette.ramp[0], 0.55));
-    gradient.addColorStop(0.55, rgba(palette.ramp[1], 0.45));
-    gradient.addColorStop(1, rgba(palette.ramp[3], 0.05 + eased * 0.6));
-    ctx.fillStyle = gradient;
-    ctx.shadowColor = rgba(palette.ramp[1], 0.35 + eased * 0.3);
-    ctx.shadowBlur = 10 + eased * 22;
-    ctx.beginPath();
-    ctx.roundRect(x, floorY - barH, barW, barH, [barW / 2, barW / 2, 0, 0]);
-    ctx.fill();
-  }
-  ctx.restore();
-
-  // sparks
-  if (!reduceMotion) {
-    const spawn = energy * 40 * dt;
-    let budget = spawn + (Math.random() < spawn % 1 ? 1 : 0);
-    while (budget >= 1 && state.sparks.length < 90) {
-      budget -= 1;
-      const ratio = Math.random();
-      state.sparks.push({
-        x: startX + ratio * (w - startX * 2),
-        y: floorY - Math.random() * 8,
-        vx: (Math.random() - 0.5) * 18,
-        vy: -(40 + Math.random() * 70 + energy * 60),
-        life: 0,
-        ttl: 1.2 + Math.random() * 1.6,
-        size: 1 + Math.random() * 1.8,
-      });
+    const level = Math.pow(columnLevel(bands, index, count), 0.85) * ripple(index, time);
+    const barH = Math.max(2 * taper(centred(index, count)), level * usable);
+    if (barH < 0.5) {
+      continue;
     }
-    ctx.save();
-    for (let i = state.sparks.length - 1; i >= 0; i -= 1) {
-      const spark = state.sparks[i];
-      spark.life += dt;
-      if (spark.life >= spark.ttl) {
-        state.sparks.splice(i, 1);
-        continue;
-      }
-      spark.x += (spark.vx + Math.sin(spark.life * 6 + spark.x) * 10) * dt;
-      spark.y += spark.vy * dt;
-      spark.vy *= 1 - 0.6 * dt;
-      const t = spark.life / spark.ttl;
-      ctx.fillStyle = rgba(t < 0.5 ? palette.ramp[3] : palette.ramp[2], (1 - t) * 0.8);
+    const x = index * (barW + gap);
+    ctx.fillStyle = fill;
+    ctx.globalAlpha = 0.55 + level * 0.45;
+    ctx.beginPath();
+    ctx.roundRect(x, h - barH, barW, barH + barW, barW / 2);
+    ctx.fill();
+
+    // Peak caps rise with the bar and fall slowly, so transients stay readable.
+    peaks[index] = Math.max(barH, peaks[index] - 26 * dt);
+    if (peaks[index] > barH + 2) {
+      ctx.globalAlpha = Math.min(1, (peaks[index] - barH) / 8);
+      ctx.fillStyle = capColor;
       ctx.beginPath();
-      ctx.arc(spark.x, spark.y, spark.size * (1 - t * 0.5), 0, Math.PI * 2);
+      ctx.roundRect(x, h - peaks[index] - 3, barW, 2, 1);
       ctx.fill();
     }
-    ctx.restore();
   }
+  ctx.globalAlpha = 1;
 };
 
-/* ------------------------------------------------------------------ */
-/* Scene 2 — Aurora: four translucent ribbons whose height follows    */
-/* the spectrum, drifting slowly like curtains of light.               */
-/* ------------------------------------------------------------------ */
-const drawAurora = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, palette: Palette, energy: number, time: number): void => {
-  const ribbons = 4;
-  const steps = 60;
-  ctx.save();
-  if (palette.additive) {
-    ctx.globalCompositeOperation = 'lighter';
-  }
-  for (let r = 0; r < ribbons; r += 1) {
-    const color = palette.ramp[r % palette.ramp.length];
-    const baseY = h * (0.42 + r * 0.06);
-    const phase = time * (0.00012 + r * 0.00003) + r * 1.9;
-    const thickness = h * (0.16 + energy * 0.12);
-    const top: Array<[number, number]> = [];
-    for (let s = 0; s <= steps; s += 1) {
-      const ratio = s / steps;
-      const level = levelAt(bands, ratio);
-      const drift = Math.sin(ratio * Math.PI * (1.6 + r * 0.4) + phase) * h * 0.06;
-      const swell = Math.sin(ratio * Math.PI) * (0.3 + level) * h * 0.22;
-      top.push([ratio * w, baseY + drift - swell]);
-    }
-    const gradient = ctx.createLinearGradient(0, baseY - h * 0.3, 0, baseY + thickness);
-    gradient.addColorStop(0, rgba(color, 0));
-    gradient.addColorStop(0.35, rgba(color, 0.16 + energy * 0.22));
-    gradient.addColorStop(1, rgba(color, 0));
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.moveTo(top[0][0], top[0][1]);
-    for (let s = 1; s < top.length; s += 1) {
-      const [x0, y0] = top[s - 1];
-      const [x1, y1] = top[s];
-      const cx = (x0 + x1) / 2;
-      ctx.quadraticCurveTo(x0, y0, cx, (y0 + y1) / 2);
-    }
-    ctx.lineTo(w, baseY + thickness);
-    ctx.lineTo(0, baseY + thickness);
-    ctx.closePath();
-    ctx.fill();
+/* Aurora: two flowing waves shading from violet through cyan to green and back, drifting slowly
+   on their own, with a bright crest. Vivid on dark, deeper on light so it never washes out. */
+const AURORA_DARK: Rgb[] = [[167, 139, 250], [56, 214, 236], [74, 222, 160]];
+const AURORA_LIGHT: Rgb[] = [[124, 77, 230], [8, 145, 178], [16, 150, 105]];
+const AURORA_POINTS = 48;
 
-    // crest highlight
-    ctx.beginPath();
-    ctx.moveTo(top[0][0], top[0][1]);
-    for (let s = 1; s < top.length; s += 1) {
-      const [x0, y0] = top[s - 1];
-      const [x1, y1] = top[s];
+const drawAurora = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, colors: Colors, time: number): void => {
+  const hues = colors.dark ? AURORA_DARK : AURORA_LIGHT;
+  const gradient = (alpha: number) => {
+    const g = ctx.createLinearGradient(0, 0, w, 0);
+    [hues[0], hues[1], hues[2], hues[1], hues[0]].forEach((hue, i) => g.addColorStop(i / 4, rgba(hue, alpha)));
+    return g;
+  };
+  const crest = (amplitude: number, phase: number): Array<[number, number]> => {
+    const points: Array<[number, number]> = [];
+    for (let i = 0; i <= AURORA_POINTS; i += 1) {
+      const ratio = i / AURORA_POINTS;
+      const level = columnLevel(bands, i, AURORA_POINTS + 1) * (0.8 + 0.2 * ripple(i, time));
+      const drift = (Math.sin(ratio * Math.PI * 3 + phase) * 0.5 + 0.5) * 0.18 * taper(centred(i, AURORA_POINTS + 1));
+      points.push([ratio * w, h - 2 - Math.min(1, level * amplitude + drift * amplitude) * (h - 6)]);
+    }
+    return points;
+  };
+  const trace = (points: Array<[number, number]>) => {
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i += 1) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
       ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
     }
-    ctx.strokeStyle = rgba(palette.ramp[3], 0.18 + energy * 0.25);
-    ctx.lineWidth = 1.2;
-    ctx.shadowColor = rgba(color, 0.5);
-    ctx.shadowBlur = 16;
-    ctx.stroke();
-  }
-  ctx.restore();
-};
+    ctx.lineTo(points[points.length - 1][0], points[points.length - 1][1]);
+  };
 
-/* ------------------------------------------------------------------ */
-/* Scene 3 — Mono: a quiet radial spectrum. Thin mirrored spokes       */
-/* around a breathing core; no glow, just the text colours.            */
-/* ------------------------------------------------------------------ */
-const drawMono = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, palette: Palette, energy: number, time: number): void => {
-  const cx = w / 2;
-  const cy = h * 0.5;
-  const radius = Math.min(w, h) * 0.17;
-  const spokes = 96;
   ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(time * 0.00004);
-
-  // core
-  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * (0.95 + energy * 0.15));
-  core.addColorStop(0, rgba(palette.ramp[1], 0.16 + energy * 0.12));
-  core.addColorStop(1, rgba(palette.ramp[0], 0));
-  ctx.fillStyle = core;
-  ctx.beginPath();
-  ctx.arc(0, 0, radius * 1.15, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.lineCap = 'round';
-  for (let i = 0; i < spokes; i += 1) {
-    const angle = (i / spokes) * Math.PI * 2;
-    // mirror the spectrum around the vertical axis so lows sit at the bottom, highs at the top
-    const ratio = Math.abs(((i / spokes) * 2 + 0.5) % 2 - 1);
-    const level = levelAt(bands, ratio);
-    const length = radius * 0.12 + Math.pow(level, 0.8) * radius * 1.1;
-    const inner = radius * 1.02;
-    const stop = palette.ramp[Math.min(3, Math.floor(level * 4))];
-    ctx.strokeStyle = rgba(stop, 0.22 + level * 0.5);
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
-    ctx.lineTo(Math.cos(angle) * (inner + length), Math.sin(angle) * (inner + length));
-    ctx.stroke();
+  if (colors.dark) {
+    ctx.globalCompositeOperation = 'lighter';
   }
-
-  // ring
-  ctx.strokeStyle = rgba(palette.ramp[2], 0.28);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(0, 0, radius, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-};
-
-const STRIP_BARS = 56;
-
-/** Thin bars rising from the bottom edge; band levels are interpolated across the bar count. */
-const drawStrip = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, palette: Palette, energy: number): void => {
-  const gap = 3;
-  const barWidth = Math.max(2, (w - gap * (STRIP_BARS - 1)) / STRIP_BARS);
-  const lastBand = BAND_COUNT - 1;
-  for (let index = 0; index < STRIP_BARS; index += 1) {
-    // Mirror the spectrum around the centre so the strip reads as symmetric.
-    const centred = Math.abs(index - (STRIP_BARS - 1) / 2) / ((STRIP_BARS - 1) / 2);
-    const position = (1 - centred) * lastBand;
-    const low = Math.floor(position);
-    const high = Math.min(lastBand, low + 1);
-    const level = bands[low] + (bands[high] - bands[low]) * (position - low);
-    const height = Math.max(2, level * (h - 4));
-    const x = index * (barWidth + gap);
-    const y = h - height;
-    const colour = mixTriplet(palette.ramp[1], palette.ramp[3], Math.min(1, level * 1.2));
-    ctx.fillStyle = `rgba(${colour}, ${0.45 + level * 0.5})`;
+  const seconds = time / 1000;
+  for (const [amplitude, phase, fillAlpha, lineAlpha] of [
+    [0.75, seconds * 0.9 + 2, 0.12, 0.35],
+    [1, seconds * 0.6, 0.24, 0.95],
+  ] as const) {
+    const points = crest(amplitude, phase);
     ctx.beginPath();
-    ctx.roundRect(x, y, barWidth, height + 4, [barWidth / 2, barWidth / 2, 0, 0]);
+    trace(points);
+    ctx.lineTo(w, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = gradient(fillAlpha);
     ctx.fill();
+    ctx.beginPath();
+    trace(points);
+    ctx.strokeStyle = gradient(lineAlpha);
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
   }
-  if (energy > 0.02) {
-    const glow = ctx.createLinearGradient(0, h, 0, h - 18);
-    glow.addColorStop(0, `rgba(${palette.ramp[2]}, ${0.12 + energy * 0.2})`);
-    glow.addColorStop(1, `rgba(${palette.ramp[2]}, 0)`);
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, h - 18, w, 18);
-  }
-};
-
-const drawTint = (ctx: CanvasRenderingContext2D, w: number, h: number, tint: string | null | undefined, energy: number): void => {
-  if (!tint) {
-    return;
-  }
-  const gradient = ctx.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.6);
-  gradient.addColorStop(0, tint);
-  gradient.addColorStop(1, 'transparent');
-  ctx.save();
-  ctx.globalAlpha = 0.03 + energy * 0.06;
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, w, h);
   ctx.restore();
 };
 
-const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint }: AudioVisualizerProps) => {
+/* Mono: a hi-fi dot-matrix meter. Columns of small dots light up from the bottom in the text
+   colour, the top lit dot in the accent. Only the bottom row stays as a faint baseline: a full
+   grid of unlit dots would lay a grey texture over the page. */
+const MONO_DOT = 3;
+const MONO_PITCH = 5;
+
+const drawMono = (ctx: CanvasRenderingContext2D, w: number, h: number, bands: Float32Array, colors: Colors, time: number): void => {
+  const rows = Math.max(3, Math.floor((h - 2) / MONO_PITCH));
+  const columns = Math.max(8, Math.floor(w / (MONO_PITCH + 1)));
+  const columnPitch = w / columns;
+  const unlit = rgba(colors.edge, colors.dark ? 0.16 : 0.14);
+  const lit = rgba(colors.ink, colors.dark ? 0.6 : 0.5);
+  const tip = rgba(colors.accent, 1);
+  const baseline = rgba(colors.ink, colors.dark ? 0.32 : 0.26);
+  for (let column = 0; column < columns; column += 1) {
+    const level = columnLevel(bands, column, columns) * ripple(column, time);
+    const litRows = Math.round(Math.pow(level, 0.8) * rows);
+    const x = column * columnPitch + (columnPitch - MONO_DOT) / 2;
+    for (let row = 0; row < Math.max(1, litRows); row += 1) {
+      // The bottom row is a steady baseline; a single lit dot is not a peak, so it is not accented.
+      ctx.fillStyle = row === 0 && litRows <= 1 ? baseline : row >= litRows ? unlit : row === litRows - 1 ? tip : lit;
+      ctx.beginPath();
+      ctx.roundRect(x, h - 2 - (row + 1) * MONO_PITCH + (MONO_PITCH - MONO_DOT), MONO_DOT, MONO_DOT, 1);
+      ctx.fill();
+    }
+  }
+};
+
+/**
+ * The browser preview (`npm run dev`) has no audio engine, so it would only ever show the idle
+ * strip. There, a synthetic beat stands in for the spectrum; desktop builds never use it.
+ */
+const SIMULATE_SPECTRUM = import.meta.env.DEV && !isTauri();
+
+const simulateSpectrum = (bands: Float32Array, time: number): void => {
+  const beat = Math.pow(Math.max(0, Math.sin((time / 1000) * Math.PI * 2 * 2)), 6);
+  for (let index = 0; index < BAND_COUNT; index += 1) {
+    const wobble = 0.5 + 0.5 * Math.sin(time / (260 + index * 70) + index * 1.7);
+    bands[index] = Math.min(1, (index < 2 ? beat * 0.7 : 0.15) + wobble * (0.55 - index * 0.04));
+  }
+};
+
+/** The spectrum strip above the player bar, in the chosen style. */
+const AudioVisualizer = memo(({ active, isPlaying, theme }: AudioVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [target] = useState(() => new Float32Array(BAND_COUNT));
   const [smoothed] = useState(() => new Float32Array(BAND_COUNT));
+  const [peaks] = useState(() => new Float32Array(MAX_BARS));
   const sizeRef = useRef({ width: 1, height: 1 });
-  const palettesRef = useRef<Palettes>(FALLBACK);
-  const emberRef = useRef<EmberState>({ sparks: [] });
+  const colorsRef = useRef<Colors>(readColors());
 
+  // Theme, accent and true black all change the tokens; re-read them when any does.
   useEffect(() => {
-    palettesRef.current = readPalettes();
+    colorsRef.current = readColors();
     if (typeof MutationObserver === 'undefined') {
       return;
     }
     const observer = new MutationObserver(() => {
-      palettesRef.current = readPalettes();
+      colorsRef.current = readColors();
     });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-accent', 'data-black'] });
     return () => observer.disconnect();
   }, []);
 
@@ -371,7 +265,6 @@ const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint 
     }
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
-    const ember = emberRef.current;
     sizeRef.current = { width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight) };
     const resizeObserver = new ResizeObserver(([entry]) => {
       if (entry) {
@@ -402,9 +295,9 @@ const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint 
       resizeObserver.disconnect();
       unlisten?.();
       target.fill(0);
-      ember.sparks.length = 0;
+      peaks.fill(0);
     };
-  }, [active, target]);
+  }, [active, target, peaks]);
 
   // Draw loop: cheap to restart, so it follows the visual inputs directly.
   useEffect(() => {
@@ -425,7 +318,7 @@ const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint 
 
     let frame = 0;
     let last = performance.now();
-    // Idle "breathing" so a paused scene never looks frozen.
+    // Idle "breathing" so a paused strip never looks frozen.
     let idlePhase = 0;
 
     const draw = (time: number): void => {
@@ -442,31 +335,25 @@ const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint 
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      idlePhase += dt;
-      let energy = 0;
+      idlePhase += reduceMotion ? 0 : dt;
+      if (SIMULATE_SPECTRUM && isPlaying) {
+        simulateSpectrum(target, time);
+      }
       for (let index = 0; index < BAND_COUNT; index += 1) {
-        const idle = isPlaying ? 0 : 0.06 + Math.sin(idlePhase * 1.2 + index) * 0.03;
+        const idle = 0.05 + Math.sin(idlePhase * 1.2 + index) * 0.025;
         const destination = isPlaying ? target[index] : idle;
-        const speed = destination > smoothed[index] ? 0.28 : 0.08;
+        const speed = destination > smoothed[index] ? 0.3 : 0.09;
         smoothed[index] += (destination - smoothed[index]) * speed;
-        energy += smoothed[index];
       }
-      energy /= BAND_COUNT;
 
-      const palette = palettesRef.current[theme];
-      if (compact) {
-        drawStrip(ctx, w, h, smoothed, palette, energy);
-        frame = window.requestAnimationFrame(draw);
-        return;
-      }
-      drawTint(ctx, w, h, tint, energy);
-      const t = reduceMotion ? 0 : time;
-      if (theme === 'ember') {
-        drawEmber(ctx, w, h, smoothed, palette, energy, dt, emberRef.current, reduceMotion);
-      } else if (theme === 'aurora') {
-        drawAurora(ctx, w, h, smoothed, palette, energy, t);
+      const colors = colorsRef.current;
+      const motionTime = reduceMotion ? 0 : time;
+      if (theme === 'aurora') {
+        drawAurora(ctx, w, h, smoothed, colors, motionTime);
+      } else if (theme === 'mono') {
+        drawMono(ctx, w, h, smoothed, colors, motionTime);
       } else {
-        drawMono(ctx, w, h, smoothed, palette, energy, t);
+        drawEmber(ctx, w, h, smoothed, colors, peaks, dt, motionTime);
       }
       frame = window.requestAnimationFrame(draw);
     };
@@ -476,15 +363,9 @@ const AudioVisualizer = memo(({ active, compact = false, isPlaying, theme, tint 
       window.cancelAnimationFrame(frame);
       motionQuery.removeEventListener('change', handleMotion);
     };
-  }, [active, compact, isPlaying, theme, tint, target, smoothed]);
+  }, [active, isPlaying, theme, target, smoothed, peaks]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className={compact ? 'absolute inset-0 h-full w-full' : 'audio-visualizer absolute inset-0 h-full w-full'}
-      aria-hidden="true"
-    />
-  );
+  return <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />;
 });
 
 AudioVisualizer.displayName = 'AudioVisualizer';

@@ -1,3 +1,5 @@
+import type { PlaylistRules } from '@/services/playlistRules';
+
 export type RepeatMode = 'off' | 'one' | 'all';
 
 export interface Song {
@@ -75,6 +77,8 @@ export interface Playlist {
   songIds: string[];
   artwork?: string;
   updatedAt: number;
+  /** Custom playlists only: when set, the songs are chosen by these rules and kept up to date. */
+  rules?: PlaylistRules;
 }
 
 export interface LyricLine {
@@ -87,6 +91,10 @@ export type OnlineRecommendationProvider = 'lastfm' | 'musicbrainz';
 export interface AppSettings {
   libraryPath: string;
   appTheme: 'light' | 'dark';
+  /** Accent colour; anything but amber is Pro. */
+  accentColor: AccentColor;
+  /** Pure black surfaces in the dark theme (Pro), for OLED screens. */
+  trueBlack: boolean;
   /** UI language: 'system' follows Windows' language when Amply supports it. */
   language: 'system' | 'en' | 'zh-CN' | 'hi' | 'es' | 'fr';
   crossfadeEnabled: boolean;
@@ -116,6 +124,8 @@ export interface AppSettings {
   autoPauseIgnoreApps: string[];
   autoPauseIgnoreFullscreen: boolean;
 }
+
+export type AccentColor = 'amber' | 'rose' | 'violet' | 'blue' | 'teal' | 'green' | 'gold' | 'graphite';
 
 type EqPreset = 'flat' | 'warm' | 'bass' | 'treble' | 'vocal' | 'club' | 'custom';
 

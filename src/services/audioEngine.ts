@@ -1,3 +1,5 @@
+import { CROSSFADE_MIN_DURATION_SEC } from '@/services/crossfade';
+import { effectiveSettings } from '@/store/proStore';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isTauri } from '@/services/storageService';
@@ -42,7 +44,6 @@ type AudioProgressEvent = {
   duration: number;
 };
 
-const CROSSFADE_MIN_DURATION_SEC = 20;
 /** A song measured this early in playback may still take its gain without an audible jump. */
 const LATE_GAIN_WINDOW_SEC = 4;
 const SILENCE_TRIM_START_SEC = 0.08;
@@ -94,7 +95,8 @@ class NativeAudioEngine implements AudioEngine {
     this.onEnded = callbacks.onEnded ?? null;
   }
 
-  applySettings(settings: AppSettings): void {
+  applySettings(requested: AppSettings): void {
+    const settings = effectiveSettings(requested);
     const previous = this.settings;
     this.settings = settings;
     if (settings.playbackSpeed !== previous.playbackSpeed) {

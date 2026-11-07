@@ -1,6 +1,16 @@
 import type source from '@/i18n/locales/en/settings';
 
 const settings = {
+  "settings.moreApps.title": "我们的更多应用",
+  "settings.moreApps.description": "PaperKite 的其他应用，也就是制作 Amply 的小工作室。",
+  "settings.moreApps.open": "在 Microsoft Store 中打开 {name}",
+  "settings.moreApps.app.juicebar": "在任务栏里查看各种设备的电量。",
+  "settings.moreApps.app.papery": "安静好用的 PDF 编辑器：阅读、合并、签名和填写。",
+  "settings.moreApps.app.twinly": "找出重复的照片和文件，一键清理。",
+  "settings.moreApps.app.tachy": "在时钟旁实时显示网速。",
+  "settings.moreApps.app.framecap": "录制屏幕，无水印，无时长限制。",
+  "settings.moreApps.app.dumbtop": "专注计时器，让你的笔记本安静、不受打扰。",
+  "settings.moreApps.app.leaflet": "为你已有的 EPUB、PDF 和漫画打造的阅读器。",
   "settings.language.label": "语言",
   "settings.language.description": "Amply 菜单和提示使用的语言。",
   "settings.language.system": "跟随 Windows（{language}）",
@@ -193,6 +203,24 @@ const settings = {
   "settings.version.rate.button": "评分",
   "settings.version.rate.thanks": "感谢你为 Amply 评分！",
   "settings.version.rate.failed": "无法打开 Microsoft Store",
+  "settings.shortcuts.title": "键盘快捷键",
+  "settings.shortcuts.playPause": "播放或暂停",
+  "settings.shortcuts.seek": "后退或前进 5 秒",
+  "settings.shortcuts.track": "上一首或下一首",
+  "settings.shortcuts.volume": "降低或提高音量",
+  "settings.shortcuts.mute": "静音",
+  "settings.appearance.accent.label": "强调色",
+  "settings.appearance.accent.description": "按钮、高亮和可视化效果的颜色。",
+  "settings.appearance.accent.amber": "琥珀",
+  "settings.appearance.accent.rose": "玫瑰",
+  "settings.appearance.accent.violet": "紫罗兰",
+  "settings.appearance.accent.blue": "蓝色",
+  "settings.appearance.accent.teal": "青绿",
+  "settings.appearance.accent.green": "绿色",
+  "settings.appearance.accent.gold": "金色",
+  "settings.appearance.accent.graphite": "石墨",
+  "settings.appearance.trueBlack.label": "纯黑",
+  "settings.appearance.trueBlack.description": "深色模式下使用纯黑表面，适合 OLED 屏幕。",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

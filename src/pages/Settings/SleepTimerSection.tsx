@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { LockedRow } from '@/components/Pro/ProGate';
 import { usePlayerStore } from '@/store/playerStore';
+import { useProStore } from '@/store/proStore';
 import { Button, Chip, Kicker, TextInput } from '@/components/ui';
 import { SettingsSection } from '@/pages/Settings/SettingsSection';
 import { useT } from '@/i18n';
@@ -12,6 +14,7 @@ export const SleepTimerSection = () => {
   const sleepTimerEndsAt = usePlayerStore((state) => state.sleepTimerEndsAt);
   const sleepTimerDurationMin = usePlayerStore((state) => state.sleepTimerDurationMin);
   const setSleepTimer = usePlayerStore((state) => state.setSleepTimer);
+  const isPro = useProStore((state) => state.isPro);
 
   const [customSleepMinutes, setCustomSleepMinutes] = useState('');
   const [timeTick, setTimeTick] = useState(Date.now());
@@ -88,6 +91,11 @@ export const SleepTimerSection = () => {
           </div>
         </div>
 
+        {!isPro ? (
+          <div className="neu-flat rounded-md p-3">
+            <LockedRow feature="timerAndSpeed" />
+          </div>
+        ) : (
         <div className="neu-flat rounded-md p-4">
           <Kicker>{t('settings.sleep.custom')}</Kicker>
           <p className="mt-1 text-[12px] text-amply-textSecondary">{t('settings.sleep.customHint')}</p>
@@ -120,6 +128,7 @@ export const SleepTimerSection = () => {
             </Button>
           </div>
         </div>
+        )}
       </div>
 
       <div className="mt-4">

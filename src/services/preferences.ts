@@ -46,7 +46,9 @@ export const writePreference = (key: string, value: string): void => {
   }
 };
 
-export const clearPreferences = (): void => {
+/** Removes every preference except those named in `keep`. */
+export const clearPreferences = (keep: readonly string[] = []): void => {
+  const kept = keep.map((key) => [key, rawRead(key)] as const).filter((entry): entry is readonly [string, string] => entry[1] !== null);
   memory.clear();
   const store = storage();
   if (!store) {
@@ -64,6 +66,7 @@ export const clearPreferences = (): void => {
   } catch {
     // ignore
   }
+  kept.forEach(([key, value]) => writePreference(key, value));
 };
 
 /** Build a validator from a fixed list of allowed string values. */

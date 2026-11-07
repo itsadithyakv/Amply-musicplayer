@@ -1,8 +1,11 @@
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { cancelIdle, requestIdle, type IdleHandle } from '@/utils/idle';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Song } from '@/types/music';
-import { Badge, Button, Card, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
+import { Badge, Button, Card, Icon, IconButton, Meta, Spinner, Surface, surfaceClass } from '@/components/ui';
+import { FREE_LYRICS_PER_DAY, useLyricsAllowance } from '@/services/lyricsAllowance';
+import { requirePro, useProStore } from '@/store/proStore';
 import {
   loadLyrics,
   saveLyricsSelection,
@@ -83,7 +86,7 @@ const parseTintChannels = (tint: string): [number, number, number] | null => {
 const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: LyricsViewerProps) => {
   const { t, language } = useT();
   const positionSec = usePlaybackProgress((progress) => progress.positionSec);
-  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const gameMode = useEffectiveSetting((settings) => settings.gameMode);
   const fetchLyricsCandidatesForSong = useLibraryStore((state) => state.fetchLyricsCandidatesForSong);
   const idleReady = useIdleRender(300);
   const interactionFeedback = useInteractionFeedback();
@@ -278,7 +281,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   }, [offsetMs]);
 
   const handleOffsetChange = useCallback(async (deltaMs: number) => {
-    if (!songId) {
+    if (!songId || !requirePro('lyricsTools')) {
       return;
     }
     const next = Math.max(-8000, Math.min(8000, offsetRef.current + deltaMs));
@@ -291,7 +294,7 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
   }, [songId]);
 
   const handleManualChoose = useCallback(async () => {
-    if (!songId || loading) {
+    if (!songId || loading || !requirePro('lyricsTools')) {
       return;
     }
     setSavingChoiceId(null);
@@ -544,6 +547,9 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     };
   }, []);
 
+  const lyricsAllowance = useLyricsAllowance(song?.id ?? null, Boolean(lyrics) && !error);
+  const openPaywall = useProStore((state) => state.openPaywall);
+
   if (!song) {
     return <p className="text-[13px] text-amply-textMuted">{t('player.lyrics.noSong')}</p>;
   }
@@ -632,6 +638,33 @@ const LyricsViewer = ({ song, active, fullHeight = false, onShellReady }: Lyrics
     return (
       <Card className={clsx(fullHeight && 'h-full')}>
         <p className="text-[13px] text-amply-textMuted">{t(error ?? 'player.lyrics.noLyrics')}</p>
+      </Card>
+    );
+  }
+
+  if (!lyricsAllowance.allowed) {
+    // Free plan, daily lyrics used up: the first lines stay as a blurred hint behind the offer.
+    return (
+      <Card className={clsx('relative overflow-hidden', fullHeight && 'h-full')}>
+        <div aria-hidden className="pointer-events-none select-none space-y-4 px-2 py-6 text-center blur-[6px]">
+          {lyrics.lines.slice(0, 7).map((line, index) => (
+            <p key={index} className="text-[20px] font-semibold text-amply-textSecondary">
+              {line.text || '...'}
+            </p>
+          ))}
+        </div>
+        <div className="absolute inset-0 flex items-center justify-center px-6">
+          <div className="neu-raised flex max-w-[420px] flex-col items-center gap-3 rounded-lg bg-amply-bg px-8 py-7 text-center">
+          <span className="neu-raised-sm inline-flex h-11 w-11 items-center justify-center rounded-full text-amply-accent">
+            <Icon name="lock" size={18} />
+          </span>
+          <p className="text-[17px] font-bold text-amply-textPrimary">{t('pro.lyrics.limitTitle', { limit: FREE_LYRICS_PER_DAY })}</p>
+          <p className="max-w-[360px] text-[13px] leading-relaxed text-amply-textSecondary">{t('pro.lyrics.limitBody')}</p>
+          <Button variant="primary" icon="lyrics" onClick={() => openPaywall('unlimitedLyrics')}>
+            {t('pro.lyrics.unlock')}
+          </Button>
+          </div>
+        </div>
       </Card>
     );
   }

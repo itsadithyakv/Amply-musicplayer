@@ -9,6 +9,7 @@ import { loadArtistProfile, readCachedArtistProfile } from '@/services/artistPro
 import { getArtistLookupContext } from '@/utils/artists';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import { useLibraryVersions } from '@/store/libraryDataStore';
 import type { Playlist, Song } from '@/types/music';
 import { buildArtworkSet, pickPlaylistArtwork } from '@/services/playlistArtworkService';
@@ -56,6 +57,7 @@ const HomePage = () => {
 
   const setQueue = usePlayerStore((state) => state.setQueue);
   const playSongById = usePlayerStore((state) => state.playSongById);
+  const isPro = useProStore((state) => state.isPro);
   const [showMoreMixes, setShowMoreMixes] = useState(false);
   const [artistImages, setArtistImages] = useState<Record<string, string | undefined>>({});
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
@@ -237,7 +239,7 @@ const HomePage = () => {
 
   const smartPlaylistItems = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
-    const smartPlaylists = frozenPlaylists.filter((playlist) => playlist.type === 'smart');
+    const smartPlaylists = frozenPlaylists.filter((playlist) => playlist.type === 'smart' || playlist.type === 'daily');
     if (smartPlaylistCoverCache.size > COVER_CACHE_LIMIT) {
       smartPlaylistCoverCache.clear();
     }
@@ -268,6 +270,7 @@ const HomePage = () => {
           songIds: playlist.songIds,
           kind: 'smart' as const,
           isMoreMix: isMoreMixPlaylistId(playlist.id),
+          isDaily: playlist.type === 'daily',
         };
       })
       .filter((entry) => entry.songIds.length);
@@ -277,10 +280,13 @@ const HomePage = () => {
   // them under the pointer, so the section is stable until a manual regenerate.
   const smartHighlightCards = useMemo(() => {
     const seed = smartPlaylistRenderSeed || 0;
-    return smartPlaylistItems
-      .filter((entry) => !entry.isMoreMix)
+    const cards = smartPlaylistItems
+      .filter((entry) => !entry.isMoreMix && !entry.isDaily)
       .sort((a, b) => hash(`${a.id}:${seed}`) - hash(`${b.id}:${seed}`))
       .slice(0, 7);
+    // A small library may make only a few mixes besides the Daily Mix; then it leads the section.
+    const daily = smartPlaylistItems.find((entry) => entry.isDaily);
+    return cards.length < 4 && daily ? [daily, ...cards] : cards;
   }, [smartPlaylistItems, smartPlaylistRenderSeed]);
 
   const smartMixesAll = useMemo(() => {
@@ -325,6 +331,10 @@ const HomePage = () => {
   };
 
   const handleRegenerate = async () => {
+    // Mixes refresh on their own each week; refreshing them on demand is Pro.
+    if (!requirePro('mixRefresh')) {
+      return;
+    }
     setRegenMessage(null);
     try {
       await regenerateSmartPlaylists();
@@ -402,17 +412,25 @@ const HomePage = () => {
           {showMoreMixesCard ? (
             <ExploreMixesCard
               artworkSongs={exploreArtworkSongs}
-              expanded={showMoreMixes}
-              onToggle={() => setShowMoreMixes((value) => !value)}
+              expanded={showMoreMixes && isPro}
+              locked={!isPro}
+              onToggle={() => {
+                if (requirePro('moreMixes')) {
+                  setShowMoreMixes((value) => !value);
+                }
+              }}
             />
           ) : null}
         </div>
 
         {!smartHighlightCards.length ? (
           <EmptyNote>{t('library.home.noSmartPlaylists')}</EmptyNote>
+        ) : smartHighlightCards.length < 4 ? (
+          // A small or new library makes only a few mixes; say more are coming rather than missing.
+          <p className="px-2 text-[12px] text-amply-textSecondary">{t('library.home.fewMixes')}</p>
         ) : null}
 
-        {showMoreMixes ? (
+        {showMoreMixes && isPro ? (
           <div id="home-all-mixes" className="space-y-3">
             <Kicker>{t('library.home.allMixes')}</Kicker>
             {smartMixesAll.length ? (

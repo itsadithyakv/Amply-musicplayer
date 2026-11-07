@@ -1,3 +1,7 @@
+import { addToYearLog, parseYearLog, yearLogFromEvents, yearOf, type YearLog } from '@/services/yearInMusic';
+import { evaluateRules, parseRules } from '@/services/playlistRules';
+import { pathKey } from '@/services/playlistFiles';
+import { withUniqueIds } from '@/services/songIds';
 import { getFlag } from '@/services/runtimeFlags';
 import { t } from '@/i18n';
 import { dayKey, isoWeekKey, seedFromKey } from '@/utils/dateSeed';
@@ -40,6 +44,9 @@ import {
   tryAcquireMetadata,
   releaseMetadata,
 } from '@/services/metadataAttemptService';
+import { decideLibraryGrant, playableSongs } from '@/services/libraryAccess';
+import { allowedLibraryPaths, hasPlaylistRoom } from '@/services/collectionLimits';
+import { requirePro, useProStore } from '@/store/proStore';
 import { isMetadataActivityPaused } from '@/services/metadataActivityGate';
 import { getArtistLookupContext, getDisplayTitleRepair, getMetadataArtistName, getPrimaryArtistName, normalizeArtistLookupText } from '@/utils/artists';
 import {
@@ -120,7 +127,8 @@ interface LibraryState {
   initialize: () => Promise<void>;
   scanLibrary: (pathsOverride?: string[]) => Promise<void>;
   /** Adds songs from outside the library folders (opened or dropped files) and remembers them. */
-  addLooseSongs: (songs: Song[]) => Promise<void>;
+  /** Adds files from outside the library folders; returns them as the library now knows them. */
+  addLooseSongs: (songs: Song[]) => Promise<Song[]>;
   setLibraryPaths: (paths: string[]) => Promise<void>;
   addLibraryPath: (path: string) => Promise<void>;
   removeLibraryPath: (path: string) => Promise<void>;
@@ -146,6 +154,8 @@ interface LibraryState {
   recordQueueAdd: (songId: string) => Promise<void>;
   recordPlaylistUse: (playlistId: string) => Promise<void>;
   upsertCustomPlaylist: (playlist: Playlist) => Promise<void>;
+  /** Re-selects the songs of every rule-based playlist; only playlists whose songs changed are saved. */
+  refreshRulePlaylists: () => Promise<void>;
   deleteCustomPlaylist: (playlistId: string) => Promise<boolean>;
 }
 
@@ -542,9 +552,59 @@ const loadListeningEvents = async (): Promise<ListeningEvent[]> => {
   return listeningEventsCache;
 };
 
+const yearLogPath = (year: number) => `stats/year_${year}.json`;
+const yearIndexPath = 'stats/years.json';
+const yearLogs = new Map<number, Promise<YearLog>>();
+
+/**
+ * The log for `year`, loaded once. A year with no log yet is rebuilt from the listening log, which
+ * still holds the recent part of it.
+ */
+const loadYearLog = (year: number): Promise<YearLog> => {
+  let pending = yearLogs.get(year);
+  if (!pending) {
+    pending = (async () => {
+      const stored = parseYearLog(await readStorageJson<unknown>(yearLogPath(year), null), year);
+      if (stored) {
+        return stored;
+      }
+      const rebuilt = yearLogFromEvents(year, await loadListeningEvents(), useLibraryStore.getState().getSongsById());
+      if (rebuilt.plays > 0 || rebuilt.totalSec > 0) {
+        await storeYearLog(rebuilt);
+      }
+      return rebuilt;
+    })();
+    yearLogs.set(year, pending);
+  }
+  return pending;
+};
+
+const storeYearLog = async (log: YearLog): Promise<void> => {
+  void writeStorageJsonDebounced(yearLogPath(log.year), log, 1500);
+  const years = await readStorageJson<number[]>(yearIndexPath, []);
+  if (!years.includes(log.year)) {
+    await writeStorageJson(yearIndexPath, [...years, log.year].sort());
+  }
+};
+
+/** Years with a listening log, newest first, always including this year. */
+export const listListeningYears = async (): Promise<number[]> => {
+  const stored = await readStorageJson<number[]>(yearIndexPath, []);
+  const events = await loadListeningEvents();
+  const years = new Set<number>([new Date().getFullYear(), ...stored.filter(Number.isInteger), ...events.map(yearOf)]);
+  return [...years].sort((a, b) => b - a);
+};
+
+/** The listening log for one calendar year. */
+export const loadListeningYear = (year: number): Promise<YearLog> => loadYearLog(year);
+
 const appendListeningEvent = async (event: ListeningEvent): Promise<void> => {
+  // Loaded before the event joins the listening log: a year rebuilt from that log must not count it twice.
+  const yearLog = await loadYearLog(yearOf(event));
   const events = await loadListeningEvents();
   events.push(event);
+  addToYearLog(yearLog, event, useLibraryStore.getState().getSongById(event.songId)?.duration ?? 0);
+  void storeYearLog(yearLog);
   if (events.length > LISTENING_EVENTS_CAP) {
     events.splice(0, events.length - LISTENING_EVENTS_CAP);
   }
@@ -620,6 +680,10 @@ const watchLibraryFolders = (): void => {
   }
   libraryWatchStarted = true;
   void listen('amply://library-changed', () => {
+    // New music shows up on its own with Pro; the free plan picks it up on the next launch or Rescan.
+    if (!useProStore.getState().isPro) {
+      return;
+    }
     const state = useLibraryStore.getState();
     if (state.isScanning) {
       libraryRescanQueued = true;
@@ -916,6 +980,8 @@ const refreshSmartPlaylists = async (
   } = {},
 ): Promise<Playlist[]> => {
   const { force = false, persist = true } = options;
+  // A free library over the song limit mixes only the songs it can play.
+  songs = playableSongs(songs);
   const weekKey = isoWeekKey();
   const weeklySeed = seedFromKey(weekKey);
   const cachedSmart = useLibraryStore.getState().smartPlaylists;
@@ -990,6 +1056,7 @@ const refreshSmartPlaylistsLite = async (
   } = {},
 ): Promise<Playlist[]> => {
   const { persist = false } = options;
+  songs = playableSongs(songs);
   const [input, onlineSignals] = await Promise.all([buildMixEngineInput(songs), loadOnlineSignalsForSmartPlaylists()]);
   const output = generateMixesLite(input);
   storeMixHistory(output.history);
@@ -1151,6 +1218,21 @@ const scheduleListeningProfileRefresh = (songs: Song[]): void => {
     scheduleSmartPlaylistRefresh(songs, 400, { includeHeavy: false });
   }, LISTENING_PROFILE_REFRESH_DEBOUNCE_MS);
 };
+
+/** Rules from storage are re-validated, so a hand-edited or newer file cannot break evaluation. */
+const withValidRules = (playlist: Playlist): Playlist => {
+  if (playlist.rules === undefined) {
+    return playlist;
+  }
+  const rules = parseRules(playlist.rules);
+  if (rules) {
+    return { ...playlist, rules };
+  }
+  const { rules: _invalid, ...rest } = playlist;
+  return rest;
+};
+
+const sameIds = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((id, index) => id === b[index]);
 
 const buildPlaylists = (smartPlaylists: Playlist[], customPlaylists: Playlist[]): Playlist[] => {
   return [...smartPlaylists, ...customPlaylists];
@@ -1910,7 +1992,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     try {
       // The nonce reseeds every mix, the Daily Mix included; it is persisted with the weekly cache.
       smartRegenNonce = seed;
-      const generated = await refreshSmartPlaylists(get().songs, get().smartPlaylistOverrides, {
+      // The merged view: `songs` lags this session's favourites, which the Favorites mix must show.
+      const generated = await refreshSmartPlaylists([...get().getSongsById().values()], get().smartPlaylistOverrides, {
         force: true,
       });
       const customPlaylists = get().customPlaylists;
@@ -1937,7 +2020,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const [
         settings,
         cache,
-        customPlaylists,
+        storedCustomPlaylists,
         smartOverrides,
         cachedSmartPlaylists,
         cachedLitePlaylists,
@@ -1953,6 +2036,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         loadMixHistory(),
         loadListeningEvents(),
       ]);
+      // Decided once, before anything is scanned: an install that already had a library keeps all of it.
+      await decideLibraryGrant(cache.songs.length > 0 || getListeningEvents().length > 0);
+      const customPlaylists = storedCustomPlaylists.map(withValidRules);
       const hydratedSongs = applySongActivity(cache.songs, songActivity);
       const libraryPaths = normalizeLibraryPaths([
         ...(settings.libraryPaths ?? []),
@@ -2097,7 +2183,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         (path) => !rootPrefixes.some((prefix) => toPathPrefix(path).startsWith(prefix)),
       );
       const looseSongs = await probeAudioFiles(loosePaths).catch(() => [] as Song[]);
-      const flattened = [...scanResults.flatMap((result) => result.songs), ...looseSongs, ...carriedOver];
+      // Ids the library already has keep their song; a different file on the same id gets its own.
+      const knownIds = new Map(get().songs.map((song) => [song.id, song.path]));
+      const scanned = [...scanResults.flatMap((result) => result.songs), ...looseSongs];
+      const claimed = new Map(
+        [...knownIds].filter(([id, path]) => scanned.some((song) => song.id === id && song.path === path)),
+      );
+      const flattened = [...withUniqueIds(scanned, claimed), ...carriedOver];
       const dedupedById = new Map<string, Song>();
       await yieldToMain();
 
@@ -2241,10 +2333,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   addLooseSongs: async (incoming) => {
     if (!incoming.length) {
-      return;
+      return [];
     }
-    const known = new Set(get().songs.map((song) => song.id));
-    const added = incoming.filter((song) => !known.has(song.id));
+    const byPath = new Map(get().songs.map((song) => [pathKey(song.path), song]));
+    const fresh = incoming.filter((song) => !byPath.has(pathKey(song.path)));
+    const added = withUniqueIds(fresh, new Map(get().songs.map((song) => [song.id, song.path])));
+    const addedByPath = new Map(added.map((song) => [pathKey(song.path), song]));
+    const resolved = incoming.map((song) => byPath.get(pathKey(song.path)) ?? addedByPath.get(pathKey(song.path)) ?? song);
     const rootPrefixes = get().libraryPaths.filter(isAbsoluteLibraryPath).map(toPathPrefix);
     const outside = incoming
       .map((song) => song.path)
@@ -2254,16 +2349,25 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       await writeStorageJson(looseFilesPath, [...new Set([...stored, ...outside])]);
     }
     if (!added.length) {
-      return;
+      return resolved;
     }
     const songs = [...get().songs, ...added];
     set({ songs, libraryVersion: get().libraryVersion + 1 });
     recordSongArrayReplacement('library-loose-files', { songs: songs.length });
     await persistLibrary(songs, get().customPlaylists);
+    return resolved;
   },
 
   setLibraryPaths: async (paths) => {
-    const normalized = normalizeLibraryPaths(paths);
+    const { paths: allowed, dropped } = allowedLibraryPaths(get().libraryPaths, normalizeLibraryPaths(paths), useProStore.getState().isPro);
+    if (dropped) {
+      requirePro('libraryFolders');
+    }
+    const normalized = normalizeLibraryPaths(allowed);
+    // Nothing new fit: leave the library exactly as it was, without a rescan.
+    if (dropped && normalized.join('|') === get().libraryPaths.join('|')) {
+      return;
+    }
     set({ libraryPaths: normalized });
 
     await writeStorageJson('settings.json', {
@@ -2378,12 +2482,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const now = Date.now();
     plan.playlists.forEach((entry, index) => {
       const existing = entry.existingId ? customPlaylists.findIndex((playlist) => playlist.id === entry.existingId) : -1;
+      const rules = entry.rules ? { rules: entry.rules } : {};
       if (existing >= 0) {
-        customPlaylists[existing] = { ...customPlaylists[existing], songIds: entry.songIds, updatedAt: now };
+        customPlaylists[existing] = { ...customPlaylists[existing], ...rules, songIds: entry.songIds, updatedAt: now };
       } else {
         customPlaylists = [
           ...customPlaylists,
-          { id: `custom_${now}_${index}`, name: entry.name, type: 'custom', description: entry.description, songIds: entry.songIds, updatedAt: now },
+          { id: `custom_${now}_${index}`, name: entry.name, type: 'custom', description: entry.description, songIds: entry.songIds, updatedAt: now, ...rules },
         ];
       }
     });
@@ -2653,6 +2758,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const existing = get().customPlaylists;
     const index = existing.findIndex((entry) => entry.id === playlist.id);
     let updated: Playlist[];
+    // Every way in checks first; this is the backstop, so a new playlist past the free limit never lands.
+    if (index < 0 && !playlist.rules && !hasPlaylistRoom(existing, useProStore.getState().isPro)) {
+      requirePro('unlimitedPlaylists');
+      return;
+    }
 
     if (index >= 0) {
       updated = [...existing];
@@ -2661,6 +2771,37 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       updated = [...existing, playlist];
     }
 
+    set({
+      customPlaylists: updated,
+      playlists: buildPlaylists(get().smartPlaylists, updated),
+      playlistVersion: get().playlistVersion + 1,
+    });
+    await persistCustomPlaylists(updated);
+  },
+
+  refreshRulePlaylists: async () => {
+    const existing = get().customPlaylists;
+    if (!existing.some((playlist) => playlist.rules)) {
+      return;
+    }
+    // The merged view, so this session's plays and favourites count.
+    const songs = [...get().getSongsById().values()];
+    const now = Date.now();
+    let changed = false;
+    const updated = existing.map((playlist) => {
+      if (!playlist.rules) {
+        return playlist;
+      }
+      const songIds = evaluateRules(songs, playlist.rules, playlist.id, now);
+      if (sameIds(songIds, playlist.songIds)) {
+        return playlist;
+      }
+      changed = true;
+      return { ...playlist, songIds, updatedAt: Math.floor(now / 1000) };
+    });
+    if (!changed) {
+      return;
+    }
     set({
       customPlaylists: updated,
       playlists: buildPlaylists(get().smartPlaylists, updated),

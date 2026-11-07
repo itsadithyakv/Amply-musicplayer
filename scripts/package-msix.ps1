@@ -60,9 +60,9 @@ $signtool = Join-Path $sdkBin.DirectoryName 'signtool.exe'
 if (Test-Path $layout) { Remove-Item $layout -Recurse -Force }
 New-Item -ItemType Directory -Force (Join-Path $layout 'Assets') | Out-Null
 Copy-Item $exe $layout
-foreach ($asset in 'StoreLogo', 'Square44x44Logo', 'Square71x71Logo', 'Square150x150Logo') {
-  Copy-Item (Join-Path $icons "$asset.png") (Join-Path $layout 'Assets')
-}
+# Every scale and target size (scripts/msix-icons.py). The unplated target sizes are what keep
+# the taskbar and Start icon from being drawn shrunk onto a coloured square.
+Copy-Item (Join-Path $icons 'msix\*.png') (Join-Path $layout 'Assets')
 
 # runFullTrust: Tauri is a desktop (Win32) app. The startup task lists Amply under Windows'
 # Startup apps; the autostart plugin's Run-key entry is invisible to Windows inside a package.
@@ -126,6 +126,19 @@ $manifest = @"
 </Package>
 "@
 [System.IO.File]::WriteAllText((Join-Path $layout 'AppxManifest.xml'), $manifest, (New-Object System.Text.UTF8Encoding $false))
+
+# resources.pri lets Windows pick the right icon variant; without it only the plain file names load.
+$makepri = Join-Path $sdkBin.DirectoryName 'makepri.exe'
+$priConfig = Join-Path $outDir 'priconfig.xml'
+& $makepri createconfig /cf $priConfig /dq en-US /pv 10.0.0 /o | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "makepri createconfig failed ($LASTEXITCODE)" }
+# One package, so one index: the default config splits scales into resource packs for bundles.
+$config = [xml](Get-Content $priConfig -Raw)
+$packaging = $config.resources.SelectSingleNode('packaging')
+if ($packaging) { [void]$config.resources.RemoveChild($packaging) }
+$config.Save($priConfig)
+& $makepri new /pr $layout /cf $priConfig /mn (Join-Path $layout 'AppxManifest.xml') /of (Join-Path $layout 'resources.pri') /o | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "makepri new failed ($LASTEXITCODE)" }
 
 if (Test-Path $package) { Remove-Item $package -Force }
 & $makeappx pack /o /h SHA256 /d $layout /p $package

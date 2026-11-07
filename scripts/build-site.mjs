@@ -45,7 +45,7 @@ write(
   join(out, 'privacy', 'index.html'),
   page({
     title: 'Amply Privacy Policy',
-    description: 'What Amply Music Player keeps on your PC, what it looks up online, and what a bug report contains.',
+    description: 'What Amply keeps on your PC or phone, what it looks up online, and what a bug report contains.',
     root: '../',
     content: readFileSync(privacyHtmlPath, 'utf8'),
   }),

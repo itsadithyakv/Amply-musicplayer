@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLibraryStore } from '@/store/libraryStore';
+import { requireFolderRoom } from '@/services/collectionLimits';
 import { Button, IconButton, TextInput } from '@/components/ui';
 import { useT } from '@/i18n';
 import { pickMusicFolders } from '@/services/storageService';
@@ -35,7 +36,7 @@ export const LibrarySection = () => {
             className="w-full sm:w-auto sm:min-w-[120px]"
             onClick={async () => {
               const value = localPath.trim();
-              if (!value) {
+              if (!value || !requireFolderRoom(libraryPaths)) {
                 return;
               }
               await addLibraryPath(value);
@@ -52,6 +53,9 @@ export const LibrarySection = () => {
             icon="folder"
             title={t('settings.library.browseTitle')}
             onClick={async () => {
+              if (!requireFolderRoom(libraryPaths)) {
+                return;
+              }
               const picked = await pickMusicFolders();
               if (picked.length) {
                 const merged = Array.from(new Set([...libraryPaths, ...picked]));

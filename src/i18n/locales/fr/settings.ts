@@ -1,6 +1,16 @@
 import type source from '@/i18n/locales/en/settings';
 
 const settings = {
+  "settings.moreApps.title": "Nos autres apps",
+  "settings.moreApps.description": "Les autres apps de PaperKite, le petit studio qui fait Amply.",
+  "settings.moreApps.open": "Ouvrir {name} dans le Microsoft Store",
+  "settings.moreApps.app.juicebar": "La batterie de vos appareils, dans la barre des tâches.",
+  "settings.moreApps.app.papery": "Un éditeur PDF serein : lire, fusionner, signer et remplir.",
+  "settings.moreApps.app.twinly": "Trouvez les photos et fichiers en double, et faites le tri.",
+  "settings.moreApps.app.tachy": "Votre débit internet en direct, à côté de l'horloge.",
+  "settings.moreApps.app.framecap": "Enregistrez votre écran, sans filigrane ni limite de durée.",
+  "settings.moreApps.app.dumbtop": "Un minuteur de concentration qui rend votre PC calme et sans distractions.",
+  "settings.moreApps.app.leaflet": "Un lecteur pour vos EPUB, PDF et BD.",
   "settings.language.label": "Langue",
   "settings.language.description": "La langue des menus et des messages d’Amply.",
   "settings.language.system": "Comme Windows ({language})",
@@ -193,6 +203,24 @@ const settings = {
   "settings.version.rate.button": "Noter",
   "settings.version.rate.thanks": "Merci d’avoir noté Amply !",
   "settings.version.rate.failed": "Impossible d’ouvrir le Microsoft Store",
+  "settings.shortcuts.title": "Raccourcis clavier",
+  "settings.shortcuts.playPause": "Lecture ou pause",
+  "settings.shortcuts.seek": "Reculer ou avancer de 5 secondes",
+  "settings.shortcuts.track": "Titre précédent ou suivant",
+  "settings.shortcuts.volume": "Baisser ou monter le volume",
+  "settings.shortcuts.mute": "Couper le son",
+  "settings.appearance.accent.label": "Couleur d’accent",
+  "settings.appearance.accent.description": "La couleur des boutons, des mises en évidence et du visualiseur.",
+  "settings.appearance.accent.amber": "Ambre",
+  "settings.appearance.accent.rose": "Rose",
+  "settings.appearance.accent.violet": "Violet",
+  "settings.appearance.accent.blue": "Bleu",
+  "settings.appearance.accent.teal": "Sarcelle",
+  "settings.appearance.accent.green": "Vert",
+  "settings.appearance.accent.gold": "Or",
+  "settings.appearance.accent.graphite": "Graphite",
+  "settings.appearance.trueBlack.label": "Noir absolu",
+  "settings.appearance.trueBlack.description": "Des surfaces d’un noir pur en mode sombre, idéales pour les écrans OLED.",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

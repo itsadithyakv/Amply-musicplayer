@@ -18,6 +18,18 @@ export const capsForTarget = (target: number): DiversityCaps => ({
 });
 
 /**
+ * The caps for a library with this many artists and albums: never below a fair share. A library of
+ * two artists cannot give any mix 85% from "everyone else", so each may fill half of it.
+ */
+export const capsForLibrary = (target: number, artists: number, albums: number): DiversityCaps => {
+  const caps = capsForTarget(target);
+  return {
+    artistCap: Math.max(caps.artistCap, Math.ceil(target / Math.max(1, artists))),
+    albumCap: Math.max(caps.albumCap, Math.ceil(target / Math.max(1, albums))),
+  };
+};
+
+/**
  * Walk an ordered candidate list and keep the first `target` items that satisfy the artist/album
  * caps and the optional `accept` predicate. Caps are enforced by skipping ahead (backfill), never
  * by giving up; the result is shorter than `target` only when the candidates run out.

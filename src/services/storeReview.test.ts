@@ -19,6 +19,12 @@ describe('shouldPromptForReview', () => {
     expect(shouldPromptForReview(fresh, 30, start + 7 * DAY)).toBe(true);
   });
 
+  it('stays quiet after an upgrade dialog or the Pro notice', () => {
+    const later = start + 10 * DAY;
+    expect(shouldPromptForReview(fresh, 100, later, later + 1)).toBe(false);
+    expect(shouldPromptForReview(fresh, 100, later, later)).toBe(true);
+  });
+
   it('respects snoozes, the prompt cap and a final answer', () => {
     const later = start + 10 * DAY;
     expect(shouldPromptForReview({ ...fresh, snoozedUntil: later + 1 }, 100, later)).toBe(false);

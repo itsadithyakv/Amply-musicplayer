@@ -1,12 +1,16 @@
-import { lazy, memo, Suspense, useCallback, useState } from 'react';
+import { RulePlaylistEditor } from '@/components/Playlists/RulePlaylistEditor';
+import { lazy, memo, Suspense, useCallback, useMemo, useState } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { FixedSizeGrid as Grid, type GridChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Button, ConfirmDialog, IconButton, Modal, PageHeader, Surface } from '@/components/ui';
 import { importPlaylistFile } from '@/services/playlistImport';
+import { requirePlaylistRoom } from '@/services/collectionLimits';
 import { CoverBackdrop } from '@/components/ui/CoverBackdrop';
 import { useLibraryStore } from '@/store/libraryStore';
+import { isProMix } from '@/services/proFeatures';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import type { Playlist } from '@/types/music';
 import { type PlaylistCardView } from '@/services/libraryRepository';
 import { useLibraryTabView, usePlaylistCardsView } from '@/hooks/useLibraryViews';
@@ -40,6 +44,7 @@ const PlaylistCard = memo(({
 }) => {
   const { t, tp } = useT();
   const isSmart = playlist.type !== 'custom';
+  const hasRules = Boolean(playlist.rules);
   const name = localizedPlaylistName(playlist);
   const description = localizedPlaylistDescription(playlist);
 
@@ -80,8 +85,8 @@ const PlaylistCard = memo(({
         </div>
 
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-3 pr-12">
-          <Badge tone={isSmart ? 'accent' : 'neutral'} icon={isSmart ? 'smart-mix' : 'playlist-add'}>
-            {isSmart ? t('playlists.badge.smart') : t('playlists.badge.custom')}
+          <Badge tone={isSmart || hasRules ? 'accent' : 'neutral'} icon={isSmart || hasRules ? 'smart-mix' : 'playlist-add'}>
+            {isSmart ? t('playlists.badge.smart') : hasRules ? t('playlists.badge.rules') : t('playlists.badge.custom')}
           </Badge>
           <Badge>{tp('playlists.tracks', playlist.songIds.length)}</Badge>
         </div>
@@ -113,7 +118,14 @@ const PlaylistsPage = () => {
   const deleteCustomPlaylist = useLibraryStore((state) => state.deleteCustomPlaylist);
   const playSongById = usePlayerStore((state) => state.playSongById);
   const setQueue = usePlayerStore((state) => state.setQueue);
-  const playlistCards = usePlaylistCardsView();
+  const allPlaylistCards = usePlaylistCardsView();
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
+  const playlistCards = useMemo(
+    () => (isPro ? allPlaylistCards : allPlaylistCards.filter((card) => !isProMix(card.playlist.id))),
+    [allPlaylistCards, isPro],
+  );
+  const lockedMixes = allPlaylistCards.length - playlistCards.length;
   const navigate = useNavigate();
   const [showComposer, setShowComposer] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
@@ -126,7 +138,17 @@ const PlaylistsPage = () => {
   }, [playSongById, setQueue]);
 
   const handleOpen = useCallback((playlistId: string) => navigate(`/playlist/${playlistId}`), [navigate]);
-  const openEditor = useCallback((playlist: Playlist) => { setEditingPlaylist(playlist); setShowComposer(true); }, []);
+  const [ruleEditor, setRuleEditor] = useState<{ playlist: Playlist | null } | null>(null);
+  const openEditor = useCallback((playlist: Playlist) => {
+    if (playlist.rules) {
+      if (requirePro('smartRules')) {
+        setRuleEditor({ playlist });
+      }
+      return;
+    }
+    setEditingPlaylist(playlist);
+    setShowComposer(true);
+  }, []);
   const closeComposer = useCallback(() => { setShowComposer(false); setEditingPlaylist(null); }, []);
   const renderCard = useCallback((item: PlaylistCardView) => (
     <PlaylistCard playlist={item.playlist} artworkSet={item.artworkSet} firstSongId={item.firstSongId} onPlay={handlePlay} onOpen={handleOpen} onEdit={openEditor} onDelete={setPendingDelete} />
@@ -142,6 +164,9 @@ const PlaylistsPage = () => {
             <Button
               icon="folder"
               onClick={() => {
+                if (!requirePlaylistRoom(useLibraryStore.getState().customPlaylists)) {
+                  return;
+                }
                 void importPlaylistFile().then((result) => {
                   if (!result) {
                     return;
@@ -153,10 +178,32 @@ const PlaylistsPage = () => {
             >
               {t('playlists.header.import')}
             </Button>
-            <Button variant="primary" icon="add" onClick={() => { setEditingPlaylist(null); setShowComposer(true); }}>{t('playlists.header.new')}</Button>
+            <Button
+              icon="smart-mix"
+              onClick={() => {
+                if (requirePro('smartRules')) {
+                  setRuleEditor({ playlist: null });
+                }
+              }}
+            >
+              {t('playlists.rules.new')}
+            </Button>
+            <Button variant="primary" icon="add" onClick={() => {
+              if (requirePlaylistRoom(useLibraryStore.getState().customPlaylists)) {
+                setEditingPlaylist(null);
+                setShowComposer(true);
+              }
+            }}>{t('playlists.header.new')}</Button>
           </div>
         }
       />
+
+      {lockedMixes > 0 ? (
+        <Surface variant="raised-sm" radius="md" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 text-[13px] text-amply-textSecondary">{tp('pro.playlists.banner', lockedMixes)}</p>
+          <Button size="sm" icon="lock" onClick={() => openPaywall('moreMixes')}>{t('pro.mixes.unlock')}</Button>
+        </Surface>
+      ) : null}
 
       {playlistCards.length ? (
         <Surface variant="pressed" radius="lg" className="anim-rise h-[70vh] min-w-0 overflow-hidden p-1">
@@ -187,6 +234,28 @@ const PlaylistsPage = () => {
             onCancel={closeComposer}
           />
         </Suspense>
+      </Modal>
+
+      <Modal
+        open={ruleEditor !== null}
+        onClose={() => setRuleEditor(null)}
+        size="lg"
+        title={ruleEditor?.playlist ? t('playlists.rules.editTitle') : t('playlists.rules.createTitle')}
+        description={t('playlists.rules.description')}
+      >
+        {ruleEditor ? (
+          <RulePlaylistEditor
+            initial={ruleEditor.playlist}
+            onSave={async (playlist) => {
+              await upsertCustomPlaylist(playlist);
+              setRuleEditor(null);
+              if (!ruleEditor.playlist) {
+                navigate(`/playlist/${playlist.id}`);
+              }
+            }}
+            onCancel={() => setRuleEditor(null)}
+          />
+        ) : null}
       </Modal>
 
       <ConfirmDialog

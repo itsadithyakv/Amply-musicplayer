@@ -1,3 +1,4 @@
+import { useRulePlaylists } from '@/hooks/useRulePlaylists';
 import { useThemeSync } from '@/hooks/useThemeSync';
 import { useLanguageSync } from '@/hooks/useLanguageSync';
 import { setFlags } from '@/services/runtimeFlags';
@@ -7,6 +8,8 @@ import { Card } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
 import { Icon } from '@/components/ui/Icon';
 import { Toast } from '@/components/ui/Toast';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useOverlayController } from '@/hooks/useOverlayController';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
@@ -16,6 +19,10 @@ import { useFpsMonitor } from '@/hooks/useFpsMonitor';
 import ErrorBoundary from '@/components/ErrorBoundary/ErrorBoundary';
 import { StoreReviewPrompt } from '@/components/StoreReviewPrompt/StoreReviewPrompt';
 import { SongEditor } from '@/components/SongEditor/SongEditor';
+import { ProPaywall } from '@/components/Pro/ProPaywall';
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
+import { useProEntitlement } from '@/hooks/useProEntitlement';
+import { useRegenerateMixesOnUnlock } from '@/hooks/useLibraryAccess';
 const Sidebar = lazy(() => import('@/components/Sidebar/Sidebar'));
 const PlayerBar = lazy(() => import('@/components/Player/PlayerBar'));
 const NowPlayingPanel = lazy(() => import('@/components/NowPlayingPanel/NowPlayingPanel'));
@@ -30,8 +37,7 @@ const StatsPage = lazy(() => import('@/pages/Stats'));
 import GameModePage from '@/pages/GameMode';
 import { useLibraryStore } from '@/store/libraryStore';
 import { usePlayerStore } from '@/store/playerStore';
-import { flushPendingWrites, hasPendingDebouncedWrites, readStorageText, writeStorageText } from '@/services/storageService';
-import { isTauri } from '@/services/storageService';
+import { flushPendingWrites, hasPendingDebouncedWrites, isTauri, readStorageText, writeStorageText } from '@/services/storageService';
 import {
   markWindowRestored,
   noteUserInteraction,
@@ -94,8 +100,8 @@ const AppShell = () => {
   const initializePlayer = usePlayerStore((state) => state.initialize);
   const playerInitialized = usePlayerStore((state) => state.initialized);
   const isPlaying = usePlayerStore((state) => state.isPlaying);
-  const gameMode = usePlayerStore((state) => state.settings.gameMode);
-  const miniNowPlayingOverlay = usePlayerStore((state) => state.settings.miniNowPlayingOverlay);
+  const gameMode = useEffectiveSetting((settings) => settings.gameMode);
+  const miniNowPlayingOverlay = useEffectiveSetting((settings) => settings.miniNowPlayingOverlay);
   const toastMessage = usePlayerStore((state) => state.toastMessage);
   const location = useLocation();
   const navigate = useNavigate();
@@ -183,6 +189,9 @@ const AppShell = () => {
 
   useThemeSync();
   useLanguageSync();
+  useProEntitlement();
+  useRulePlaylists();
+  useRegenerateMixesOnUnlock();
   useOverlayController(miniNowPlayingOverlay);
   useMediaSession();
   const draggingFiles = useExternalFiles(libraryInitialized);
@@ -387,6 +396,32 @@ const AppShell = () => {
       window.clearTimeout(handle);
     };
   }, [schedulerState.lastRestoreAt, schedulerState.restoreGraceUntil]);
+
+  // Closing the window waits for this: Rust holds the close until `exit_ready` (or 3 s pass).
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+    let unlisten: (() => void) | null = null;
+    let alive = true;
+    void listen('amply://exit-requested', async () => {
+      try {
+        await usePlayerStore.getState().prepareForExit();
+      } finally {
+        void invoke('exit_ready');
+      }
+    }).then((dispose) => {
+      if (alive) {
+        unlisten = dispose;
+      } else {
+        dispose();
+      }
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     const flushWrites = () => {
@@ -645,6 +680,7 @@ const AppShell = () => {
       ) : null}
       {libraryInitialized ? <StoreReviewPrompt /> : null}
       <SongEditor />
+      <ProPaywall />
       {toastMessage ? (
         <Toast>{toastMessage}</Toast>
       ) : null}

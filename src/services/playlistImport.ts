@@ -47,8 +47,7 @@ export const importPlaylistFile = async (): Promise<PlaylistImportResult | null>
   const missing = parsed.paths.filter((path) => !byPath.has(pathKey(path)));
   if (missing.length) {
     const found = await probeAudioFiles(missing).catch(() => []);
-    await library.addLooseSongs(found);
-    for (const song of found) {
+    for (const song of await library.addLooseSongs(found)) {
       byPath.set(pathKey(song.path), song.id);
     }
   }

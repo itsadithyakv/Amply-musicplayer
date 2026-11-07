@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { useMemo } from 'react';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
+import { Icon } from '@/components/ui';
 import { artworkThumb } from '@/utils/artwork';
 
 interface ArtworkWellProps {
@@ -31,7 +32,7 @@ export const ArtworkWell = ({ artworks, alt, className }: ArtworkWellProps) => {
         <ArtworkImage src={unique[0]} alt={alt} className="h-full w-full object-cover" />
       ) : (
         <div className="flex h-full w-full items-center justify-center" role="img" aria-label={alt}>
-          <span className="text-[11px] uppercase tracking-[0.14em] text-amply-textMuted">Amply</span>
+          <Icon name="music" size={28} className="text-amply-textMuted opacity-60" />
         </div>
       )}
     </div>

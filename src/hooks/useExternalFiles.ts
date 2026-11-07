@@ -23,8 +23,8 @@ export const openExternalFiles = async (paths: string[]): Promise<void> => {
     player.showToast(t('common.externalFiles.nothingPlayable'));
     return;
   }
-  await useLibraryStore.getState().addLooseSongs(songs);
-  const ids = songs.map((song) => song.id);
+  const added = await useLibraryStore.getState().addLooseSongs(songs);
+  const ids = added.map((song) => song.id);
   player.setQueue(ids, ids[0]);
   await player.playSongById(ids[0]);
   recordPerfEvent('open-files.played', { files: songs.length });

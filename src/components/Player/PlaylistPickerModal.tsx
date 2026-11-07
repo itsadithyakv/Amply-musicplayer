@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Button, Kicker, Modal, TextInput } from '@/components/ui';
 import { formatNumber, useT } from '@/i18n';
 import { localizedPlaylistName } from '@/i18n/playlistNames';
+import { requirePlaylistRoom } from '@/services/collectionLimits';
+import { useLibraryStore } from '@/store/libraryStore';
 import type { Playlist, Song } from '@/types/music';
 
 interface PlaylistPickerModalProps {
@@ -27,6 +29,10 @@ export const PlaylistPickerModal = ({ open, onClose, song, playlists, onAddToPla
     }
     const name = newPlaylistName.trim();
     if (!name) {
+      return;
+    }
+    if (!requirePlaylistRoom(useLibraryStore.getState().customPlaylists)) {
+      onClose();
       return;
     }
     await onCreatePlaylist({

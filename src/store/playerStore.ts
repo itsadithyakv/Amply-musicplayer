@@ -1,7 +1,11 @@
+import { shouldStartCrossfade } from '@/services/crossfade';
+import { readPreference, writePreference } from '@/services/preferences';
+import { FREE_SONG_LIMIT, freeSongIds, isLibraryUnlimited } from '@/services/libraryAccess';
+import { effectiveSettings, requirePro, useProStore } from '@/store/proStore';
 import { DEFAULT_SETTINGS, normalizeSettings } from '@/store/defaultSettings';
 import { getFlag, setFlags } from '@/services/runtimeFlags';
 import { t } from '@/i18n';
-import { pickRandom, shuffle } from '@/utils/random';
+import { shuffle } from '@/utils/random';
 import { create } from 'zustand';
 import type { AppSettings, NowPlayingTab, OnlineRecommendationProvider, RepeatMode } from '@/types/music';
 import { audioEngine } from '@/services/audioEngine';
@@ -9,7 +13,7 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { listOutputDevices } from '@/services/audioDeviceService';
-import { isTauri, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
+import { flushPendingWrites, isTauri, readStorageJson, writeStorageJson, writeStorageJsonDebounced } from '@/services/storageService';
 import { notifySongChange } from '@/services/metadataPriority';
 import {
   isSchedulerBackgroundHidden,
@@ -135,6 +139,8 @@ interface PlayerState {
   volume: number;
   repeatMode: RepeatMode;
   shuffleEnabled: boolean;
+  /** Set while shuffle is on: the queue's own order, restored when shuffle goes off. */
+  unshuffledQueueSongIds: string[] | null;
   nowPlayingTab: NowPlayingTab;
   albumQueueView: {
     album: string;
@@ -156,7 +162,7 @@ interface PlayerState {
   pausePlayback: () => void;
   resumePlayback: () => void;
   /** `skipRecord`: the caller already recorded the finished session (natural end). */
-  playNext: (manual?: boolean, options?: { skipRecord?: boolean }) => Promise<void>;
+  playNext: (manual?: boolean, options?: { skipRecord?: boolean; nextSongId?: string }) => Promise<void>;
   playPrevious: () => Promise<void>;
   seekTo: (positionSec: number) => void;
   setVolume: (volume: number) => void;
@@ -173,6 +179,8 @@ interface PlayerState {
   setVolumeNormalization: (mode: AppSettings['volumeNormalization']) => Promise<void>;
   setLanguageSetting: (language: AppSettings['language']) => Promise<void>;
   setAppTheme: (theme: AppSettings['appTheme']) => Promise<void>;
+  setAccentColor: (accent: AppSettings['accentColor']) => Promise<void>;
+  setTrueBlack: (enabled: boolean) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   /** Merges settings from a backup over the current ones and saves them (applied on next load). */
   restoreSettings: (restored: Partial<AppSettings>) => Promise<void>;
@@ -198,6 +206,8 @@ interface PlayerState {
   removeQueuedSong: (songId: string) => void;
   reorderQueue: (fromIndex: number, toIndex: number) => void;
   reshuffleQueue: () => void;
+  /** Saves the position and every pending write; the window closes once this resolves. */
+  prepareForExit: () => Promise<void>;
 }
 
 const defaultSettings = DEFAULT_SETTINGS;
@@ -215,6 +225,8 @@ type PersistedPlaybackQueue = {
   queueCursor: number;
   manualQueueSongIds: string[];
   shuffleEnabled: boolean;
+  /** The queue's own order while shuffle is on, so turning it off restores it. */
+  unshuffledQueueSongIds?: string[] | null;
   repeatMode: RepeatMode;
   lastQueuePlaylistId: string | null;
   updatedAt: number;
@@ -282,6 +294,7 @@ const sameQueueSnapshot = (a: QueueSnapshot | null, b: QueueSnapshot): boolean =
   a !== null &&
   a.queueCursor === b.queueCursor &&
   a.shuffleEnabled === b.shuffleEnabled &&
+  sameIdList(a.unshuffledQueueSongIds ?? [], b.unshuffledQueueSongIds ?? []) &&
   a.repeatMode === b.repeatMode &&
   a.lastQueuePlaylistId === b.lastQueuePlaylistId &&
   sameIdList(a.queueSongIds, b.queueSongIds) &&
@@ -292,6 +305,7 @@ const queueSnapshotOf = (state: PlayerState): QueueSnapshot => ({
   queueCursor: state.queueCursor,
   manualQueueSongIds: state.manualQueueSongIds,
   shuffleEnabled: state.shuffleEnabled,
+  unshuffledQueueSongIds: state.unshuffledQueueSongIds,
   repeatMode: state.repeatMode,
   lastQueuePlaylistId: state.lastQueuePlaylistId ?? null,
 });
@@ -312,6 +326,7 @@ const queueFieldsChanged = (state: PlayerState, prev: PlayerState): boolean =>
   state.queueCursor !== prev.queueCursor ||
   state.manualQueueSongIds !== prev.manualQueueSongIds ||
   state.shuffleEnabled !== prev.shuffleEnabled ||
+  state.unshuffledQueueSongIds !== prev.unshuffledQueueSongIds ||
   state.repeatMode !== prev.repeatMode ||
   state.lastQueuePlaylistId !== prev.lastQueuePlaylistId;
 
@@ -449,7 +464,7 @@ const startDefaultOutputWatcher = (): void => {
   const poll = async () => {
     try {
       const state = usePlayerStore.getState();
-      if (state.settings.outputDeviceName) {
+      if (effectiveSettings(state.settings).outputDeviceName) {
         return;
       }
       if (isSchedulerBackgroundHidden()) {
@@ -498,6 +513,27 @@ if (typeof window !== 'undefined') {
 let settingsWriteChain: Promise<void> = Promise.resolve();
 
 /** Serialised read-modify-write so concurrent setters cannot drop each other's changes. */
+const VOLUME_PREFERENCE = 'player.volume';
+const DEFAULT_VOLUME = '0.85';
+const isVolume = (value: string): value is string => {
+  const parsed = Number(value);
+  return value.trim() !== '' && Number.isFinite(parsed) && parsed >= 0 && parsed <= 1;
+};
+const readSavedVolume = (): number => Number(readPreference(VOLUME_PREFERENCE, isVolume, DEFAULT_VOLUME));
+
+/** Tells the mix engine and the online lookups which tuning applies. Free installs use the defaults. */
+const publishMixSettings = (settings: AppSettings) => {
+  const effective = effectiveSettings(settings);
+  if (typeof window !== 'undefined') {
+    setFlags({
+      discoveryIntensity: effective.discoveryIntensity,
+      randomnessIntensity: effective.randomnessIntensity,
+      onlineRecsEnabled: effective.onlineRecommendationsEnabled,
+    });
+  }
+  enableOnlineRecommendations(effective);
+};
+
 const persistSettings = (settings: AppSettings): Promise<void> => {
   const { libraryPath: _libraryPath, ...audioSettings } = settings;
   settingsWriteChain = settingsWriteChain
@@ -552,6 +588,36 @@ const setSystemLaunchOnStartup = async (enabled: boolean): Promise<StartupState>
   }
 };
 
+/**
+ * The queue in shuffled order: the song at the cursor (normally the one playing) first, then the
+ * rest once each in random order. Fisher-Yates, so every order is equally likely.
+ */
+const shuffledQueue = (
+  queue: readonly string[],
+  anchorId: string | null,
+): Pick<PlayerState, 'queueSongIds' | 'queueCursor' | 'unshuffledQueueSongIds'> => {
+  const anchored = anchorId !== null && queue.includes(anchorId);
+  const rest = shuffle(anchored ? queue.filter((id) => id !== anchorId) : queue);
+  return {
+    queueSongIds: anchored ? [anchorId, ...rest] : rest,
+    queueCursor: anchored ? 0 : -1,
+    unshuffledQueueSongIds: [...queue],
+  };
+};
+
+/** Back to the queue's own order, positioned on the song that is playing. */
+const unshuffledQueue = (state: PlayerState): Pick<PlayerState, 'queueSongIds' | 'queueCursor' | 'unshuffledQueueSongIds'> => {
+  const original = state.unshuffledQueueSongIds;
+  if (!original) {
+    return { queueSongIds: state.queueSongIds, queueCursor: state.queueCursor, unshuffledQueueSongIds: null };
+  }
+  // Songs removed while shuffled stay removed.
+  const remaining = new Set(state.queueSongIds);
+  const queue = original.filter((id) => remaining.has(id));
+  const anchor = state.currentSongId ?? state.queueSongIds[state.queueCursor] ?? null;
+  return { queueSongIds: queue, queueCursor: anchor ? queue.indexOf(anchor) : -1, unshuffledQueueSongIds: null };
+};
+
 const resolveNextSongId = (state: PlayerState): string | null => {
   if (state.manualQueueSongIds.length > 0) {
     return state.manualQueueSongIds[0];
@@ -565,14 +631,8 @@ const resolveNextSongId = (state: PlayerState): string | null => {
     return state.currentSongId;
   }
 
-  if (state.shuffleEnabled) {
-    const candidates = state.queueSongIds.filter((id) => id !== state.currentSongId);
-    if (!candidates.length) {
-      return state.currentSongId;
-    }
-    return pickRandom(candidates) ?? state.currentSongId;
-  }
-
+  // Shuffle reorders the queue itself (see `shuffledQueue`), so it is walked like any other: every
+  // song plays once before any repeats, and the queue panel shows what really comes next.
   const nextIndex = state.queueCursor + 1;
   if (nextIndex < state.queueSongIds.length) {
     return state.queueSongIds[nextIndex];
@@ -635,19 +695,14 @@ const buildUpcomingSongIds = (state: PlayerState, count = 3): string[] => {
     }
   }
 
-  if (state.shuffleEnabled && state.queueSongIds.length > 0) {
-    const candidates = state.queueSongIds.filter((id) => id !== currentId && !seen.has(id));
-    const maxShuffle = Math.min(count - upcoming.length, candidates.length);
-    const shuffledCandidates = shuffle(candidates);
-    for (let i = 0; i < maxShuffle; i += 1) {
-      enqueue(shuffledCandidates[i]);
-      if (upcoming.length >= count) {
-        break;
-      }
-    }
-  }
-
   return upcoming;
+};
+
+/** Songs past the free library limit stay listed but do not play or join a queue. */
+const isLockedSong = (songId: string): boolean => {
+  if (isLibraryUnlimited()) return false;
+  const { songs } = useLibraryStore.getState();
+  return songs.length > FREE_SONG_LIMIT && !freeSongIds(songs).has(songId);
 };
 
 const ensureCurrentSongPrepared = async (
@@ -685,9 +740,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   isPlaying: false,
   positionSec: 0,
   durationSec: 0,
-  volume: 0.85,
+  volume: readSavedVolume(),
   repeatMode: 'off',
   shuffleEnabled: false,
+  unshuffledQueueSongIds: null,
   nowPlayingTab: 'now-playing',
   albumQueueView: null,
   settings: defaultSettings,
@@ -706,6 +762,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const [persisted, { restore: persistedPlayback, queue: persistedQueue }] = await Promise.all([
       readStorageJson<Partial<AppSettings> & Record<string, unknown>>('settings.json', {}),
       readPersistedPlayback(),
+      // Known before the first applySettings, so a Pro user's EQ never starts flat.
+      useProStore.getState().load(),
     ]);
     if (persistedQueue) {
       // Seed the change detector so restoring the same queue does not immediately rewrite it.
@@ -744,16 +802,47 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (typeof window !== 'undefined') {
-      setFlags({ discoveryIntensity: settings.discoveryIntensity });
-      setFlags({ randomnessIntensity: settings.randomnessIntensity });
       setFlags({ mixRegenPaused: settings.pauseMixRegenDuringPlayback });
-      setFlags({ onlineRecsEnabled: settings.onlineRecommendationsEnabled });
     }
-    enableOnlineRecommendations(settings);
+    publishMixSettings(settings);
+
+    const recordNaturalFinish = (songId: string | null, listenedSec: number, durationSec: number) => {
+      if (songId) {
+        schedulePlaybackCritical(() => {
+          void useLibraryStore.getState().recordPlaybackEvent(songId, {
+            listenedSec,
+            durationSec,
+            manualSkip: false,
+            completed: true,
+          });
+        }, { reason: 'record-playback-ended', groupKey: 'playback-activity' });
+      }
+    };
+    let crossfadedFromId: string | null = null;
 
     audioEngine.setCallbacks({
       onProgress: (position, duration) => {
         const currentId = get().currentSongId;
+        const fadeState = get();
+        const fadeSettings = effectiveSettings(fadeState.settings);
+        // A progress event still in flight for the previous song must not advance the new one.
+        if (
+          fadeSettings.crossfadeEnabled &&
+          currentId &&
+          fadeState.isPlaying &&
+          crossfadedFromId !== currentId &&
+          Math.abs(duration - fadeState.durationSec) < 1
+        ) {
+          const nextId = resolveNextSongId(fadeState);
+          const nextSong = nextId && nextId !== currentId ? useLibraryStore.getState().getSongById(nextId) : undefined;
+          if (nextSong && shouldStartCrossfade(fadeSettings, position, duration, nextSong.duration)) {
+            crossfadedFromId = currentId;
+            // The old song plays out under the new one, so its session counts as finished.
+            recordNaturalFinish(currentId, duration, duration);
+            void get().playNext(false, { skipRecord: true, nextSongId: nextSong.id });
+            return;
+          }
+        }
         if (
           currentId &&
           duration > 0 &&
@@ -770,7 +859,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           }
           lastPreloadSongId = currentId;
           const nextState = get();
-          if (nextState.settings.gaplessEnabled) {
+          if (effectiveSettings(nextState.settings).gaplessEnabled) {
             const preloadIds = buildUpcomingSongIds(nextState, getPreloadCount());
             if (preloadIds.length) {
               const library = useLibraryStore.getState();
@@ -827,17 +916,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       },
       onEnded: async () => {
         const state = get();
-        const finishedId = state.currentSongId;
-        if (finishedId) {
-          schedulePlaybackCritical(() => {
-            void useLibraryStore.getState().recordPlaybackEvent(finishedId, {
-              listenedSec: state.durationSec || state.positionSec,
-              durationSec: state.durationSec,
-              manualSkip: false,
-              completed: true,
-            });
-          }, { reason: 'record-playback-ended', groupKey: 'playback-activity' });
-        }
+        recordNaturalFinish(state.currentSongId, state.durationSec || state.positionSec, state.durationSec);
         // The completion above is the session's one record; the advance must not record again.
         await get().playNext(false, { skipRecord: true });
       },
@@ -911,6 +990,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ initialized: true, settings });
     startDefaultOutputWatcher();
 
+    // Buying Pro (or a refund) applies at once: saved choices take effect or step aside.
+    useProStore.subscribe((pro, previous) => {
+      if (pro.isPro !== previous.isPro) {
+        const current = get().settings;
+        audioEngine.applySettings(current);
+        publishMixSettings(current);
+      }
+    });
+
     const attemptRestore = () => {
       const state = get();
       if (state.currentSongId || state.isPlaying) {
@@ -924,12 +1012,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         return false;
       }
       const song = library.getSongById(persistedPlayback.songId);
-      if (!song) {
+      if (!song || isLockedSong(song.id)) {
         return true;
       }
       const filteredQueue = (persistedPlayback.queueSongIds || [])
         .map((id) => library.getSongById(id))
-        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry) && !isLockedSong(entry!.id))
         .map((entry) => entry.id);
       const queue = filteredQueue.length ? filteredQueue : [song.id];
       let queueCursor = queue.indexOf(song.id);
@@ -937,13 +1025,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queueCursor = Math.max(0, Math.min(queue.length - 1, persistedPlayback.queueCursor ?? 0));
       }
       const resumeAt = Math.max(0, Math.min(song.duration || 0, persistedPlayback.positionSec || 0));
-      audioEngine.setLoop(state.repeatMode === 'one');
+      const manualQueue = (persistedQueue?.manualQueueSongIds ?? []).filter((id) => Boolean(library.getSongById(id)) && !isLockedSong(id));
+      const repeatMode = persistedQueue?.repeatMode ?? state.repeatMode;
+      audioEngine.setLoop(repeatMode === 'one');
       setGlobalPlayingFlag(false);
       setPlaybackProgress(resumeAt, song.duration);
       set({
         currentSongId: song.id,
         queueSongIds: queue,
         queueCursor,
+        manualQueueSongIds: manualQueue,
+        shuffleEnabled: Boolean(persistedQueue?.shuffleEnabled),
+        unshuffledQueueSongIds: persistedQueue?.shuffleEnabled && Array.isArray(persistedQueue.unshuffledQueueSongIds)
+          ? persistedQueue.unshuffledQueueSongIds.filter((id) => Boolean(library.getSongById(id)) && !isLockedSong(id))
+          : null,
+        repeatMode,
         isPlaying: false,
         positionSec: resumeAt,
         durationSec: song.duration,
@@ -965,11 +1061,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  setQueue: (songIds, startSongId, options) => {
+  setQueue: (allSongIds, startSongId, options) => {
+    if (startSongId && isLockedSong(startSongId)) {
+      // playSongById explains the limit; the queue that is playing stays as it is.
+      return;
+    }
+    const songIds = allSongIds.filter((id) => !isLockedSong(id));
     const startIndex = startSongId ? Math.max(0, songIds.indexOf(startSongId)) : 0;
+    const order = get().shuffleEnabled
+      ? shuffledQueue(songIds, songIds[startIndex] ?? null)
+      : { queueSongIds: songIds, queueCursor: startIndex, unshuffledQueueSongIds: null };
     set({
-      queueSongIds: songIds,
-      queueCursor: startIndex,
+      ...order,
       albumQueueView: null,
       lastQueuePlaylistId: options?.playlistId ?? null,
     });
@@ -979,7 +1082,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     persistPlaybackState(nextState, {
       songId: startSongId ?? nextState.currentSongId,
     });
-    if (nextState.currentSongId && preloadIds.length && nextState.settings.gaplessEnabled) {
+    if (nextState.currentSongId && preloadIds.length && effectiveSettings(nextState.settings).gaplessEnabled) {
       const library = useLibraryStore.getState();
       const preloadSongs = preloadIds
         .map((id) => library.getSongById(id))
@@ -996,6 +1099,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const song = useLibraryStore.getState().getSongById(songId);
     if (!song) {
+      // Deleted or moved since it was queued. Without this the queue would retry it forever.
+      set((prev) => {
+        const removedAt = prev.queueSongIds.indexOf(songId);
+        return {
+          queueSongIds: prev.queueSongIds.filter((id) => id !== songId),
+          unshuffledQueueSongIds: prev.unshuffledQueueSongIds?.filter((id) => id !== songId) ?? null,
+          manualQueueSongIds: prev.manualQueueSongIds.filter((id) => id !== songId),
+          historySongIds: prev.historySongIds.filter((id) => id !== songId),
+          queueCursor: removedAt >= 0 && removedAt <= prev.queueCursor ? prev.queueCursor - 1 : prev.queueCursor,
+        };
+      });
+      const next = resolveNextSongId(get());
+      if (next && next !== songId) {
+        await get().playSongById(next, transition);
+      } else {
+        setGlobalPlayingFlag(false);
+        set({ isPlaying: false });
+      }
+      return;
+    }
+    if (isLockedSong(songId)) {
+      requirePro('unlimitedLibrary');
       return;
     }
 
@@ -1036,14 +1161,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     try {
       await audioEngine.loadSong(song, {
         autoplay: true,
-        transition: transition && !get().settings.gaplessEnabled,
+        transition: transition && !effectiveSettings(get().settings).gaplessEnabled,
         startAtSec: 0,
       });
       setGlobalPlayingFlag(true);
       set({ isPlaying: true });
       consecutiveLoadFailures = 0;
       recordPlaybackLatency(fastSkip ? 'next-track-fast' : 'track-load', performance.now() - latencyStart);
-      if (preloadIds.length && !fastSkip && get().settings.gaplessEnabled) {
+      if (preloadIds.length && !fastSkip && effectiveSettings(get().settings).gaplessEnabled) {
         const library = useLibraryStore.getState();
         const preloadSongs = preloadIds
           .map((id) => library.getSongById(id))
@@ -1076,6 +1201,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setAlbumQueueView: (view) => {
     set((state) => ({
+      ...(view && state.shuffleEnabled ? unshuffledQueue(state) : {}),
       albumQueueView: view,
       shuffleEnabled: view ? false : state.shuffleEnabled,
     }));
@@ -1189,9 +1315,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }, { reason: 'record-playback-event', groupKey: 'playback-activity' });
     }
     const nextSongId =
-      manual && state.repeatMode === 'one'
+      options.nextSongId ??
+      (manual && state.repeatMode === 'one'
         ? resolveNextSongId({ ...state, repeatMode: 'off' })
-        : resolveNextSongId(state);
+        : resolveNextSongId(state));
 
     if (!nextSongId) {
       setGlobalPlayingFlag(false);
@@ -1233,6 +1360,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }, { reason: 'record-playback-event', groupKey: 'playback-activity' });
     }
 
+    // playSongById appends what it plays, so drop the current song and its predecessor first;
+    // otherwise a second Previous lands back on the song just left.
+    if (state.historySongIds.length > 1) {
+      set({ historySongIds: state.historySongIds.slice(0, -2) });
+    }
     await get().playSongById(previousSongId, false);
     recordPlaybackLatency('previous-track', performance.now() - latencyStart);
   },
@@ -1248,14 +1380,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setVolume: (volume) => {
     const clamped = Math.max(0, Math.min(1, volume));
     audioEngine.setVolume(clamped);
+    writePreference(VOLUME_PREFERENCE, String(clamped));
     set({ volume: clamped });
   },
 
   setShuffleEnabled: (enabled) => {
-    set((state) => ({
-      shuffleEnabled: enabled,
-      repeatMode: enabled ? 'off' : state.repeatMode,
-    }));
+    if (enabled) {
+      audioEngine.setLoop(false);
+    }
+    set((state) => {
+      if (enabled === state.shuffleEnabled) {
+        return { repeatMode: enabled ? 'off' : state.repeatMode };
+      }
+      const anchor = state.currentSongId ?? state.queueSongIds[state.queueCursor] ?? null;
+      return {
+        ...(enabled ? shuffledQueue(state.queueSongIds, anchor) : unshuffledQueue(state)),
+        shuffleEnabled: enabled,
+        repeatMode: enabled ? 'off' : state.repeatMode,
+      };
+    });
   },
 
   toggleLoopSong: () => {
@@ -1263,6 +1406,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const nextRepeat = state.repeatMode === 'one' ? 'off' : 'one';
       audioEngine.setLoop(nextRepeat === 'one');
       return {
+        ...(nextRepeat === 'one' && state.shuffleEnabled ? unshuffledQueue(state) : {}),
         repeatMode: nextRepeat,
         shuffleEnabled: nextRepeat === 'one' ? false : state.shuffleEnabled,
       };
@@ -1274,7 +1418,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setPlaybackSpeed: async (speed) => {
-    const clamped = Math.max(0.75, Math.min(1.5, speed));
+    const clamped = Math.max(0.5, Math.min(2, speed));
     const settings = {
       ...get().settings,
       playbackSpeed: clamped,
@@ -1343,7 +1487,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const settings = {
       ...get().settings,
       gaplessEnabled: enabled,
-      crossfadeEnabled: enabled ? false : get().settings.crossfadeEnabled,
+      // Without Pro a saved crossfade would force gapless back on, so this choice replaces it.
+      crossfadeEnabled: enabled || !useProStore.getState().isPro ? false : get().settings.crossfadeEnabled,
     };
     audioEngine.applySettings(settings);
     set({ settings });
@@ -1369,6 +1514,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ...get().settings,
       appTheme: nextTheme,
     };
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setAccentColor: async (accentColor) => {
+    const settings = { ...get().settings, accentColor };
+    set({ settings });
+    await persistSettings(settings);
+  },
+
+  setTrueBlack: async (trueBlack) => {
+    const settings = { ...get().settings, trueBlack };
     set({ settings });
     await persistSettings(settings);
   },
@@ -1661,9 +1818,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
 
       sleepTimerHandle = null;
+      // Otherwise the other app going quiet later would start the music again.
+      cancelAudioFocusResume();
       audioEngine.pause();
       setGlobalPlayingFlag(false);
-      set({ isPlaying: false, sleepTimerEndsAt: null, sleepTimerDurationMin: null });
+      set({ isPlaying: false, autoPausedByFocus: false, sleepTimerEndsAt: null, sleepTimerDurationMin: null });
     }, minutes * 60_000);
 
     set({ sleepTimerEndsAt: target, sleepTimerDurationMin: minutes });
@@ -1730,6 +1889,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   enqueueSong: (songId) => {
+    if (isLockedSong(songId)) {
+      requirePro('unlimitedLibrary');
+      return;
+    }
     schedulePlaybackCritical(() => {
       void useLibraryStore.getState().recordQueueAdd(songId);
     }, { reason: 'record-queue-add', groupKey: 'playback-activity' });
@@ -1760,7 +1923,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       if (index < state.queueCursor) {
         nextCursor = Math.max(0, state.queueCursor - 1);
       } else if (index === state.queueCursor) {
-        nextCursor = Math.min(nextCursor, Math.max(0, nextQueue.length - 1));
+        // The song keeps playing, so "next" is whatever now sits at this index; the cursor sits before it.
+        nextCursor = index - 1;
       }
 
       return {
@@ -1787,6 +1951,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queue.splice(toIndex, 0, moved);
       return { manualQueueSongIds: queue };
     });
+  },
+
+  prepareForExit: async () => {
+    const state = get();
+    if (state.currentSongId) {
+      persistPlaybackState(state, { positionSec: state.isPlaying ? audioEngine.getPosition() : state.positionSec });
+    }
+    persistQueueIfChanged(state);
+    await flushPendingWrites();
   },
 
   reshuffleQueue: () => {

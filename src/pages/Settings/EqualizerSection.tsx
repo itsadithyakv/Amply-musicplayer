@@ -1,6 +1,10 @@
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ProBadge } from '@/components/Pro/ProGate';
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
+import { isProEqPreset } from '@/services/proFeatures';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import { Badge, Button, Select } from '@/components/ui';
 import type { AppSettings } from '@/types/music';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
@@ -229,14 +233,18 @@ const EQGraphEditor = ({ bands, onChange }: { bands: number[]; onChange: (bands:
 
 export const EqualizerSection = () => {
   const { t } = useT();
-  const eqBands = usePlayerStore((state) => state.settings.eqBands);
-  const eqPreset = usePlayerStore((state) => state.settings.eqPreset);
+  const eqBands = useEffectiveSetting((settings) => settings.eqBands);
+  const eqPreset = useEffectiveSetting((settings) => settings.eqPreset);
+  const isPro = useProStore((state) => state.isPro);
   const setEqPreset = usePlayerStore((state) => state.setEqPreset);
   const setEqBands = usePlayerStore((state) => state.setEqBands);
 
   const handleBandsChange = useCallback(
     (next: number[]) => {
-      void setEqBands(next);
+      // Free installs see the curve; the first attempt to shape it opens the upgrade dialog.
+      if (requirePro('equalizer')) {
+        void setEqBands(next);
+      }
     },
     [setEqBands],
   );
@@ -254,12 +262,15 @@ export const EqualizerSection = () => {
             label={t('settings.equalizer.presetField.select')}
             value={eqPreset}
             onChange={(event) => {
-              void setEqPreset(event.target.value as AppSettings['eqPreset']);
+              const next = event.target.value as AppSettings['eqPreset'];
+              if (!isProEqPreset(next) || requirePro('equalizer')) {
+                void setEqPreset(next);
+              }
             }}
           >
             {(Object.keys(EQ_PRESET_LABELS) as Array<AppSettings['eqPreset']>).map((preset) => (
               <option key={preset} value={preset}>
-                {t(EQ_PRESET_LABELS[preset])}
+                {!isPro && isProEqPreset(preset) ? t('pro.option', { name: t(EQ_PRESET_LABELS[preset]) }) : t(EQ_PRESET_LABELS[preset])}
               </option>
             ))}
           </Select>
@@ -269,7 +280,7 @@ export const EqualizerSection = () => {
           label={t('settings.equalizer.curve.label')}
           description={t('settings.equalizer.curve.description')}
           trailing={
-            <Button
+            !isPro ? <ProBadge /> : <Button
               size="sm"
               icon="refresh"
               onClick={() => {

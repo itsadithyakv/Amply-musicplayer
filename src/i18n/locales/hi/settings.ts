@@ -1,6 +1,16 @@
 import type source from '@/i18n/locales/en/settings';
 
 const settings = {
+  "settings.moreApps.title": "हमारे और ऐप",
+  "settings.moreApps.description": "PaperKite के दूसरे ऐप, वही छोटा स्टूडियो जो Amply बनाता है।",
+  "settings.moreApps.open": "{name} को Microsoft Store में खोलें",
+  "settings.moreApps.app.juicebar": "आपके गैजेट्स की बैटरी, सीधे टास्कबार में।",
+  "settings.moreApps.app.papery": "एक सुकून भरा PDF एडिटर: पढ़ें, जोड़ें, साइन करें और भरें।",
+  "settings.moreApps.app.twinly": "डुप्लिकेट फ़ोटो और फ़ाइलें ढूँढें और हटाएँ।",
+  "settings.moreApps.app.tachy": "आपकी लाइव इंटरनेट स्पीड, घड़ी के ठीक बगल में।",
+  "settings.moreApps.app.framecap": "बिना वॉटरमार्क और समय सीमा के अपनी स्क्रीन रिकॉर्ड करें।",
+  "settings.moreApps.app.dumbtop": "एक फ़ोकस टाइमर जो आपके लैपटॉप को शांत और ध्यान भटकाने वाली चीज़ों से दूर रखता है।",
+  "settings.moreApps.app.leaflet": "आपकी EPUB, PDF और कॉमिक्स के लिए एक रीडर।",
   "settings.language.label": "भाषा",
   "settings.language.description": "Amply के मेनू और संदेशों की भाषा।",
   "settings.language.system": "Windows के अनुसार ({language})",
@@ -193,6 +203,24 @@ const settings = {
   "settings.version.rate.button": "रेट करें",
   "settings.version.rate.thanks": "Amply को रेट करने के लिए धन्यवाद!",
   "settings.version.rate.failed": "Microsoft Store नहीं खुल सका",
+  "settings.shortcuts.title": "कीबोर्ड शॉर्टकट",
+  "settings.shortcuts.playPause": "चलाएँ या रोकें",
+  "settings.shortcuts.seek": "5 सेकंड पीछे या आगे",
+  "settings.shortcuts.track": "पिछला या अगला गाना",
+  "settings.shortcuts.volume": "आवाज़ कम या ज़्यादा",
+  "settings.shortcuts.mute": "म्यूट",
+  "settings.appearance.accent.label": "एक्सेंट रंग",
+  "settings.appearance.accent.description": "बटन, हाइलाइट और विज़ुअलाइज़र का रंग।",
+  "settings.appearance.accent.amber": "एम्बर",
+  "settings.appearance.accent.rose": "गुलाबी",
+  "settings.appearance.accent.violet": "बैंगनी",
+  "settings.appearance.accent.blue": "नीला",
+  "settings.appearance.accent.teal": "टील",
+  "settings.appearance.accent.green": "हरा",
+  "settings.appearance.accent.gold": "सुनहरा",
+  "settings.appearance.accent.graphite": "ग्रेफ़ाइट",
+  "settings.appearance.trueBlack.label": "पूरा काला",
+  "settings.appearance.trueBlack.description": "डार्क मोड में पूरी तरह काली सतहें, OLED स्क्रीन के लिए आरामदायक।",
 } satisfies Record<keyof typeof source, string>;
 
 export default settings;

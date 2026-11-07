@@ -3,9 +3,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod diagnostics;
 pub mod media_controls;
+pub mod more_apps;
 pub mod startup;
+pub mod store_license;
 pub mod store_review;
+pub mod trial;
 mod taskbar;
 
 pub(crate) use self::taskbar::init as taskbar_init;

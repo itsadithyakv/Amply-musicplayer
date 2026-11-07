@@ -57,6 +57,9 @@ export type SearchView = {
   suggestions: string[];
 };
 
+const REDISCOVER_UNPLAYED_SECS = 30 * 86_400;
+const REDISCOVER_KEPT_SECS = 45 * 86_400;
+
 let snapshotCache: { key: string | null; songs: Song[]; playlists: Playlist[]; snapshot: LibrarySnapshot } | null = null;
 let playlistDetailCache: {
   key: string | null;
@@ -260,8 +263,13 @@ export const getHomeView = ({
     .filter((song) => Boolean(song.lastPlayed))
     .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
     .slice(0, 16);
+  // Played once but not for a month, or kept for six weeks and never played; never just "new", so a
+  // fresh library does not call yesterday's songs ones to rediscover (the mix engine's rule too).
+  const nowSec = Date.now() / 1000;
   const rediscoverSongs = [...songs]
-    .filter((song) => !song.lastPlayed || Date.now() / 1000 - (song.lastPlayed ?? 0) > 60 * 60 * 24 * 30)
+    .filter((song) =>
+      song.lastPlayed ? nowSec - song.lastPlayed > REDISCOVER_UNPLAYED_SECS : nowSec - song.addedAt > REDISCOVER_KEPT_SECS,
+    )
     .sort((a, b) => b.addedAt - a.addedAt)
     .slice(0, 16);
   const artistBuckets = new Map<string, { count: number; topSong: Song; songIds: string[] }>();

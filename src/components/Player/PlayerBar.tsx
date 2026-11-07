@@ -1,3 +1,4 @@
+import { useEffectiveSetting } from '@/hooks/useEffectiveSettings';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { memo, useEffect, useRef, useState } from 'react';
 import { ConfirmDialog, Icon, IconButton, Slider, volumeIconName } from '@/components/ui';
@@ -238,7 +239,7 @@ const SongInfoSection = memo(() => {
 SongInfoSection.displayName = 'SongInfoSection';
 
 const PlayerBar = () => {
-  const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const gameMode = useEffectiveSetting((settings) => settings.gameMode);
   const actionBusyRef = useRef(false);
 
   if (gameMode) {

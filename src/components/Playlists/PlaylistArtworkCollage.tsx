@@ -1,3 +1,4 @@
+import { Icon } from '@/components/ui';
 import clsx from 'clsx';
 import { memo, type CSSProperties } from 'react';
 import { ArtworkImage } from '@/components/ArtworkImage/ArtworkImage';
@@ -21,7 +22,7 @@ interface PlaylistArtworkCollageProps {
 
 /**
  * Square artwork well used by playlist cards, the detail hero and the composer preview.
- * Renders a 2×2 collage, a single cover, or an "Amply" placeholder inside a `neu-well`.
+ * Renders a 2×2 collage, a single cover, or a music-note placeholder inside a `neu-well`.
  */
 export const PlaylistArtworkCollage = memo(({ artworkSet, radius = 'sm', padded = false, thumbSize, className, style }: PlaylistArtworkCollageProps) => {
   const tiles = artworkSet.slice(0, 4).map((art) => (thumbSize ? artworkThumb(art, thumbSize) ?? art : art));
@@ -50,8 +51,8 @@ export const PlaylistArtworkCollage = memo(({ artworkSet, radius = 'sm', padded 
           ))}
         </div>
       ) : (
-        <div className="flex h-full w-full items-center justify-center text-[11px] font-bold uppercase tracking-[0.2em] text-amply-textMuted">
-          Amply
+        <div className="flex h-full w-full items-center justify-center text-amply-textMuted opacity-60">
+          <Icon name="music" size={32} />
         </div>
       )}
     </div>

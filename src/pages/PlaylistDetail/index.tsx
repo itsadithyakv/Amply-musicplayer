@@ -1,4 +1,5 @@
-import { shuffle } from '@/utils/random';
+import { RulePlaylistEditor } from '@/components/Playlists/RulePlaylistEditor';
+import { pickRandom } from '@/utils/random';
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import SongList from '@/components/SongList/SongList';
@@ -6,7 +7,9 @@ import { Badge, Button, Card, ConfirmDialog, IconButton, Kicker, Meta, Modal } f
 import { exportPlaylistFile } from '@/services/playlistImport';
 import { PlaylistArtworkCollage } from '@/components/Playlists/PlaylistArtworkCollage';
 import { useLibraryStore } from '@/store/libraryStore';
+import { isProMix } from '@/services/proFeatures';
 import { usePlayerStore } from '@/store/playerStore';
+import { requirePro, useProStore } from '@/store/proStore';
 import { usePlaylistDetailView } from '@/hooks/useLibraryViews';
 import { t as translate, useT } from '@/i18n';
 import { localizedPlaylistDescription, localizedPlaylistName } from '@/i18n/playlistNames';
@@ -35,6 +38,8 @@ const PlaylistDetailPage = () => {
   const setShuffleEnabled = usePlayerStore((state) => state.setShuffleEnabled);
   const navigate = useNavigate();
   const { playlist, playlistSongs, playlistIds, artworkSet } = usePlaylistDetailView(playlistId);
+  const isPro = useProStore((state) => state.isPro);
+  const openPaywall = useProStore((state) => state.openPaywall);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const totalSeconds = useMemo(
@@ -47,6 +52,18 @@ const PlaylistDetailPage = () => {
       <div className="space-y-4 pb-8">
         <IconButton name="chevron-left" label={t('playlists.detail.back')} variant="flat" onClick={() => navigate('/playlists')} />
         <Card padding="lg" className="text-[13px] text-amply-textSecondary">{t('playlists.detail.notFound')}</Card>
+      </div>
+    );
+  }
+
+  if (!isPro && isProMix(playlist.id)) {
+    return (
+      <div className="space-y-4 pb-8">
+        <IconButton name="chevron-left" label={t('playlists.detail.back')} variant="flat" onClick={() => navigate('/playlists')} />
+        <Card padding="lg" className="flex flex-wrap items-center justify-between gap-3">
+          <p className="min-w-0 text-[13px] text-amply-textSecondary">{t('pro.mixes.locked')}</p>
+          <Button icon="lock" onClick={() => openPaywall('moreMixes')}>{t('pro.mixes.unlock')}</Button>
+        </Card>
       </div>
     );
   }
@@ -74,10 +91,11 @@ const PlaylistDetailPage = () => {
     if (playlistIds.length === 0) {
       return;
     }
-    const shuffled = shuffle(playlistIds);
-    setQueue(shuffled, shuffled[0], { playlistId: playlist.id });
+    // Shuffle first, so the queue keeps the playlist's order for when shuffle is turned off again.
+    const first = pickRandom(playlistIds) ?? playlistIds[0];
     setShuffleEnabled(true);
-    void playSongById(shuffled[0], false);
+    setQueue(playlistIds, first, { playlistId: playlist.id });
+    void playSongById(first, false);
     void recordPlaylistUse(playlist.id);
   };
 
@@ -90,7 +108,7 @@ const PlaylistDetailPage = () => {
           <div className="flex min-w-[220px] flex-1 flex-col gap-3">
             <div className="flex items-center gap-3">
               <IconButton name="chevron-left" label={t('playlists.detail.backShort')} size="sm" variant="flat" onClick={() => navigate('/playlists')} />
-              <Kicker>{isCustom ? t('playlists.badge.custom') : t('playlists.badge.smart')}</Kicker>
+              <Kicker>{playlist.rules ? t('playlists.badge.rules') : isCustom ? t('playlists.badge.custom') : t('playlists.badge.smart')}</Kicker>
             </div>
             <h1 className="text-[30px] font-bold tracking-[-0.025em] text-amply-textPrimary">{name}</h1>
             <Meta className="max-w-xl">{description || t('playlists.detail.defaultDescription')}</Meta>
@@ -115,7 +133,15 @@ const PlaylistDetailPage = () => {
               />
               {isCustom ? (
                 <>
-                  <IconButton name="edit" label={t('playlists.composer.editTitle')} onClick={() => setEditing(true)} />
+                  <IconButton
+                    name="edit"
+                    label={playlist.rules ? t('playlists.rules.editTitle') : t('playlists.composer.editTitle')}
+                    onClick={() => {
+                      if (!playlist.rules || requirePro('smartRules')) {
+                        setEditing(true);
+                      }
+                    }}
+                  />
                   <IconButton name="trash" label={t('playlists.detail.delete')} variant="danger" onClick={() => setConfirmDelete(true)} />
                 </>
               ) : null}
@@ -133,7 +159,17 @@ const PlaylistDetailPage = () => {
         />
       </div>
 
-      <Modal open={editing} onClose={() => setEditing(false)} size="xl" title={t('playlists.composer.editTitle')} description={t('playlists.composer.modalDescription')}>
+      <Modal open={editing && Boolean(playlist.rules)} onClose={() => setEditing(false)} size="lg" title={t('playlists.rules.editTitle')} description={t('playlists.rules.description')}>
+        {editing && playlist.rules ? (
+          <RulePlaylistEditor
+            initial={playlist}
+            onSave={async (updated) => { await upsertCustomPlaylist(updated); setEditing(false); }}
+            onCancel={() => setEditing(false)}
+          />
+        ) : null}
+      </Modal>
+
+      <Modal open={editing && !playlist.rules} onClose={() => setEditing(false)} size="xl" title={t('playlists.composer.editTitle')} description={t('playlists.composer.modalDescription')}>
         <Suspense fallback={<div className="p-10 text-center text-[12px] text-amply-textSecondary">{t('playlists.composer.preparing')}</div>}>
           <PlaylistComposer
             songs={songs}

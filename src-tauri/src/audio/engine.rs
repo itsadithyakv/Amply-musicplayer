@@ -533,7 +533,12 @@ impl NativeAudio {
         self.paused_position = self.current_position();
         self.start_instant = None;
         self.is_playing = false;
-        self.fade_in = None;
+        // The ramp ends here, so the level must not stay wherever it had reached.
+        if self.fade_in.take().is_some() {
+            if let Some(sink) = &self.sink {
+                sink.set_volume(self.volume);
+            }
+        }
     }
 
     pub(crate) fn stop(&mut self) {

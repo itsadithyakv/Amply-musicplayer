@@ -1,24 +1,29 @@
 import type { Playlist } from '@/types/music';
 import { djb2 } from '@/utils/hash';
 import { rngFor, seededShuffle } from '@/utils/random';
-import { canUse, createAssignmentState, noteUse, usagePenalty, type AssignmentState } from './assign';
-import { capsForTarget, selectWithCaps, shuffleWithSpacing } from './diversity';
+import { canUse, createAssignmentState, maxMixesPerSongFor, noteUse, usagePenalty, type AssignmentState } from './assign';
+import { capsForLibrary, selectWithCaps, shuffleWithSpacing } from './diversity';
 import { compareGenres, type CanonicalGenre } from './genres';
 import { dayKeyFor, idsWithinDays, previousEntry, withTodayEntry } from './history';
 import { MOODS } from './moods';
 import { interleaveByShare, rouletteDraw, roundRobinByStratum } from './sampling';
 import {
+  ALL_NEW_SHARE,
   CORE_MIXES,
   GENRE_MIX_MIN_ELIGIBLE,
   MOOD_MIX_MIN_ELIGIBLE,
   effectiveTarget,
   genreMixDefinition,
   isEligible,
+  isMixPossible,
+  isTwinOf,
   maxGenreMixesFor,
   maxMoodMixesFor,
+  minSongsFor,
   moodEligibleCount,
   moodMixDefinition,
   rankOf,
+  SMALL_LIBRARY_RECENT_DAYS,
   type RankContext,
 } from './score';
 import { computeSignals, toSeconds, type LibraryStats, type SongSignals } from './signals';
@@ -84,6 +89,9 @@ const DISPLAY_ORDER: readonly MixKind[] = [
 
 const LITE_KINDS: ReadonlySet<MixKind> = new Set(['daily', 'on_repeat', 'recently_played', 'favorites', 'explore']);
 
+/** Never dropped as a twin: the day's mix, the play history and the user's own favourites. */
+const TWIN_EXEMPT: ReadonlySet<MixKind> = new Set(['daily', 'recently_played', 'favorites']);
+
 interface ResolvedMix {
   def: MixDefinition;
   songs: SongSignals[];
@@ -112,6 +120,9 @@ interface EngineState {
   assignment: AssignmentState;
   recentlyAddedCutoffDays: number;
   librarySize: number;
+  /** Distinct artists and albums, for the diversity caps. */
+  artistCount: number;
+  albumCount: number;
   dailyPrepared?: Prepared & { ranks: Map<string, number> };
 }
 
@@ -151,7 +162,8 @@ const buildMoodMixes = (signals: readonly SongSignals[], librarySize: number): M
 
 const recentlyAddedCutoff = (signals: readonly SongSignals[]): number => {
   if (signals.length <= RECENTLY_ADDED_POOL) {
-    return Number.POSITIVE_INFINITY;
+    // A small library is all within the newest 240; "recent" has to mean recent.
+    return SMALL_LIBRARY_RECENT_DAYS;
   }
   const ages = signals.map((signal) => signal.daysSinceAdded).sort((a, b) => a - b);
   return ages[RECENTLY_ADDED_POOL - 1];
@@ -337,7 +349,7 @@ const resolveDaily = (state: EngineState, def: MixDefinition): ResolvedMix => {
   const selected = selectWithCaps(
     candidates,
     dailyTarget,
-    capsForTarget(dailyTarget),
+    capsForLibrary(dailyTarget, state.artistCount, state.albumCount),
     (signal) => {
       if (!canUse(assignment, signal.id, def.family, true)) return false;
       if (yesterday.has(signal.id)) {
@@ -367,6 +379,9 @@ const resolveMix = (state: EngineState, def: MixDefinition): ResolvedMix => {
   if (!eligible.length) {
     return { def, songs: [], eligible: 0, poolSize, reason: reason ?? 'empty-pool' };
   }
+  if (def.kind === 'recently_added' && eligible.length >= state.signals.length * ALL_NEW_SHARE) {
+    return { def, songs: [], eligible: eligible.length, poolSize, reason: 'all-new' };
+  }
   const seed = state.weeklyBase;
   const target = targetOf(state, def);
   const ranks = rankEligible(state, def, prepared, def.kind !== 'recently_played');
@@ -385,8 +400,8 @@ const resolveMix = (state: EngineState, def: MixDefinition): ResolvedMix => {
   const selected = selectWithCaps(
     candidates,
     target,
-    capsForTarget(target),
-    (signal) => canUse(assignment, signal.id, def.family),
+    capsForLibrary(target, state.artistCount, state.albumCount),
+    (signal) => canUse(assignment, signal.id, def.family, false, def.kind === 'favorites'),
     (signal) => noteUse(assignment, signal.id, def.family),
   );
   const songs = def.ordered ? selected : shuffleWithSpacing(selected, seed, `${def.id}:order`);
@@ -430,14 +445,18 @@ export const runEngine = (input: MixEngineInput, lite: boolean): MixEngineOutput
     randomness: clamp01(input.randomnessIntensity, DEFAULT_RANDOMNESS),
     weeklyBase: djb2(`weekly|${input.weeklySeed}|${nonce}`),
     dailyBase: djb2(`daily|${input.dailySeed}|${nonce}`),
-    assignment: createAssignmentState(),
+    assignment: createAssignmentState(maxMixesPerSongFor(librarySize)),
     recentlyAddedCutoffDays: recentlyAddedCutoff(signals),
     librarySize,
+    artistCount: new Set(signals.map((signal) => signal.artistKey)).size,
+    albumCount: new Set(signals.map((signal) => signal.albumKey)).size,
   };
 
-  const definitions: MixDefinition[] = lite
-    ? CORE_MIXES.filter((def) => LITE_KINDS.has(def.kind))
-    : [...CORE_MIXES, ...buildGenreMixes(signals, stats.coldStart, librarySize), ...buildMoodMixes(signals, librarySize)];
+  const definitions: MixDefinition[] = (
+    lite
+      ? CORE_MIXES.filter((def) => LITE_KINDS.has(def.kind))
+      : [...CORE_MIXES, ...buildGenreMixes(signals, stats.coldStart, librarySize), ...buildMoodMixes(signals, librarySize)]
+  ).filter((def) => isMixPossible(def.kind, librarySize));
 
   const daily = definitions.find((def) => def.kind === 'daily');
   if (daily) {
@@ -454,12 +473,24 @@ export const runEngine = (input: MixEngineInput, lite: boolean): MixEngineOutput
 
   const playlists: Playlist[] = [];
   const diagnostics: MixDiagnostics[] = [];
+  const shown: Set<string>[] = [];
   let history = state.history;
   for (const kind of DISPLAY_ORDER) {
     for (const def of definitions) {
       if (def.kind !== kind) continue;
-      const mix = resolved.get(def.id);
+      let mix = resolved.get(def.id);
       if (!mix) continue;
+      // Too few songs to be worth a card, or the same mix as one already shown: leave it out.
+      if (mix.songs.length && mix.songs.length < minSongsFor(def.kind)) {
+        mix = { ...mix, songs: [], reason: 'too-few-songs' };
+      } else if (
+        mix.songs.length &&
+        !TWIN_EXEMPT.has(def.kind) &&
+        shown.some((ids) => isTwinOf(mix!.songs.map((signal) => signal.id), ids))
+      ) {
+        mix = { ...mix, songs: [], reason: 'twin' };
+      }
+      if (mix.songs.length) shown.push(new Set(mix.songs.map((signal) => signal.id)));
       diagnostics.push({
         mixId: def.id,
         poolSize: mix.poolSize,

@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react';
+import { LockedRow } from '@/components/Pro/ProGate';
 import { usePlayerStore } from '@/store/playerStore';
+import { useProStore } from '@/store/proStore';
 import { Divider, TextInput, Toggle } from '@/components/ui';
-import { useT } from '@/i18n';
+import { useT, type MessageKey } from '@/i18n';
 import { SettingField, SettingsSection } from '@/pages/Settings/SettingsSection';
+
+/** Mirrors useGlobalShortcuts. */
+const SHORTCUTS: ReadonlyArray<readonly [string[], MessageKey]> = [
+  [['Space'], 'settings.shortcuts.playPause'],
+  [['←', '→'], 'settings.shortcuts.seek'],
+  [['Shift + ←', 'Shift + →'], 'settings.shortcuts.track'],
+  [['↑', '↓'], 'settings.shortcuts.volume'],
+  [['M'], 'settings.shortcuts.mute'],
+];
 
 export const AppBehaviorSection = () => {
   const { t } = useT();
@@ -10,6 +21,7 @@ export const AppBehaviorSection = () => {
   const autoPauseIgnoreFullscreen = usePlayerStore((state) => state.settings.autoPauseIgnoreFullscreen);
   const autoPauseOnFocus = usePlayerStore((state) => state.settings.autoPauseOnFocus);
   const gameMode = usePlayerStore((state) => state.settings.gameMode);
+  const isPro = useProStore((state) => state.isPro);
   const launchOnStartup = usePlayerStore((state) => state.settings.launchOnStartup);
 
   const setLaunchOnStartup = usePlayerStore((state) => state.setLaunchOnStartup);
@@ -35,14 +47,18 @@ export const AppBehaviorSection = () => {
             void setLaunchOnStartup(next);
           }}
         />
-        <Toggle
-          label={t('settings.behavior.gameMode.label')}
-          description={t('settings.behavior.gameMode.description')}
-          checked={gameMode}
-          onChange={(next) => {
-            void setGameMode(next);
-          }}
-        />
+        {isPro ? (
+          <Toggle
+            label={t('settings.behavior.gameMode.label')}
+            description={t('settings.behavior.gameMode.description')}
+            checked={gameMode}
+            onChange={(next) => {
+              void setGameMode(next);
+            }}
+          />
+        ) : (
+          <LockedRow feature="gameMode" />
+        )}
         <Toggle
           label={t('settings.behavior.autoPause.label')}
           description={t('settings.behavior.autoPause.description')}
@@ -76,6 +92,25 @@ export const AppBehaviorSection = () => {
               void setAutoPauseIgnoreApps(list);
             }}
           />
+        </SettingField>
+
+        <Divider className="my-1" />
+
+        <SettingField label={t('settings.shortcuts.title')}>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12px]">
+            {SHORTCUTS.map(([keys, action]) => (
+              <div key={action} className="contents">
+                <dt className="flex flex-wrap gap-1">
+                  {keys.map((key) => (
+                    <kbd key={key} className="neu-pressed-sm rounded-sm px-1.5 py-0.5 font-sans text-[11px] text-amply-textPrimary">
+                      {key}
+                    </kbd>
+                  ))}
+                </dt>
+                <dd className="text-amply-textSecondary">{t(action)}</dd>
+              </div>
+            ))}
+          </dl>
         </SettingField>
       </div>
     </SettingsSection>

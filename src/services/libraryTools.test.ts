@@ -87,7 +87,16 @@ describe('backup and restore', () => {
     const plan = planRestore(backup, [now], []);
     expect(plan.matchedSongs).toBe(1);
     expect(plan.activity.get(now.id)).toMatchObject({ playCount: 12, favorite: true });
-    expect(plan.playlists).toEqual([{ existingId: null, name: 'Mine', description: '', songIds: [] }]);
+    // The playlist follows its songs to the new drive.
+    expect(plan.playlists).toEqual([{ existingId: null, name: 'Mine', description: '', songIds: [now.id] }]);
+  });
+
+  it('still reads backups made before playlists carried fingerprints', () => {
+    const played = song({ path: 'D:\Music\hit.mp3', title: 'Hit' });
+    const playlist: Playlist = { id: 'p1', name: 'Mine', type: 'custom', description: '', songIds: [played.id], updatedAt: 0 };
+    const backup = buildBackup({ songs: [played], customPlaylists: [playlist], settings, appVersion: '1.7.2' });
+    const legacy = { ...backup, playlists: backup.playlists.map(({ name, description, paths }) => ({ name, description, paths })) };
+    expect(planRestore(legacy, [played], []).playlists[0].songIds).toEqual([played.id]);
   });
 
   it('extends a playlist that already exists instead of duplicating it', () => {

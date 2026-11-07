@@ -49,6 +49,30 @@ pub async fn save_text_file(
     .await
 }
 
+/// Asks where to save an image and writes it there (the Amply Encore share card). `data` is base64.
+/// Returns the path, or None when cancelled.
+#[tauri::command]
+pub async fn save_image_file(title: String, default_name: String, filter_name: String, data: String) -> AmplyResult<Option<String>> {
+    use base64::Engine;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|err| AmplyError::InvalidInput(format!("image data: {err}")))?;
+    // Only PNGs: the frontend renders the card to a PNG, and nothing else should come through here.
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err(AmplyError::InvalidInput("not a PNG image".into()));
+    }
+    blocking(move || {
+        let extensions = ["png".to_string()];
+        let Some(path) = dialog(&title, &filter_name, &extensions).set_file_name(&default_name).save_file() else {
+            return Ok(None);
+        };
+        fs::write(&path, &bytes).map_err(|err| AmplyError::Other(format!("{}: {err}", path.display())))?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
 /// Asks for a file to open and returns its text. None when cancelled.
 #[tauri::command]
 pub async fn open_text_file(title: String, filter_name: String, extensions: Vec<String>) -> AmplyResult<Option<OpenedTextFile>> {

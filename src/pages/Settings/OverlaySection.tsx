@@ -1,10 +1,13 @@
+import { LockedRow } from '@/components/Pro/ProGate';
 import { usePlayerStore } from '@/store/playerStore';
+import { useProStore } from '@/store/proStore';
 import { Toggle } from '@/components/ui';
 import { useT } from '@/i18n';
 import { SettingsSection } from '@/pages/Settings/SettingsSection';
 
 export const OverlaySection = () => {
   const { t } = useT();
+  const isPro = useProStore((state) => state.isPro);
   const miniNowPlayingOverlay = usePlayerStore((state) => state.settings.miniNowPlayingOverlay);
   const overlayAutoHide = usePlayerStore((state) => state.settings.overlayAutoHide);
   const overlaySpinningArtwork = usePlayerStore((state) => state.settings.overlaySpinningArtwork);
@@ -15,7 +18,7 @@ export const OverlaySection = () => {
 
   return (
     <SettingsSection icon="overlay" title={t('settings.overlay.title')} description={t('settings.overlay.description')}>
-      <div className="grid gap-1">
+      {!isPro ? <LockedRow feature="miniPlayer" /> : <div className="grid gap-1">
         <Toggle
           label={t('settings.overlay.mini.label')}
           description={t('settings.overlay.mini.description')}
@@ -40,7 +43,7 @@ export const OverlaySection = () => {
             void setOverlaySpinningArtwork(next);
           }}
         />
-      </div>
+      </div>}
     </SettingsSection>
   );
 };

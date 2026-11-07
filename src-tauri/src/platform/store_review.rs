@@ -8,7 +8,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::error::AmplyResult;
 
 /// The Store listing: https://apps.microsoft.com/detail/9n20zr8ddp8l
-const STORE_PRODUCT_ID: &str = "9N20ZR8DDP8L";
+pub(super) const STORE_PRODUCT_ID: &str = "9N20ZR8DDP8L";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -43,7 +43,7 @@ fn open_store_review_page(app: &tauri::AppHandle) -> StoreReviewOutcome {
 
 /// Whether this process runs from an MSIX package, i.e. was installed from the Store.
 #[cfg(windows)]
-fn is_packaged() -> bool {
+pub(super) fn is_packaged() -> bool {
     use windows::core::PWSTR;
     use windows::Win32::{Foundation::APPMODEL_ERROR_NO_PACKAGE, Storage::Packaging::Appx::GetCurrentPackageFullName};
 
@@ -54,7 +54,7 @@ fn is_packaged() -> bool {
 }
 
 #[cfg(not(windows))]
-fn is_packaged() -> bool {
+pub(super) fn is_packaged() -> bool {
     false
 }
 

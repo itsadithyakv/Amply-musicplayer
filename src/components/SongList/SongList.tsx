@@ -1,3 +1,4 @@
+import { PlaylistPickerModal } from '@/components/Player/PlaylistPickerModal';
 import { usePersistedPreference } from "@/hooks/usePersistedPreference";
 import { oneOf } from "@/services/preferences";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +11,7 @@ import { ArtworkImage } from "@/components/ArtworkImage/ArtworkImage";
 import {
   Card,
   Divider,
+  Icon,
   IconButton,
   Kicker,
   Select,
@@ -25,6 +27,7 @@ import { useStructuralSongsSnapshot } from "@/hooks/useLibraryViews";
 import { isUnknownGenre } from "@/services/songMetadataService";
 import { useSongEditor } from "@/components/SongEditor/SongEditor";
 import { useT, type MessageKey } from "@/i18n";
+import { useLockedSongIds } from "@/hooks/useLibraryAccess";
 
 interface SongListProps {
   songs: Song[];
@@ -64,7 +67,7 @@ const sortOptions: Array<{ labelKey: MessageKey; value: SongSort }> = [
 
 /** Shared column template for the header row and every song row: # / title / album / genre / time / fav / playlist / queue. */
 const ROW_GRID =
-  "grid grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(56px,0.5fr)_48px_150px_80px] items-center";
+  "grid grid-cols-[40px_minmax(0,2.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(56px,0.5fr)_48px_112px] items-center";
 
 /** Genre suggestions offered for untagged songs. These are written into the file's tags, so they stay in English. */
 const baseGenreOptions = [
@@ -123,17 +126,15 @@ const sortSongs = (items: Song[], sortBy: SongSort): Song[] => {
 
 interface SongRowData {
   songs: Song[];
+  /** Past the free library limit: listed, but playing one opens the Amply Pro offer. */
+  lockedIds: ReadonlySet<string>;
   queueIds: string[];
   currentSongId: string | null;
   playSongById: (songId: string, fromQueue?: boolean) => Promise<void>;
   setQueue: (queue: string[], startId: string) => void;
   enqueueSong: (songId: string) => void;
   toggleFavorite: (songId: string) => Promise<void> | void;
-  customPlaylists: Array<{ id: string; name: string }>;
-  addSongToCustomPlaylist: (
-    playlistId: string,
-    songId: string,
-  ) => Promise<void> | void;
+  openPlaylistPicker: (songId: string) => void;
   updateSongGenre: (songId: string, genre: string) => Promise<void> | void;
   genreOptions: string[];
   genreListId: string;
@@ -148,14 +149,14 @@ const SongRow = memo(
   ({ index, style, data }: ListChildComponentProps<SongRowData>) => {
     const {
       songs,
+      lockedIds,
       queueIds,
       currentSongId,
       playSongById,
       setQueue,
       enqueueSong,
       toggleFavorite,
-      customPlaylists,
-      addSongToCustomPlaylist,
+      openPlaylistPicker,
       updateSongGenre,
       genreOptions,
       genreListId,
@@ -201,6 +202,7 @@ const SongRow = memo(
 
     const isUnknown = isUnknownGenre(song.genre);
     const isEditing = editingSongId === song.id;
+    const isLocked = lockedIds.has(song.id);
 
     const commitGenreDraft = () => {
       const nextGenre = genreDraft.trim();
@@ -231,7 +233,8 @@ const SongRow = memo(
               void playSongById(song.id, false);
             }
           }}
-          className={`${ROW_GRID} h-12 px-3 text-[13px] ${isCurrent ? "text-amply-textPrimary" : "text-amply-textSecondary"}`}
+          title={isLocked ? t("pro.library.lockedSong") : undefined}
+          className={`${ROW_GRID} h-12 px-3 text-[13px] ${isCurrent ? "text-amply-textPrimary" : "text-amply-textSecondary"} ${isLocked ? "opacity-50" : ""}`}
         >
           <span className="text-center text-xs text-amply-textMuted">
             {index + 1}
@@ -246,9 +249,10 @@ const SongRow = memo(
             />
             <div className="min-w-0">
               <p
-                className={`truncate text-[18px] font-bold ${isCurrent ? "text-amply-accent" : "text-amply-textPrimary"}`}
+                className={`flex items-center gap-1.5 truncate text-[18px] font-bold ${isCurrent ? "text-amply-accent" : "text-amply-textPrimary"}`}
               >
-                {song.title}
+                {isLocked ? <Icon name="lock" size={12} className="shrink-0 text-amply-textMuted" /> : null}
+                <span className="truncate">{song.title}</span>
               </p>
               <p className="truncate text-[14px] font-medium text-amply-textSecondary">
                 {song.artist}
@@ -367,37 +371,17 @@ const SongRow = memo(
             }}
           />
 
-          <div className="mr-2 min-w-0" onClick={stopRowClick}>
-            <Select
-              label={t("common.songList.add")}
-              size="sm"
-              defaultValue=""
-              onChange={(event) => {
-                event.stopPropagation();
-                const playlistId = event.target.value;
-                if (!playlistId) {
-                  return;
-                }
-                void addSongToCustomPlaylist(playlistId, song.id);
-                event.currentTarget.value = "";
-              }}
-              disabled={!customPlaylists.length}
-              selectClassName="disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <option value="">
-                {customPlaylists.length
-                  ? t("common.songList.addTo")
-                  : t("common.songList.noPlaylists")}
-              </option>
-              {customPlaylists.map((playlist) => (
-                <option key={playlist.id} value={playlist.id}>
-                  {playlist.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-
           <div className="flex items-center">
+            <IconButton
+              name="playlist-add"
+              label={t("player.addToPlaylist")}
+              size="sm"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                openPlaylistPicker(song.id);
+              }}
+            />
             <IconButton
               name="queue"
               label={t("common.songList.addToQueue")}
@@ -434,10 +418,13 @@ const SongList = ({
   const { t } = useT();
   const currentSongId = usePlayerStore((state) => state.currentSongId);
   const playSongById = usePlayerStore((state) => state.playSongById);
+  const lockedIds = useLockedSongIds();
   const setQueue = usePlayerStore((state) => state.setQueue);
   const enqueueSong = usePlayerStore((state) => state.enqueueSong);
   const customPlaylists = useLibraryStore((state) => state.customPlaylists);
   const [editingSongId, setEditingSongId] = useState<string | null>(null);
+  const [pickerSongId, setPickerSongId] = useState<string | null>(null);
+  const pickerSong = useLibraryStore((state) => (pickerSongId ? state.getSongById(pickerSongId) : undefined));
   const genreListId = useMemo(
     () => `amply-genre-options-${persistKey ?? "library"}`,
     [persistKey],
@@ -485,14 +472,14 @@ const SongList = ({
   const rowData = useMemo<SongRowData>(
     () => ({
       songs: sortedSongs,
+      lockedIds,
       queueIds,
       currentSongId,
       playSongById,
       setQueue,
       enqueueSong,
       toggleFavorite: libraryActions.toggleFavorite,
-      customPlaylists,
-      addSongToCustomPlaylist: libraryActions.addSongToCustomPlaylist,
+      openPlaylistPicker: setPickerSongId,
       updateSongGenre: libraryActions.updateGenre,
       genreOptions,
       genreListId,
@@ -501,12 +488,12 @@ const SongList = ({
     }),
     [
       sortedSongs,
+      lockedIds,
       queueIds,
       currentSongId,
       playSongById,
       setQueue,
       enqueueSong,
-      customPlaylists,
       genreOptions,
       genreListId,
       editingSongId,
@@ -551,7 +538,6 @@ const SongList = ({
           {t("common.songList.column.time")}
         </span>
         <span>{t("common.songList.column.fav")}</span>
-        <span>{t("common.songList.column.playlist")}</span>
         <span>{t("common.songList.column.queueInfo")}</span>
       </div>
       <Divider />
@@ -579,6 +565,15 @@ const SongList = ({
           )}
         </AutoSizer>
       </div>
+      <PlaylistPickerModal
+        open={pickerSongId !== null}
+        onClose={() => setPickerSongId(null)}
+        song={pickerSong}
+        playlists={customPlaylists}
+        onAddToPlaylist={(playlistId, songId) => useLibraryStore.getState().addSongToCustomPlaylist(playlistId, songId)}
+        onCreatePlaylist={(playlist) => useLibraryStore.getState().upsertCustomPlaylist(playlist)}
+        onMessage={(message) => usePlayerStore.getState().showToast(message)}
+      />
     </Card>
   );
 };

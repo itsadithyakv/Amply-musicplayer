@@ -201,7 +201,7 @@ const OverlayPage = () => {
       setState((previous) => ({
         title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : previous.title,
         artist: typeof payload.artist === 'string' && payload.artist.trim() ? payload.artist : previous.artist,
-        albumArt: typeof payload.albumArt === 'string' && payload.albumArt.trim() ? payload.albumArt : previous.albumArt,
+        albumArt: typeof payload.albumArt === 'string' && payload.albumArt.trim() ? payload.albumArt : null,
         isPlaying: Boolean(payload.isPlaying),
         spinningArtwork: payload.spinningArtwork !== false,
         theme: isOverlayTheme(payload.theme) ? payload.theme : previous.theme,
