@@ -1,4 +1,4 @@
-Amply v1.8.1
+Amply v1.8.2
 Release date: unreleased
 
 Amply is free, with Amply Pro
